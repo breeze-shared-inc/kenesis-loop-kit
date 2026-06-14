@@ -1,0 +1,130 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm *)",
+      "Bash(yarn *)",
+      "Bash(pnpm *)",
+      "Bash(pip *)",
+      "Bash(pip3 *)",
+      "Bash(poetry *)",
+      "Bash(cargo *)",
+      "Bash(go *)",
+      "Bash(bundle *)",
+      "Bash(make *)",
+      "Bash(tsc *)",
+      "Bash(gradle *)",
+      "Bash(mvn *)",
+      "Bash(cmake *)",
+      "Bash(jest *)",
+      "Bash(vitest *)",
+      "Bash(pytest *)",
+      "Bash(mocha *)",
+      "Bash(rspec *)",
+      "Bash(go test *)",
+      "Bash(cargo test *)",
+      "Bash(deno test *)",
+      "Bash(node *)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(ruby *)",
+      "Bash(deno *)",
+      "Bash(bun *)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git blame*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git checkout*)",
+      "Bash(git switch*)",
+      "Bash(git restore*)",
+      "Bash(git branch*)",
+      "Bash(git stash*)",
+      "Bash(git fetch*)",
+      "Bash(git pull*)",
+      "Bash(git merge*)",
+      "Bash(git rebase*)",
+      "Bash(git tag*)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(sort *)",
+      "Bash(uniq *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(mkdir *)",
+      "Bash(touch *)",
+      "Write(src/**)",
+      "Write(lib/**)",
+      "Write(app/**)",
+      "Write(docs/**)",
+      "Write(tickets/**)",
+      "Write(tests/**)",
+      "Write(test/**)",
+      "Write(spec/**)",
+      "Write(__tests__/**)",
+      "WebSearch",
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:www.morphllm.com)",
+      "Bash(gh auth *)",
+      "Bash(git config *)",
+      "Bash(git rm *)"
+    ],
+    "deny": [
+      "Bash(git push*)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(rm -rf ../*)",
+      "Bash(sudo *)",
+      "Bash(su *)",
+      "Bash(chmod 777 *)",
+      "Bash(curl*|*sh)",
+      "Bash(curl*|*bash)",
+      "Bash(wget*|*sh)",
+      "Bash(wget*|*bash)",
+      "Bash(mkfs*)",
+      "Bash(dd *)",
+      "Bash(fdisk*)",
+      "Bash(parted*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/validate_ticket_state.py\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/record_metrics.py\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/check_loop_integrity.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

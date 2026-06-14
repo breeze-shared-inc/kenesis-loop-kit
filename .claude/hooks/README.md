@@ -1,0 +1,42 @@
+# 状態検証 hooks
+
+チケットの状態機械を機械的に強制するための Claude Code hook 群。
+登録は `.claude/settings.json` の `hooks` セクションで行う。
+
+| ファイル | イベント | 役割 |
+|---|---|---|
+| `validate_ticket_state.py` | PreToolUse（Write\|Edit） | 書き込み前に不変条件を検証し違反を `permissionDecision: deny` でブロック。スキーマ・状態遷移・retry上限に加え **L2: カウンタ単調性（減少禁止）** |
+| `check_loop_integrity.py` | Stop | 応答終了時に tickets/active/*.md を一括検査し `decision: block` で継続強制。schema・blocker・本文同期に加え **L3: 差し戻し履歴（.metrics.jsonl）とカウンタの整合照合** |
+| `record_metrics.py` | PostToolUse（Write\|Edit） | ステータス遷移を `tickets/.metrics.jsonl` に追記する（観測性）。前回状態は `tickets/.metrics_state.json` で保持 |
+| `_ticket_lib.py` | -（共有） | frontmatterパーサと検証ルール（status enum・必須キー・遷移表・retry上限）を集約 |
+
+メトリクスの集計は `.claude/metrics/aggregate.py`（`/metrics` コマンドが実行）が担う。
+
+## 設計方針
+
+- **fail-open**: hook内部のエラー（IO・パース不能など）ではループをブロックしない。検知した違反のみ deny する。
+- **依存なし**: Python3標準ライブラリのみ。
+- **単一の真実**: 検証ルールは `_ticket_lib.py` に集約。CLAUDE.md のステータス定義・リトライ上限と定数を同期させること。
+- **無限ループ防止**: Stop hook は `stop_hook_active` が真のとき再ブロックしない。
+
+## ローカルでの動作確認
+
+```bash
+# PreToolUse: 不正な状態遷移を deny できるか
+printf '{"tool_name":"Edit","tool_input":{"file_path":"/abs/path/tickets/active/APP-001.md","old_string":"status: design_done","new_string":"status: done"}}' \
+  | python3 .claude/hooks/validate_ticket_state.py
+
+# Stop: active配下の不整合を検出できるか
+printf '{"hook_event_name":"Stop","cwd":"'"$PWD"'","stop_hook_active":false}' \
+  | python3 .claude/hooks/check_loop_integrity.py
+```
+
+exit 0 かつ無出力なら allow、JSON を出力すれば block。
+
+自動テストは `tests/` にある（`python3 -m unittest discover -s tests -v`）。検証ロジックを変更したら必ず実行すること。
+
+## ルールを変更するとき
+
+1. `_ticket_lib.py` の定数（`VALID_STATUS` / `REQUIRED_KEYS` / `RETRY_CAPS` / `LEGAL_TRANSITIONS`）を更新する
+2. CLAUDE.md の対応する定義（ステータス定義・リトライ上限）も合わせて更新する
+3. `tests/` のテストを更新し、`python3 -m unittest discover -s tests -v` で全件パスを確認する

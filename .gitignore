@@ -1,0 +1,27 @@
+# ============================================================
+# Kenesis Loop Kit - .gitignore（パブリックリポジトリ用）
+# tickets/ をコミット対象から除外する設定
+# ============================================================
+
+# チケット全体を除外（作業ログ・内部情報を公開しない）
+tickets/
+
+# テンプレートのみ共有したい場合は以下のコメントを外す
+# !tickets/Templates/
+# !tickets/Templates/**
+
+# Python生成ファイル（hook/metrics/testのコンパイル成果物）
+__pycache__/
+*.py[cod]
+
+# OS生成ファイル
+.DS_Store
+Thumbs.db
+
+# エディタ設定
+.vscode/
+.idea/
+
+# 環境変数
+.env
+.env.local

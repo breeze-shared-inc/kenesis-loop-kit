@@ -1,0 +1,28 @@
+# ============================================================
+# Kenesis Loop Kit - .gitignore（プライベートリポジトリ用）
+# tickets/ をコミット対象に含める設定
+# ============================================================
+
+# Obsidian の個人環境設定（ワークスペース・プラグイン設定など）
+tickets/.obsidian/
+
+# ループメトリクス（hookが自動生成。環境固有のためデフォルトでは追跡しない）
+# チームで履歴を共有したい場合は以下のコメントアウトを解除する
+tickets/.metrics.jsonl
+tickets/.metrics_state.json
+
+# Python生成ファイル（hook/metrics/testのコンパイル成果物）
+__pycache__/
+*.py[cod]
+
+# OS生成ファイル
+.DS_Store
+Thumbs.db
+
+# エディタ設定
+.vscode/
+.idea/
+
+# 環境変数
+.env
+.env.local
