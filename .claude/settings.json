@@ -1,5 +1,6 @@
 {
   "permissions": {
+    "defaultMode": "auto",
     "allow": [
       "Bash(npm *)",
       "Bash(yarn *)",
@@ -73,7 +74,9 @@
       "WebFetch(domain:www.morphllm.com)",
       "Bash(gh auth *)",
       "Bash(git config *)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(echo *)",
+      "Bash(sed -n *)"
     ],
     "deny": [
       "Bash(git push*)",
