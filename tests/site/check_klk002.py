@@ -65,14 +65,16 @@ TOK = {n: token(n) for n in [
 ]}
 
 # ---------------------------------------------------------------------------
-# A1. Section structure & order: fv -> business -> results -> recruit -> contact -> footer
+# A1. Section structure & order:
+#     fv -> business -> recruit -> company -> news -> contact -> footer
+#     (wireframe.html 準拠。実績(results)廃止 / 会社案内(company) / お知らせ(news) 追加)
 # ---------------------------------------------------------------------------
 section_ids = re.findall(r'<section[^>]*id="([^"]+)"', HTML)
 footer_present = bool(re.search(r"<footer", HTML))
-expected_sections = ["fv", "business", "results", "recruit", "contact"]
+expected_sections = ["fv", "business", "recruit", "company", "news", "contact"]
 order_ok = section_ids == expected_sections and footer_present
 check(
-    "A1 セクション構成と順序 (fv→business→results→recruit→contact→footer)",
+    "A1 セクション構成と順序 (fv→business→recruit→company→news→contact→footer)",
     order_ok,
     f"section順={section_ids}, footer={'有' if footer_present else '無'}",
 )
@@ -87,12 +89,12 @@ h1_in_fv = bool(fv_block and re.search(r"<h1[ >]", fv_block.group(0)))
 h2_count = len(re.findall(r"<h2[ >]", HTML))
 h3_count = len(re.findall(r"<h3[ >]", HTML))
 biz_h3 = len(re.findall(r'class="biz-card__title"', HTML))
-# FVの見出しは h1。残り4セクション(business/results/recruit/contact)が h2。
-# よって h2 は section数(5) - FV(1) = 4 が正。カード h3 は 2。
+# FVの見出しは h1。残りセクション(business/recruit/company/news/contact)が h2。
+# よって h2 は section数 - FV(1) が正（h2_count == non_fv_sections）。カード h3 は 2。
 non_fv_sections = len([s for s in section_ids if s != "fv"])
 heading_ok = len(h1s) == 1 and h1_in_fv and h2_count == non_fv_sections and biz_h3 == 2
 check(
-    "A2 見出し階層 (h1×1=FV, 非FVセクション h2×4, カード h3×2)",
+    "A2 見出し階層 (h1×1=FV, 非FVセクション=h2, カード h3×2)",
     heading_ok,
     f"h1={len(h1s)}(FV内={h1_in_fv}), h2={h2_count}(非FVセクション数={non_fv_sections}), "
     f"h3={h3_count}, biz-card__title={biz_h3}",

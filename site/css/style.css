@@ -265,16 +265,25 @@ ul { list-style: none; padding: 0; }
   max-width: 52ch;
 }
 
-/* FV ビジュアル（写真領域はCSSグラデーションのプレースホルダ） */
-.fv__photo {
+/* FV ビジュアル（写真領域=CSSグラデーションのプレースホルダ / 3レイヤーをクロスフェード） */
+.fv__visual { display: flex; flex-direction: column; gap: 12px; }
+.fv__photo-stage {
   position: relative;
   width: 100%;
   aspect-ratio: 4 / 3;            /* 差し替え時も枠を固定（CLS防止） */
   border-radius: var(--radius);
   overflow: hidden;
-  background:
-    linear-gradient(135deg, #2f9c66 0%, #1f7a4d 55%, #14603b 100%);
 }
+.fv__photo {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity .8s ease;   /* クロスフェード */
+}
+.fv__photo.is-active { opacity: 1; }
+.fv__photo--1 { background: linear-gradient(135deg, #2f9c66 0%, #1f7a4d 55%, #14603b 100%); }
+.fv__photo--2 { background: linear-gradient(135deg, #3aa0a0 0%, #1f7a4d 60%, #13564a 100%); }
+.fv__photo--3 { background: linear-gradient(135deg, #79c25a 0%, #2f9c66 55%, #1f7a4d 100%); }
 .fv__accent {
   position: absolute;
   inset: 0;
@@ -282,6 +291,34 @@ ul { list-style: none; padding: 0; }
   width: 70%;
   height: 70%;
 }
+
+/* テキストはフェードスルーで内容差し替え（単一h1を維持・JSが内容更新） */
+.fv__text { transition: opacity .4s ease; }
+.fv__text.is-leaving { opacity: 0; }
+
+/* スライド切替ドット（タップ領域44px・内側に視覚ドット） */
+.fv__dots { display: flex; justify-content: center; gap: 8px; }
+.fv__dot {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.fv__dot::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-primary-light);
+  border: 1px solid var(--color-primary);
+  transition: background-color .2s ease, transform .2s ease;
+}
+.fv__dot.is-active::before { background: var(--color-primary); transform: scale(1.25); }
 
 /* FV CTA 並置 */
 .fv__cta {
@@ -340,58 +377,98 @@ ul { list-style: none; padding: 0; }
 .biz-card__link::after { content: " →"; white-space: pre; }
 .biz-card__link:hover { color: var(--color-primary-dark); text-decoration: underline; }
 
+/* 検証用トグル（2カラム↔1カラム比較）。決定後に削除可 */
+.biz-toggle { margin-top: 12px; font-size: .85rem; color: var(--color-text-muted); }
+.biz-toggle__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
 /* ============================================================
-   実績・信頼
+   メディア（写真領域プレースホルダ・採用/会社で共用）
+   実写真支給時はこの要素を <img> に差し替え（aspect-ratioで枠固定・CLS防止）
    ============================================================ */
-.results { background: var(--color-surface); }
-
-.stat-grid {
-  margin-top: var(--space-gap);
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--space-gap);
-}
-.stat {
-  text-align: center;
-  padding: 24px;
-  background: var(--color-bg);
+.media-photo {
+  width: 100%;
+  aspect-ratio: 4 / 3;
   border-radius: var(--radius);
-  border: 1px solid var(--color-primary-light);
+  background:
+    linear-gradient(135deg, #2f9c66 0%, #1f7a4d 55%, #14603b 100%);
 }
-.stat__num {
-  display: block;
-  font-size: clamp(2rem, 8vw, 2.75rem);
-  font-weight: 800;
-  color: var(--color-primary);
-  line-height: 1.1;
-}
-.stat__unit { font-size: .6em; margin-left: 2px; }
-.stat__label { display: block; margin-top: 8px; color: var(--color-text-muted); }
-
-.voice {
-  margin-top: var(--space-gap);
-  padding: var(--card-pad);
-  background: var(--color-bg);
-  border-left: 4px solid var(--color-primary);
-  border-radius: var(--radius);
-}
-.voice__quote { font-size: 1.05rem; }
-.voice__cite { margin-top: 12px; color: var(--color-text-muted); font-size: .9rem; }
 
 /* ============================================================
-   採用情報（SES）
+   採用情報（SES）/ 会社案内（テキスト＋ビジュアルの2カラム）
    ============================================================ */
 .recruit {
   background:
     linear-gradient(135deg, var(--color-primary-light) 0%, var(--color-surface) 100%);
 }
-.recruit__inner { max-width: 720px; }
+.company { background: var(--color-bg); }
+
+.recruit__inner,
+.company__inner {
+  display: grid;
+  grid-template-columns: 1fr;     /* モバイル: 縦積み（テキスト→ビジュアル） */
+  gap: var(--space-gap);
+  align-items: center;
+}
 .recruit__note {
   margin-top: 12px;
   color: var(--color-text-muted);
   font-size: .85rem;
 }
-.recruit .btn { margin-top: 24px; }
+.recruit .btn,
+.company .btn { margin-top: 24px; }
+
+/* ============================================================
+   お知らせ（最新3件 + 一覧リンク）
+   ============================================================ */
+.news { background: var(--color-surface); }
+.news__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.news__more {
+  font-weight: 700;
+  color: var(--color-primary);
+  text-decoration: none;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+.news__more::after { content: " →"; white-space: pre; }
+.news__more:hover { color: var(--color-primary-dark); text-decoration: underline; }
+
+.news__list {
+  margin-top: var(--space-gap);
+  border-top: 1px solid var(--color-primary-light);
+}
+.news__item { border-bottom: 1px solid var(--color-primary-light); }
+.news__link {
+  display: flex;
+  flex-direction: column;     /* モバイル: 日付の下にタイトル */
+  gap: 2px;
+  padding: 14px 4px;
+  min-height: 44px;
+  text-decoration: none;
+  color: var(--color-text);
+}
+.news__link:hover { color: var(--color-primary-dark); }
+.news__link:hover .news__title { text-decoration: underline; }
+.news__date {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: .85rem;
+  font-variant-numeric: tabular-nums;
+}
+.news__title { font-weight: 600; }
+.news__note { margin-top: 12px; color: var(--color-text-muted); font-size: .85rem; }
 
 /* ============================================================
    お問い合わせ
@@ -419,18 +496,41 @@ ul { list-style: none; padding: 0; }
   color: #e8efe9;
   padding-block: 40px;
 }
-.site-footer__inner { display: grid; gap: 16px; }
+.site-footer__inner { display: grid; grid-template-columns: 1fr; gap: 28px 24px; }
 .site-footer__brand { font-weight: 800; font-size: 1.25rem; color: #fff; }
-.site-footer__nav ul { display: flex; flex-wrap: wrap; gap: 16px; }
-.site-footer__nav a {
+.site-footer__desc { margin-top: 8px; color: #aebfb5; font-size: .9rem; max-width: 36ch; }
+.site-footer__heading { font-weight: 700; color: #fff; margin-bottom: 6px; }
+.site-footer__col ul { display: flex; flex-direction: column; gap: 2px; }
+.site-footer__col a {
   color: #cfe0d6;
   text-decoration: none;
   min-height: 44px;
   display: inline-flex;
   align-items: center;
 }
-.site-footer__nav a:hover { color: #fff; text-decoration: underline; }
+.site-footer__col a:hover { color: #fff; text-decoration: underline; }
 .site-footer__copy { color: #aebfb5; font-size: .85rem; }
+
+/* ============================================================
+   スクロール連動「ふわっと」表示（reveal）
+   - .reveal-ready は JS有効時のみ <html> に付与（JS無効/縮退時は通常表示でFOUCなし）
+   - 下から24px＋フェードイン。ease-outで軽く浮き上がる
+   ============================================================ */
+.reveal-ready .reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition:
+    opacity .7s cubic-bezier(.16, 1, .3, 1),
+    transform .7s cubic-bezier(.16, 1, .3, 1);
+  will-change: opacity, transform;
+}
+.reveal-ready .reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reveal-ready .reveal { opacity: 1; transform: none; transition: none; }
+}
 
 /* ============================================================
    レスポンシブ（min-width で2カラムへ拡張）
@@ -472,20 +572,36 @@ ul { list-style: none; padding: 0; }
   .fv__visual { grid-area: visual; align-self: stretch; }
   .fv__cta    { grid-area: cta; align-self: start; }
   .fv__cta .btn { flex: 0 0 auto; }
-  .fv__photo { height: 100%; aspect-ratio: auto; min-height: 320px; }
+  .fv__photo-stage { flex: 1; aspect-ratio: auto; min-height: 320px; }
 
   /* 事業紹介: 横並び2カラム（同一寸法） */
   .biz-grid { grid-template-columns: 1fr 1fr; }
-
-  /* 実績: 3カラム */
-  .stat-grid { grid-template-columns: repeat(3, 1fr); }
-
-  /* フッター: 横並び */
-  .site-footer__inner {
-    grid-template-columns: 1fr auto;
-    align-items: center;
+  /* 検証用トグルON時のみ1カラム（縦並び）に戻す */
+  #business:has(.biz-toggle__input:checked) .biz-grid {
+    grid-template-columns: 1fr;
+    max-width: 680px;
+    margin-inline: auto;
   }
-  .site-footer__copy { grid-column: 1 / -1; }
+
+  /* お知らせ: 日付とタイトルを横並びに */
+  .news__link { flex-direction: row; align-items: baseline; gap: 24px; }
+  .news__date { min-width: 6.5em; }
+
+  /* 採用 / 会社案内: テキストとビジュアルの2カラム */
+  .recruit__inner { grid-template-columns: 1.05fr 1fr; }   /* テキスト左・ビジュアル右 */
+  .company__inner { grid-template-columns: 1fr 1.05fr; }   /* ビジュアル左・テキスト右 */
+  .company__visual { order: -1; }                           /* DOMはテキスト先・表示はビジュアル左 */
+
+  /* フッター: 4カラム */
+  .site-footer__inner {
+    grid-template-columns: 1.6fr 1fr 1fr 1fr;
+    align-items: start;
+  }
+  .site-footer__copy {
+    grid-column: 1 / -1;
+    border-top: 1px solid rgba(255, 255, 255, .12);
+    padding-top: 16px;
+  }
 }
 
 @media (min-width: 1024px) {
