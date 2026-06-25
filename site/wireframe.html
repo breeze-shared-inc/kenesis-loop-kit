@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>トップページ ワイヤーフレーム（KLK-002 / あたり）</title>
+<style>
+  :root{
+    --line:#9aa0a6; --line-strong:#5f6368; --ph:#cfd2d5; --ph-label:#6b7075;
+    --text:#3c4043; --muted:#80868b; --bg:#ffffff; --band:#f1f3f4; --maxw:1120px; --radius:6px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{ font-family:-apple-system,"Hiragino Sans","Noto Sans JP","Segoe UI",sans-serif;
+    color:var(--text); background:var(--bg); line-height:1.7; overflow-x:hidden; }
+  img,svg{max-width:100%;}
+  .container{ width:100%; max-width:var(--maxw); margin-inline:auto; padding-inline:clamp(16px,4vw,32px); }
+  .wf-note{ font-size:11px; letter-spacing:.08em; color:var(--muted); margin:0 0 8px; }
+  .ph{ display:flex; align-items:center; justify-content:center; background:var(--ph); color:var(--ph-label);
+    border:1px solid var(--line); border-radius:var(--radius); font-size:13px; text-align:center; padding:8px; min-height:60px; }
+  .bar{ background:#e7e9ea; border-radius:4px; height:14px; margin:6px 0; }
+  .bar.w-90{width:90%;} .bar.w-80{width:80%;} .bar.w-70{width:70%;}
+  .bar.w-60{width:60%;} .bar.w-40{width:40%;} .bar.title{height:26px;width:75%;background:#d6d9db;}
+  .btn{ display:inline-flex; align-items:center; justify-content:center; min-height:44px; min-width:44px;
+    padding:10px 20px; border:1.5px solid var(--line-strong); border-radius:var(--radius);
+    color:var(--text); background:#fff; font-size:14px; text-decoration:none; cursor:default; }
+  .btn--primary{ background:#dfe3e6; border-color:var(--line-strong); font-weight:700; }
+  .btn-row{ display:flex; gap:12px; flex-wrap:wrap; margin-top:14px; }
+  h1,h2,h3{ margin:0 0 8px; line-height:1.4; }
+  h2{ font-size:20px; } h3{ font-size:16px; }
+  section{ padding-block:clamp(40px,7vw,72px); border-top:1px dashed var(--line); }
+  header.site{ position:sticky; top:0; z-index:10; background:rgba(255,255,255,.95); border-bottom:1px solid var(--line); }
+  .hdr{ display:flex; align-items:center; gap:16px; min-height:64px; }
+  .hdr__logo{ width:120px; height:36px; }
+  .hdr__nav{ margin-left:auto; display:flex; gap:18px; align-items:center; }
+  .hdr__nav a{ color:var(--text); text-decoration:none; font-size:14px; }
+  .hdr__burger{ display:none; width:44px; height:44px; align-items:center; justify-content:center; border:1px solid var(--line-strong); border-radius:var(--radius); }
+  .fv .container{ padding-block:clamp(28px,5vw,48px); }
+  .fv__inner{ display:grid; gap:24px; grid-template-columns:1fr; }
+  .fv__photo{ min-height:240px; }
+  .biz__grid{ display:grid; gap:20px; grid-template-columns:1fr; }
+  .biz-card{ border:1px solid var(--line); border-radius:var(--radius); padding:20px; background:#fff; display:flex; flex-direction:column; }
+  .biz-card .ph{ height:120px; margin-bottom:12px; }
+  .biz-card .grow{ flex:1 1 auto; }
+  .split{ display:grid; gap:20px; grid-template-columns:1fr; align-items:center; }
+  .split .ph{ min-height:160px; }
+  .band{ background:var(--band); }
+  .contact-cta{ border:1.5px solid var(--line-strong); border-radius:var(--radius); padding:28px; text-align:center; background:#fff; }
+  footer.site{ background:#e9ebec; border-top:1px solid var(--line); padding-block:32px; }
+  .ft__grid{ display:grid; gap:24px; grid-template-columns:1fr; }
+  .ft__col a{ display:block; color:var(--text); text-decoration:none; font-size:13px; padding:3px 0; }
+  .ft__logo{ width:120px; height:36px; margin-bottom:10px; }
+  .ft__copy{ margin-top:24px; font-size:12px; color:var(--muted); border-top:1px dashed var(--line); padding-top:14px; }
+  @media (min-width:768px){
+    .fv__inner{ grid-template-columns:1.1fr 1fr; grid-template-areas:"text visual" "cta visual"; align-items:center; }
+    .fv__text{ grid-area:text; } .fv__visual{ grid-area:visual; } .fv__cta{ grid-area:cta; }
+    .biz__grid{ grid-template-columns:1fr 1fr; }
+    .split{ grid-template-columns:1fr 1fr; } .split.reverse .ph{ order:2; }
+    .ft__grid{ grid-template-columns:1.4fr 1fr 1fr 1fr; }
+  }
+  @media (max-width:767px){ .hdr__nav{ display:none; } .hdr__burger{ display:flex; } }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="container hdr">
+    <div class="ph hdr__logo">ロゴ</div>
+    <nav class="hdr__nav" aria-label="グローバルナビ">
+      <a href="#business">事業内容</a>
+      <a href="#recruit">採用情報</a>
+      <a href="#company">会社案内</a>
+      <a href="#contact">お問い合わせ</a>
+      <a class="btn" href="#contact">お問い合わせ</a>
+    </nav>
+    <div class="hdr__burger" aria-label="メニュー">☰</div>
+  </div>
+</header>
+
+<main>
+
+  <section class="fv" aria-labelledby="fv-h">
+    <div class="container">
+      <p class="wf-note">FV / メインビジュアル — 左テキスト＋右ビジュアル・2CTA並置</p>
+      <div class="fv__inner">
+        <div class="fv__text">
+          <div class="bar w-40" aria-hidden="true"></div>
+          <h1 id="fv-h"><span class="bar title" aria-hidden="true"></span></h1>
+          <div class="bar w-90" aria-hidden="true"></div>
+          <div class="bar w-80" aria-hidden="true"></div>
+          <div class="bar w-60" aria-hidden="true"></div>
+        </div>
+        <div class="fv__visual"><div class="ph fv__photo">メインビジュアル（画像）</div></div>
+        <div class="fv__cta">
+          <div class="btn-row">
+            <a class="btn btn--primary" href="#contact">お問い合わせ</a>
+            <a class="btn" href="#recruit">採用情報</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="business" aria-labelledby="biz-h">
+    <div class="container">
+      <p class="wf-note">事業内容 — 2事業を対等の比重で</p>
+      <h2 id="biz-h">事業内容</h2>
+      <div class="bar w-70" aria-hidden="true"></div>
+      <div class="biz__grid" style="margin-top:18px;">
+        <article class="biz-card">
+          <div class="ph">画像</div>
+          <h3>ITインフラ</h3>
+          <div class="grow">
+            <div class="bar w-90" aria-hidden="true"></div>
+            <div class="bar w-80" aria-hidden="true"></div>
+            <div class="bar w-60" aria-hidden="true"></div>
+          </div>
+          <div class="btn-row"><a class="btn" href="#">ITインフラを詳しく</a></div>
+        </article>
+        <article class="biz-card">
+          <div class="ph">画像</div>
+          <h3>SES</h3>
+          <div class="grow">
+            <div class="bar w-90" aria-hidden="true"></div>
+            <div class="bar w-80" aria-hidden="true"></div>
+            <div class="bar w-60" aria-hidden="true"></div>
+          </div>
+          <div class="btn-row"><a class="btn" href="#">SESを詳しく</a></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="recruit" class="band" aria-labelledby="rec-h">
+    <div class="container">
+      <p class="wf-note">採用情報（SES）— 要約＋リンクボタン</p>
+      <div class="split">
+        <div>
+          <h2 id="rec-h">採用情報（SES）</h2>
+          <div class="bar w-90" aria-hidden="true"></div>
+          <div class="bar w-80" aria-hidden="true"></div>
+          <div class="bar w-60" aria-hidden="true"></div>
+          <div class="btn-row"><a class="btn btn--primary" href="#">採用情報を見る</a></div>
+        </div>
+        <div class="ph">画像</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="company" aria-labelledby="co-h">
+    <div class="container">
+      <p class="wf-note">会社案内 — 要約＋リンクボタン</p>
+      <div class="split reverse">
+        <div class="ph">画像</div>
+        <div>
+          <h2 id="co-h">会社案内</h2>
+          <div class="bar w-90" aria-hidden="true"></div>
+          <div class="bar w-80" aria-hidden="true"></div>
+          <div class="bar w-60" aria-hidden="true"></div>
+          <div class="btn-row"><a class="btn" href="#">会社案内を見る</a></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="contact" class="band" aria-labelledby="ct-h">
+    <div class="container">
+      <p class="wf-note">お問い合わせ — フォームへ誘導</p>
+      <div class="contact-cta">
+        <h2 id="ct-h">お問い合わせ</h2>
+        <div class="bar w-80" style="margin-inline:auto;" aria-hidden="true"></div>
+        <div class="bar w-60" style="margin-inline:auto;" aria-hidden="true"></div>
+        <div class="btn-row" style="justify-content:center;">
+          <a class="btn btn--primary" href="#">お問い合わせフォームへ</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site" aria-label="フッター">
+  <div class="container">
+    <div class="ft__grid">
+      <div class="ft__col">
+        <div class="ph ft__logo">ロゴ</div>
+        <div class="bar w-90" aria-hidden="true"></div>
+        <div class="bar w-60" aria-hidden="true"></div>
+      </div>
+      <div class="ft__col">
+        <strong>事業内容</strong>
+        <a href="#">ITインフラ</a>
+        <a href="#">SES</a>
+      </div>
+      <div class="ft__col">
+        <strong>採用・会社</strong>
+        <a href="#">採用情報</a>
+        <a href="#">会社案内</a>
+      </div>
+      <div class="ft__col">
+        <strong>お問い合わせ</strong>
+        <a href="#">お問い合わせフォーム</a>
+      </div>
+    </div>
+    <div class="ft__copy">© あたり Company（コピーライト・あたり）</div>
+  </div>
+</footer>
+
+</body>
+</html>
