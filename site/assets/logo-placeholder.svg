@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="40" viewBox="0 0 160 40" role="img" aria-label="Kenesis ロゴ（プレースホルダ）">
+  <!-- 芽モチーフのマーク（緑系）。実ロゴ支給時に差し替え -->
+  <g fill="none" stroke="#1f7a4d" stroke-width="2.5" stroke-linecap="round">
+    <path d="M16 30 C16 22 16 16 16 10" />
+    <path d="M16 18 C10 16 6 12 6 7 C12 7 16 11 16 17 Z" fill="#1f7a4d" stroke="none" />
+    <path d="M16 22 C22 20 27 16 27 11 C20 11 16 15 16 21 Z" fill="#7cc79e" stroke="none" />
+  </g>
+  <text x="38" y="26" font-family="-apple-system,'Hiragino Sans','Noto Sans JP','Segoe UI',sans-serif" font-size="18" font-weight="700" fill="#1a2b22">Kenesis</text>
+</svg>
