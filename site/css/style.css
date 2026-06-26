@@ -292,9 +292,18 @@ ul { list-style: none; padding: 0; }
   height: 70%;
 }
 
-/* テキストはフェードスルーで内容差し替え（単一h1を維持・JSが内容更新） */
-.fv__text { transition: opacity .4s ease; }
-.fv__text.is-leaving { opacity: 0; }
+/* h1 は静的。切替テキスト領域（eyebrow＋sub）のみフェードスルーで内容差し替え（JSが内容更新） */
+.fv__copy { margin-top: 16px; transition: opacity .4s ease; }
+.fv__copy.is-leaving { opacity: 0; }
+
+/* FV スライドコントロール（ドット＋一時停止/再生ボタン） */
+.fv__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
 
 /* スライド切替ドット（タップ領域44px・内側に視覚ドット） */
 .fv__dots { display: flex; justify-content: center; gap: 8px; }
@@ -319,6 +328,42 @@ ul { list-style: none; padding: 0; }
   transition: background-color .2s ease, transform .2s ease;
 }
 .fv__dot.is-active::before { background: var(--color-primary); transform: scale(1.25); }
+
+/* 一時停止/再生ボタン（WCAG 2.2.2。タップ領域44px・aria-pressed=true で停止中＝再生アイコン） */
+.fv__playpause {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  border-radius: 999px;
+  color: var(--color-primary-dark);
+  font-weight: 700;
+  font-size: .85rem;
+  cursor: pointer;
+}
+.fv__playpause:hover { background: var(--color-primary-light); }
+/* 再生中（aria-pressed=false）= 一時停止アイコン（二本バー） */
+.fv__playpause-icon {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border-left: 4px solid currentColor;
+  border-right: 4px solid currentColor;
+}
+/* 停止中（aria-pressed=true）= 再生アイコン（三角） */
+.fv__playpause[aria-pressed="true"] .fv__playpause-icon {
+  width: 0;
+  height: 0;
+  border-left: 12px solid currentColor;
+  border-right: 0;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+}
 
 /* FV CTA 並置 */
 .fv__cta {
@@ -376,16 +421,6 @@ ul { list-style: none; padding: 0; }
 }
 .biz-card__link::after { content: " →"; white-space: pre; }
 .biz-card__link:hover { color: var(--color-primary-dark); text-decoration: underline; }
-
-/* 検証用トグル（2カラム↔1カラム比較）。決定後に削除可 */
-.biz-toggle { margin-top: 12px; font-size: .85rem; color: var(--color-text-muted); }
-.biz-toggle__label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  cursor: pointer;
-}
 
 /* ============================================================
    メディア（写真領域プレースホルダ・採用/会社で共用）
@@ -576,12 +611,6 @@ ul { list-style: none; padding: 0; }
 
   /* 事業紹介: 横並び2カラム（同一寸法） */
   .biz-grid { grid-template-columns: 1fr 1fr; }
-  /* 検証用トグルON時のみ1カラム（縦並び）に戻す */
-  #business:has(.biz-toggle__input:checked) .biz-grid {
-    grid-template-columns: 1fr;
-    max-width: 680px;
-    margin-inline: auto;
-  }
 
   /* お知らせ: 日付とタイトルを横並びに */
   .news__link { flex-direction: row; align-items: baseline; gap: 24px; }

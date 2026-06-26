@@ -49,13 +49,17 @@
       <div class="container fv__inner">
         <!-- DOM順: テキスト → ビジュアル → CTA（CSS無効時も要件順を維持） -->
         <div class="fv__text">
-          <!-- スライド1はタグ非表示（JSがスライド2/3で表示・差し替え）。JS無効時もスライド1の見え方を維持 -->
-          <p class="fv__eyebrow" style="display:none"></p>
+          <!-- h1 はページ恒常の大見出し。カルーセルでは書き換えない（アウトライン/SEO/SR安定のため静的） -->
           <h1 id="fv-heading" class="fv__title">堅実な技術で、<br>事業と人の成長を支える。</h1>
-          <p class="fv__sub">
-            止まらないインフラを設計・運用する「ITインフラ事業」と、現場で力を伸ばすエンジニアを支える「SES事業」。
-            2つの軸で、お客様とエンジニア双方の未来を育てます。
-          </p>
+          <!-- スライドで切り替わるのは eyebrow / サブコピーのみ。aria-live で SR へ穏当に通知 -->
+          <div class="fv__copy" aria-live="polite">
+            <!-- スライド1はタグ非表示（JSがスライド2/3で表示・差し替え）。JS無効時もスライド1の見え方を維持 -->
+            <p class="fv__eyebrow" style="display:none"></p>
+            <p class="fv__sub">
+              止まらないインフラを設計・運用する「ITインフラ事業」と、現場で力を伸ばすエンジニアを支える「SES事業」。
+              2つの軸で、お客様とエンジニア双方の未来を育てます。
+            </p>
+          </div>
         </div>
 
         <div class="fv__visual">
@@ -88,10 +92,17 @@
               </svg>
             </div>
           </div>
-          <div class="fv__dots" role="group" aria-label="メインビジュアルのスライド切替">
-            <button type="button" class="fv__dot is-active" data-fv-dot="0" aria-label="スライド1: 会社全体を表示" aria-selected="true"></button>
-            <button type="button" class="fv__dot" data-fv-dot="1" aria-label="スライド2: ITインフラ事業を表示" aria-selected="false"></button>
-            <button type="button" class="fv__dot" data-fv-dot="2" aria-label="スライド3: SES事業を表示" aria-selected="false"></button>
+          <div class="fv__controls">
+            <div class="fv__dots" role="group" aria-label="メインビジュアルのスライド切替">
+              <button type="button" class="fv__dot is-active" data-fv-dot="0" aria-label="スライド1: 会社全体を表示" aria-pressed="true"></button>
+              <button type="button" class="fv__dot" data-fv-dot="1" aria-label="スライド2: ITインフラ事業を表示" aria-pressed="false"></button>
+              <button type="button" class="fv__dot" data-fv-dot="2" aria-label="スライド3: SES事業を表示" aria-pressed="false"></button>
+            </div>
+            <!-- 恒常的な一時停止/再生コントロール（WCAG 2.2.2 Pause, Stop, Hide）。aria-pressed=true で停止中 -->
+            <button type="button" class="fv__playpause" data-fv-playpause aria-pressed="false">
+              <span class="fv__playpause-icon" aria-hidden="true"></span>
+              <span class="fv__playpause-text">一時停止する</span>
+            </button>
           </div>
         </div>
 
@@ -107,14 +118,6 @@
       <div class="container">
         <h2 id="business-heading" class="section__title">2つの事業</h2>
         <p class="section__lead">ITインフラと SES。どちらも私たちの主軸であり、対等に力を注いでいます。</p>
-
-        <!-- 検証用トグル: 2カラム↔1カラム（縦並び）を切替して比較する。決定後に削除可 -->
-        <p class="biz-toggle">
-          <label class="biz-toggle__label">
-            <input type="checkbox" id="bizStack" class="biz-toggle__input">
-            事業カードを1カラム（縦並び）で表示する（検証用）
-          </label>
-        </p>
 
         <ul class="biz-grid">
           <li class="biz-card">

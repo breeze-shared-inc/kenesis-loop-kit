@@ -61,24 +61,23 @@
 
   /* ---------- FV カルーセル（MV画像＋キャッチコピーを同期フェード切替） ----------
      スライド: 1=会社全体 / 2=ITインフラ訴求 / 3=SES訴求。
-     ビジュアル(.fv__photo)はクロスフェード、テキストはフェードスルーで内容差し替え
-     （単一 h1 を維持したまま innerHTML/textContent を更新）。
+     ビジュアル(.fv__photo)はクロスフェード、テキストはフェードスルーで内容差し替え。
+     - h1（大見出し）は静的。書き換えるのは eyebrow / サブコピーのみ
+       （アウトライン/SEO/SR の安定のため。切替領域は aria-live="polite"）。
      - 自動送り（既定 5.5秒）。ホバー/フォーカス中は一時停止。
-     - ドットで手動切替。prefers-reduced-motion 時は自動送りせず即時切替。 */
+     - 恒常的な一時停止/再生コントロール（WCAG 2.2.2）。ドットで手動切替。
+     - prefers-reduced-motion 時は自動送りせず初期状態を「停止」にする。 */
   var FV_SLIDES = [
     {
       eyebrow: '',
-      title: '堅実な技術で、<br>事業と人の成長を支える。',
       sub: '止まらないインフラを設計・運用する「ITインフラ事業」と、現場で力を伸ばすエンジニアを支える「SES事業」。2つの軸で、お客様とエンジニア双方の未来を育てます。'
     },
     {
       eyebrow: 'ITインフラ事業',
-      title: '止まらない基盤を、<br>設計から運用まで。',
       sub: 'サーバー・ネットワーク・クラウドの設計・構築・運用保守をワンストップで。堅牢なインフラで、お客様のビジネスを足元から支えます。'
     },
     {
       eyebrow: 'SES事業',
-      title: 'エンジニアの挑戦を、<br>現場で伸ばす。',
       sub: 'スキルと志向に合うプロジェクトへ。経験豊富なエンジニアが一人ひとりの成長に並走し、技術もキャリアも伸ばします。'
     }
   ];
@@ -88,11 +87,14 @@
     if (!fv) { return; }
 
     var textBlock = fv.querySelector('.fv__text');
+    var copyBlock = fv.querySelector('.fv__copy') || textBlock;
     var eyebrowEl = fv.querySelector('.fv__eyebrow');
     var titleEl = fv.querySelector('.fv__title');
     var subEl = fv.querySelector('.fv__sub');
     var layers = Array.prototype.slice.call(fv.querySelectorAll('.fv__photo'));
     var dots = Array.prototype.slice.call(fv.querySelectorAll('.fv__dot'));
+    var playPauseBtn = fv.querySelector('[data-fv-playpause]');
+    var playPauseText = playPauseBtn ? playPauseBtn.querySelector('.fv__playpause-text') : null;
     if (!textBlock || !titleEl || layers.length < 2) { return; }
 
     var n = FV_SLIDES.length;
@@ -101,6 +103,8 @@
     var swapTimer = null;
     var INTERVAL = 5500;
     var reduceMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
+    // ユーザーが恒常的に停止したか（reduced-motion 時は初期から停止）
+    var userPaused = reduceMQ.matches;
 
     function applyText(i) {
       if (eyebrowEl) {
@@ -109,7 +113,7 @@
         // 空のスライド（スライド1）はタグ自体を非表示にし、余白も残さない
         eyebrowEl.style.display = eb ? '' : 'none';
       }
-      titleEl.innerHTML = FV_SLIDES[i].title;
+      // h1 は静的。書き換えるのは eyebrow / サブコピーのみ
       if (subEl) { subEl.textContent = FV_SLIDES[i].sub; }
     }
 
@@ -119,19 +123,19 @@
       for (var k = 0; k < layers.length; k++) {
         layers[k].classList.toggle('is-active', k === i);
       }
-      // ドット状態
+      // ドット状態は aria-pressed で現在スライドを表現する（<button> へのセレクト系ARIAは無効なため）
       for (var d = 0; d < dots.length; d++) {
         var on = d === i;
         dots[d].classList.toggle('is-active', on);
-        dots[d].setAttribute('aria-selected', on ? 'true' : 'false');
+        dots[d].setAttribute('aria-pressed', on ? 'true' : 'false');
       }
       // テキスト: フェードスルー（縮退モーション時は即時）
       if (swapTimer) { window.clearTimeout(swapTimer); swapTimer = null; }
       if (animate && !reduceMQ.matches) {
-        textBlock.classList.add('is-leaving');
+        copyBlock.classList.add('is-leaving');
         swapTimer = window.setTimeout(function () {
           applyText(i);
-          textBlock.classList.remove('is-leaving');
+          copyBlock.classList.remove('is-leaving');
         }, 400);
       } else {
         applyText(i);
@@ -143,28 +147,46 @@
 
     function start() {
       stop();
-      if (reduceMQ.matches) { return; }   // 自動送りしない（アクセシビリティ）
+      // 自動送りしない: ユーザーが停止中 / 縮退モーション（アクセシビリティ）
+      if (userPaused || reduceMQ.matches) { return; }
       timer = window.setInterval(next, INTERVAL);
     }
     function stop() {
       if (timer) { window.clearInterval(timer); timer = null; }
     }
 
+    // 恒常的な一時停止/再生コントロール（WCAG 2.2.2 Pause, Stop, Hide）
+    function syncPlayPause() {
+      if (!playPauseBtn) { return; }
+      playPauseBtn.setAttribute('aria-pressed', String(userPaused));
+      if (playPauseText) {
+        playPauseText.textContent = userPaused ? '再生する' : '一時停止する';
+      }
+    }
+    if (playPauseBtn) {
+      playPauseBtn.addEventListener('click', function () {
+        userPaused = !userPaused;
+        syncPlayPause();
+        if (userPaused) { stop(); } else { start(); }
+      });
+    }
+
     for (var di = 0; di < dots.length; di++) {
       (function (idx) {
         dots[idx].addEventListener('click', function () {
           render(idx, true);
-          start(); // 手動操作後はタイマーをリセット
+          start(); // 手動操作後はタイマーをリセット（userPaused 中は start() が no-op）
         });
       })(di);
     }
 
-    // ホバー/フォーカス中は一時停止
+    // ホバー/フォーカス中は一時停止（恒常停止とは独立。start() が userPaused を尊重）
     fv.addEventListener('mouseenter', stop);
     fv.addEventListener('mouseleave', start);
     fv.addEventListener('focusin', stop);
     fv.addEventListener('focusout', start);
 
+    syncPlayPause();
     render(0, false);
     start();
   }
@@ -180,7 +202,7 @@
     // 入れ子の二重revealを避けるため、対象はセクション単位で明示指定
     var selectors = [
       '#business .section__title', '#business .section__lead',
-      '#business .biz-toggle', '#business .biz-card',
+      '#business .biz-card',
       '.recruit__text', '.recruit__visual',
       '.company__text', '.company__visual',
       '.news__head', '.news__item',
