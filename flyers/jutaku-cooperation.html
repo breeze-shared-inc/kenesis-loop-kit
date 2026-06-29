@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>受託案件拡大へのご協力のお願い</title>
+<style>
+  /* ===== 印刷設定: A4片面・四方0.5cmの出力余白を前提 ===== */
+  @page { size: A4 portrait; margin: 5mm; }
+
+  :root{
+    --main:#64b9e6;        /* メインカラー */
+    --main-d:#3897cc;      /* メインの濃色（見出し・グラデ用） */
+    --main-dd:#1d6e9e;
+    --sub:#d6eff9;         /* サブカラー */
+    --accent:#f5961e;      /* 差し色：アンバー（補色位置・ハレーション抑制） */
+    --accent-2:#ffc24b;    /* 差し色：イエロー（強調用） */
+    --navy:#164a64;        /* 見出し・濃色テキスト */
+    --ink:#274a5c;
+    --line:#bfe1f2;
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+
+  html,body{
+    font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+    color:var(--ink);
+    -webkit-print-color-adjust:exact;
+    print-color-adjust:exact;
+  }
+
+  /* 刷り面（@page余白5mmの内側 ≒ 200×287mm） */
+  .sheet{
+    width:200mm;
+    min-height:287mm;
+    margin:0 auto;
+    display:flex;
+    flex-direction:column;
+    gap:3.4mm;
+  }
+
+  /* ===== ヘッダー / ①お願い ===== */
+  .header{
+    background:linear-gradient(115deg,var(--main-dd),var(--main));
+    color:#fff;
+    border-radius:3mm;
+    padding:5.4mm 6mm;
+    position:relative;overflow:hidden;
+  }
+  .header::after{
+    content:"";position:absolute;right:-14mm;top:-16mm;
+    width:48mm;height:48mm;border-radius:50%;
+    background:rgba(255,255,255,.12);
+  }
+  .eyebrow{
+    font-size:9pt;letter-spacing:.18em;font-weight:700;
+    color:var(--accent-2);margin-bottom:1.6mm;
+  }
+  .header h1{ font-size:22pt;line-height:1.24;font-weight:800;letter-spacing:.01em; }
+  .header .lead{
+    margin-top:2.8mm;font-size:9.6pt;line-height:1.62;max-width:168mm;color:#eef8ff;
+  }
+  .header .lead b{ color:#fff;border-bottom:2px solid var(--accent-2);padding-bottom:1px; }
+
+  /* ===== セクション見出し（番号なし・アクセントバー） ===== */
+  .sec-title{
+    display:flex;align-items:center;gap:2.4mm;
+    font-size:11.5pt;font-weight:800;color:var(--navy);
+    margin-bottom:3mm;
+  }
+  .sec-title::before{
+    content:"";width:3mm;height:5.4mm;border-radius:1.4mm;
+    background:linear-gradient(var(--accent),var(--accent-2));flex:0 0 auto;
+  }
+  .sec-title .bar{ flex:1;height:1px;background:var(--line); }
+
+  /* ===== 中段 2カラム ===== */
+  .grid{ display:flex;gap:4mm;flex:1; }
+  .col-left{ flex:0 0 104mm; }
+  .col-right{ flex:1;display:flex;flex-direction:column;gap:3.4mm; }
+
+  .card{
+    border:1px solid var(--line);border-radius:3mm;background:#fff;
+    padding:4.4mm 4.6mm;
+  }
+  .col-left.card{ display:flex;flex-direction:column; }
+
+  /* ===== ②フロー（拡大） ===== */
+  .flow{ list-style:none;flex:1;display:flex;flex-direction:column;justify-content:space-between; }
+  .step{ display:flex;align-items:center;gap:3.2mm; }
+  .step .icon{
+    flex:0 0 auto;width:12mm;height:12mm;border-radius:2.6mm;
+    background:var(--sub);border:1px solid #bfe1f2;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .step .icon svg{ width:7mm;height:7mm;stroke:var(--main-dd);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round; }
+  .step .body{ flex:1; }
+  .step .body .t{ font-size:10pt;font-weight:800;color:var(--navy);line-height:1.3; }
+  .step .body .d{ font-size:8pt;line-height:1.4;color:#5a7383;margin-top:.5mm; }
+  .step .body .d.warn{ color:var(--accent);font-weight:700; }
+  /* つなぎ矢印 */
+  .arrow{ height:4mm;margin-left:6mm;position:relative; }
+  .arrow::before{ content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:#bcdcef; }
+  .arrow::after{
+    content:"";position:absolute;left:-1.9mm;bottom:-.2mm;
+    border-left:2.2mm solid transparent;border-right:2.2mm solid transparent;
+    border-top:2.6mm solid #bcdcef;
+  }
+
+  /* ===== ③実績 ===== */
+  .results{ list-style:none;display:flex;flex-direction:column;gap:2.4mm; }
+  .results li{ display:flex;gap:2.4mm;align-items:flex-start;font-size:9pt;line-height:1.42; }
+  .results li .chk{
+    flex:0 0 auto;width:4.4mm;height:4.4mm;border-radius:50%;
+    background:var(--main);margin-top:.3mm;position:relative;
+  }
+  .results li .chk::after{
+    content:"";position:absolute;left:1.5mm;top:.8mm;width:1.3mm;height:2.3mm;
+    border:solid #fff;border-width:0 1.3px 1.3px 0;transform:rotate(42deg);
+  }
+  .results li b{ color:var(--navy);font-weight:700; }
+
+  /* ===== ④今後の動き ===== */
+  .future{ display:flex;flex-direction:column;gap:2.4mm; }
+  .future .item{
+    display:flex;gap:2.8mm;align-items:center;
+    background:var(--sub);border:1px solid #c7e6f5;border-radius:2.2mm;
+    padding:2.6mm 3mm;font-size:9pt;line-height:1.35;
+  }
+  .future .item .ic{ flex:0 0 auto;width:7mm;height:7mm; }
+  .future .item .ic svg{ width:7mm;height:7mm;stroke:var(--main-dd);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round; }
+  .future .item .tx b{ color:var(--navy); }
+  .future .item .tx span{ display:block;font-size:7.6pt;color:#5a7383;margin-top:.3mm; }
+
+  /* ===== 受託インセンティブ（下部・横いっぱい） ===== */
+  .incentive{
+    border-radius:3mm;color:#fff;overflow:hidden;position:relative;
+    background:linear-gradient(120deg,var(--accent),#ffac3d);
+    display:flex;align-items:center;
+    padding:5mm 7mm;gap:7mm;
+    box-shadow:inset 0 0 0 2px rgba(255,255,255,.35);
+  }
+  .incentive::after{
+    content:"";position:absolute;right:-6mm;top:-18mm;
+    width:60mm;height:60mm;border-radius:50%;background:rgba(255,255,255,.13);
+  }
+  .incentive .pct-wrap{ flex:0 0 auto;display:flex;align-items:baseline;gap:2mm;line-height:1; }
+  .incentive .pct{ font-size:54pt;font-weight:900;letter-spacing:-.02em;text-shadow:0 1px 0 rgba(0,0,0,.08); }
+  .incentive .pct .u{ font-size:24pt;font-weight:900; }
+  .incentive .txt{ flex:1; }
+  .incentive .txt .ttl{ font-size:16pt;font-weight:900;letter-spacing:.02em; }
+  .incentive .txt .ttl small{
+    font-size:8pt;font-weight:800;background:var(--navy);color:#fff;
+    padding:.6mm 2.4mm;border-radius:1.4mm;margin-left:2.4mm;vertical-align:middle;letter-spacing:.06em;
+  }
+  .incentive .txt .desc{ font-size:9pt;line-height:1.5;margin-top:1.6mm;max-width:120mm; }
+  .incentive .seal{
+    flex:0 0 auto;width:22mm;height:22mm;border-radius:50%;
+    background:rgba(255,255,255,.16);border:2px dashed rgba(255,255,255,.7);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+  }
+  .incentive .seal .a{ font-size:7pt;font-weight:800;letter-spacing:.06em; }
+  .incentive .seal .b{ font-size:13pt;font-weight:900;line-height:1; }
+
+  /* ===== お問い合わせ帯 ===== */
+  .contact{
+    background:var(--navy);color:#fff;border-radius:3mm;
+    padding:3.6mm 5mm;display:flex;align-items:center;gap:4mm;
+  }
+  .contact .ico{ flex:0 0 auto;width:9mm;height:9mm; }
+  .contact .ico svg{ width:9mm;height:9mm;stroke:var(--accent-2);fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round; }
+  .contact .ctext .h{ font-size:11pt;font-weight:800; }
+  .contact .ctext .s{ font-size:8.6pt;color:#cfe9f6;margin-top:.7mm;line-height:1.45; }
+  .contact .ctext .s b{ color:#fff;background:rgba(255,255,255,.16);padding:.4mm 2mm;border-radius:1.4mm; }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <!-- ===== ヘッダー / ①ご協力のお願い ===== -->
+  <header class="header">
+    <div class="eyebrow">RECRUIT FOR NEW PROJECTS ── 受託開発事業</div>
+    <h1>受託案件拡大への<br>ご協力のお願い</h1>
+    <p class="lead">
+      いま常駐している現場で<b>業務上の課題</b>を感じていませんか。あるいは、お知り合いや常駐先で
+      <b>ホームページの新規制作・リニューアル</b>を検討している――そんな声はありませんか。
+      その「気づき」のひとつひとつが、新たな受託案件の入口になります。
+      お心当たりがあれば、<b>マネジメント部</b>または<b>研究開発部</b>までお気軽にお声がけください。
+    </p>
+  </header>
+
+  <!-- ===== 中段 ===== -->
+  <div class="grid">
+
+    <!-- 左：②フロー（拡大） -->
+    <section class="col-left card">
+      <div class="sec-title">相談から運用までの流れ<span class="bar"></span></div>
+
+      <ol class="flow">
+        <li class="step">
+          <span class="icon"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-12 7.5L3 21l2-6a8.5 8.5 0 1 1 16-3.5Z"/></svg></span>
+          <span class="body"><span class="t">まずは相談</span><span class="d">マネジメント部または研究開発部へご連絡</span></span>
+        </li>
+        <li class="arrow"></li>
+
+        <li class="step">
+          <span class="icon"><svg viewBox="0 0 24 24"><path d="M9 4h6M9 4v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3V4M9 13h6M9 16h4"/></svg></span>
+          <span class="body"><span class="t">作戦会議</span><span class="d">研究開発部と打ち合わせ。アプローチ方法と役割分担を検討</span></span>
+        </li>
+        <li class="arrow"></li>
+
+        <li class="step">
+          <span class="icon"><svg viewBox="0 0 24 24"><path d="M16 11a3 3 0 1 0-3-3M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20a5 5 0 0 1 10 0M14 20a5 5 0 0 1 7-4.6"/></svg></span>
+          <span class="body"><span class="t">打ち合わせ・ヒアリング</span><span class="d">対象顧客と面談し、課題とご要望を丁寧に伺う</span></span>
+        </li>
+        <li class="arrow"></li>
+
+        <li class="step">
+          <span class="icon"><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"/><path d="M14 3v5h5M8 13h8M8 16h6"/></svg></span>
+          <span class="body"><span class="t">各種書類の提出</span><span class="d">企画書・提案書・見積書・契約書をご用意</span></span>
+        </li>
+        <li class="arrow"></li>
+
+        <li class="step">
+          <span class="icon"><svg viewBox="0 0 24 24"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/><path d="m8 12 3 3 5-6"/></svg></span>
+          <span class="body"><span class="t">受注</span><span class="d warn">※ 失注となる場合もあります</span></span>
+        </li>
+        <li class="arrow"></li>
+
+        <li class="step">
+          <span class="icon"><svg viewBox="0 0 24 24"><path d="m16 18 5-6-5-6M8 6l-5 6 5 6M14 4l-4 16"/></svg></span>
+          <span class="body"><span class="t">設計・開発・構築</span><span class="d">仕様を固め、システム・サイトを作り上げる</span></span>
+        </li>
+        <li class="arrow"></li>
+
+        <li class="step">
+          <span class="icon"><svg viewBox="0 0 24 24"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5Z"/><path d="m3.3 7.5 8.7 5 8.7-5M12 22V12"/></svg></span>
+          <span class="body"><span class="t">納品</span><span class="d">完成した成果物をお客様へお渡し</span></span>
+        </li>
+        <li class="arrow"></li>
+
+        <li class="step">
+          <span class="icon"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg></span>
+          <span class="body"><span class="t">運用・保守</span><span class="d">安定稼働を継続的にサポート</span></span>
+        </li>
+        <li class="arrow"></li>
+
+        <li class="step">
+          <span class="icon"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 2a6 6 0 0 0-3.5 10.9c.6.5 1 1.3 1 2.1h5c0-.8.4-1.6 1-2.1A6 6 0 0 0 12 2Z"/></svg></span>
+          <span class="body"><span class="t">追加改善のご提案</span><span class="d">運用で見えた課題から次の一手をご提案</span></span>
+        </li>
+      </ol>
+    </section>
+
+    <!-- 右：③実績 ＋ ④今後 -->
+    <div class="col-right">
+      <section class="card">
+        <div class="sec-title">直近半年の受注実績<span class="bar"></span></div>
+        <ul class="results">
+          <li><span class="chk"></span><span><b>JTB様</b>／契約管理システムの追加開発</span></li>
+          <li><span class="chk"></span><span>海外配送管理システムの追加開発</span></li>
+          <li><span class="chk"></span><span>コーポレートサイトのリニューアル</span></li>
+          <li><span class="chk"></span><span><b>AWS</b>を活用したディザスタリカバリ環境の構築</span></li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <div class="sec-title">今後の受託開発事業の動き<span class="bar"></span></div>
+        <div class="future">
+          <div class="item">
+            <span class="ic"><svg viewBox="0 0 24 24"><path d="M3 21V8l9-5 9 5v13M9 21v-6h6v6M3 21h18"/></svg></span>
+            <span class="tx"><b>入札案件への挑戦</b><span>公共・大型案件へ事業領域を拡大</span></span>
+          </div>
+          <div class="item">
+            <span class="ic"><svg viewBox="0 0 24 24"><path d="M16 11a3 3 0 1 0-3-3M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 20a5 5 0 0 1 10 0M19 14v6M22 17h-6"/></svg></span>
+            <span class="tx"><b>新規顧客の開拓</b><span>新たな取引先との関係づくり</span></span>
+          </div>
+          <div class="item">
+            <span class="ic"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 7-7M14 8h6v6"/></svg></span>
+            <span class="tx"><b>保守領域の拡大</b><span>継続案件の増加で保守売上も成長</span></span>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ===== 受託インセンティブ（下部・横いっぱい） ===== -->
+  <section class="incentive">
+    <div class="pct-wrap"><span class="pct">5<span class="u">%</span></span></div>
+    <div class="txt">
+      <div class="ttl">受託インセンティブ<small>計画中</small></div>
+      <div class="desc">案件化にご協力いただいた方へ、受託金額の<b>5%</b>を還元する制度を準備中です。あなたの一声が、評価とリターンにつながります。</div>
+    </div>
+    <div class="seal"><span class="a">REWARD</span><span class="b">5%</span></div>
+  </section>
+
+  <!-- ===== お問い合わせ ===== -->
+  <div class="contact">
+    <span class="ico"><svg viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.7a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.1-1.1a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.6a2 2 0 0 1 1.7 2Z"/></svg></span>
+    <div class="ctext">
+      <div class="h">お問い合わせ・ご相談はお気軽に</div>
+      <div class="s">担当窓口：<b>マネジメント部</b> ／ <b>研究開発部</b>　— 課題やニーズの「種」を、ぜひお聞かせください。</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

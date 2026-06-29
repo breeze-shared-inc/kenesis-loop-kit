@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>受託案件拡大へのご協力のお願い（別案）</title>
+<style>
+  @page { size: A4 portrait; margin: 5mm; }
+
+  :root{
+    --main:#64b9e6;
+    --main-d:#3897cc;
+    --main-dd:#1d6e9e;
+    --sub:#d6eff9;
+    --accent:#f5961e;
+    --accent-2:#ffc24b;
+    --navy:#164a64;
+    --ink:#33586a;
+    --line:#cfe7f5;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{
+    font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+    color:var(--ink);
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  .sheet{
+    width:200mm; min-height:287mm; margin:0 auto;
+    background:#fff; position:relative;
+    display:flex; flex-direction:column;
+  }
+
+  /* ===== 曲線ウェーブ・ヘッダー ===== */
+  .hero{
+    position:relative; padding:6mm 12mm 8mm;
+    background:linear-gradient(120deg,var(--main-dd),var(--main));
+    color:#fff; overflow:hidden;
+  }
+  .hero .wave{ position:absolute;left:0;right:0;bottom:-1px;width:100%;display:block; }
+  .hero .eyebrow{ font-size:9.5pt;letter-spacing:.2em;font-weight:700;color:var(--accent-2); }
+  .hero h1{ font-size:22pt;font-weight:900;line-height:1.28;margin-top:3mm;letter-spacing:.01em; }
+  .hero h1 .hl{ color:var(--navy);background:var(--accent-2);padding:0 2mm;border-radius:1.4mm; }
+  .hero .lead{ margin-top:3mm;font-size:9pt;line-height:1.55;max-width:150mm;color:#eef8ff; }
+  .hero .lead b{ color:#fff;font-weight:700;border-bottom:2px solid var(--accent-2); }
+  /* 円バッジ */
+  .hero .badge{
+    position:absolute;right:13mm;top:8mm;width:34mm;height:34mm;border-radius:50%;
+    background:var(--accent);color:#fff;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center;
+    box-shadow:0 0 0 3mm rgba(255,255,255,.18);transform:rotate(-8deg);
+  }
+  .hero .badge .s{ font-size:8pt;font-weight:800;letter-spacing:.04em; }
+  .hero .badge .l{ font-size:11pt;font-weight:900;line-height:1.2;margin-top:.6mm; }
+
+  .body{ padding:0 12mm; flex:1; display:flex; flex-direction:column; gap:3mm; margin-top:-2mm; }
+
+  .block-title{
+    text-align:center;font-size:13pt;font-weight:900;color:var(--navy);
+    display:flex;align-items:center;justify-content:center;gap:3mm;
+  }
+  .block-title::before,.block-title::after{
+    content:"";width:9mm;height:3px;border-radius:2px;
+    background:linear-gradient(90deg,var(--main),var(--accent-2));
+  }
+  .block-sub{ text-align:center;font-size:8.4pt;color:#6a8493;margin-top:1mm; }
+
+  /* ===== 円環フロー ===== */
+  .cycle-wrap{ display:flex;justify-content:center; }
+  .cycle{ position:relative; width:170mm; height:112mm; }
+  .cycle .ring{ position:absolute;inset:0;width:100%;height:100%; }
+  .cycle .center{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:44mm;height:44mm;border-radius:50%;background:var(--sub);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+    border:1.5mm solid #fff;box-shadow:0 0 0 1px var(--line);
+  }
+  .cycle .center .ct{ font-size:12pt;font-weight:900;color:var(--navy);line-height:1.3; }
+  .cycle .center .cs{ font-size:7.4pt;color:var(--ink);margin-top:1.4mm;line-height:1.4;padding:0 4mm; }
+  /* ノード：円は環の点に正確に乗せ、文言は外向きへ逃がす */
+  .node{
+    position:absolute;width:17mm;height:17mm;transform:translate(-50%,-50%);
+  }
+  .node .circle{
+    width:17mm;height:17mm;border-radius:50%;
+    background:#fff;border:1.6mm solid var(--main);
+    display:flex;align-items:center;justify-content:center;position:relative;
+  }
+  .node .circle svg{ width:9mm;height:9mm;stroke:var(--main-dd);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round; }
+  .node .num{
+    position:absolute;top:-3mm;left:-3mm;width:7mm;height:7mm;border-radius:50%;
+    background:var(--accent);color:#fff;font-size:8.5pt;font-weight:900;
+    display:flex;align-items:center;justify-content:center;border:1.4px solid #fff;z-index:2;
+  }
+  .node .txt{ position:absolute;width:34mm; }
+  .node .lbl{ font-size:9pt;font-weight:800;color:var(--navy);line-height:1.25; }
+  .node .dsc{ font-size:7pt;color:#6a8493;margin-top:.4mm;line-height:1.3; }
+  /* 配置別：イラストにかからないよう外側へ */
+  .node.pos-top .txt{ left:50%;bottom:100%;transform:translateX(-50%);margin-bottom:1.6mm;text-align:center; }
+  .node.pos-bottom .txt{ left:50%;top:100%;transform:translateX(-50%);margin-top:1.6mm;text-align:center; }
+  .node.pos-right .txt{ left:100%;top:50%;transform:translateY(-50%);margin-left:2.4mm;text-align:left; }
+  .node.pos-left .txt{ right:100%;top:50%;transform:translateY(-50%);margin-right:2.4mm;text-align:right; }
+  .node.warn .circle{ border-color:var(--accent); }
+  .node.warn .lbl span{ color:var(--accent);font-size:6.6pt;display:block;font-weight:700; }
+
+  /* ===== インセンティブ（特大・横いっぱい） ===== */
+  .incentive{
+    position:relative;border-radius:4mm;color:#fff;overflow:hidden;
+    background:linear-gradient(120deg,var(--accent),#ffb247);
+    padding:4mm 9mm;display:flex;align-items:center;gap:7mm;
+    box-shadow:0 4px 14px rgba(245,150,30,.28);
+  }
+  .incentive::before{
+    content:"";position:absolute;left:-10mm;bottom:-22mm;width:70mm;height:70mm;
+    border-radius:50%;background:rgba(255,255,255,.12);
+  }
+  .incentive .ribbon{
+    position:absolute;top:5mm;right:-12mm;transform:rotate(40deg);
+    background:var(--navy);color:#fff;font-size:8pt;font-weight:800;
+    padding:1mm 13mm;letter-spacing:.1em;
+  }
+  .incentive .big{ flex:0 0 auto;display:flex;align-items:baseline;line-height:1;position:relative; }
+  .incentive .big .n{ font-size:46pt;font-weight:900;letter-spacing:-.03em;text-shadow:0 2px 0 rgba(0,0,0,.07); }
+  .incentive .big .u{ font-size:21pt;font-weight:900; }
+  .incentive .info .h{ font-size:16pt;font-weight:900;letter-spacing:.02em; }
+  .incentive .info .d{ font-size:8.8pt;line-height:1.45;margin-top:1.4mm;max-width:110mm; }
+  .incentive .info .d b{ background:rgba(255,255,255,.25);padding:.2mm 1.6mm;border-radius:1.2mm;font-weight:800; }
+
+  /* ===== 実績＋今後（2カラム・余白広め） ===== */
+  .two{ display:flex;gap:8mm; }
+  .two > section{ flex:1; }
+  .mini-title{ font-size:11.5pt;font-weight:900;color:var(--navy);display:flex;align-items:center;gap:2.4mm;margin-bottom:2.6mm; }
+  .mini-title .ic{ width:8mm;height:8mm;border-radius:2mm;background:var(--sub);display:flex;align-items:center;justify-content:center;flex:0 0 auto; }
+  .mini-title .ic svg{ width:5mm;height:5mm;stroke:var(--main-dd);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
+  .results{ list-style:none;display:flex;flex-direction:column;gap:2mm; }
+  .results li{ display:flex;gap:2.6mm;align-items:flex-start;font-size:9.2pt;line-height:1.45; }
+  .results li .dot{ flex:0 0 auto;width:4.4mm;height:4.4mm;border-radius:50%;background:var(--main);margin-top:.4mm;position:relative; }
+  .results li .dot::after{ content:"";position:absolute;left:1.5mm;top:.8mm;width:1.3mm;height:2.3mm;border:solid #fff;border-width:0 1.3px 1.3px 0;transform:rotate(42deg); }
+  .results li b{ color:var(--navy); }
+  .future{ display:flex;flex-direction:column;gap:2mm; }
+  .future .item{ display:flex;gap:2.8mm;align-items:center;background:var(--sub);border-radius:2.4mm;padding:2.4mm 3.4mm;font-size:9.2pt; }
+  .future .item .ic{ flex:0 0 auto;width:7mm;height:7mm; }
+  .future .item .ic svg{ width:7mm;height:7mm;stroke:var(--main-dd);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
+  .future .item b{ color:var(--navy); }
+  .future .item span{ display:block;font-size:7.6pt;color:#6a8493;margin-top:.3mm; }
+
+  /* ===== フッター ===== */
+  .foot{
+    margin-top:2mm;background:var(--navy);color:#fff;
+    padding:3.5mm 12mm;display:flex;align-items:center;gap:5mm;
+  }
+  .foot .ic{ flex:0 0 auto;width:11mm;height:11mm;border-radius:50%;background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center; }
+  .foot .ic svg{ width:6.4mm;height:6.4mm;stroke:var(--accent-2);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round; }
+  .foot .h{ font-size:12pt;font-weight:900; }
+  .foot .s{ font-size:9pt;color:#cfe9f6;margin-top:.8mm; }
+  .foot .s b{ color:#fff;background:rgba(255,255,255,.16);padding:.4mm 2mm;border-radius:1.4mm;font-weight:700; }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <!-- ===== ヒーロー ===== -->
+  <header class="hero">
+    <div class="badge"><span class="s">ご紹介</span><span class="l">大歓迎</span></div>
+    <div class="eyebrow">RECRUIT FOR NEW PROJECTS</div>
+    <h1>受託案件拡大への<br><span class="hl">ご協力</span>のお願い</h1>
+    <p class="lead">
+      現場で感じる<b>業務上の課題</b>。お知り合いや常駐先の「<b>ホームページを新しくしたい</b>」という声――
+      その気づきが、新たな受託案件の入口です。お心当たりは<b>マネジメント部</b>／<b>研究開発部</b>へお気軽に。
+    </p>
+    <svg class="wave" viewBox="0 0 1200 60" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M0,40 C300,75 500,5 750,28 C950,46 1080,30 1200,18 L1200,60 L0,60 Z" fill="#ffffff"/>
+    </svg>
+  </header>
+
+  <div class="body">
+
+    <!-- ===== 円環フロー ===== -->
+    <div>
+      <div class="block-title">相談から運用までの流れ</div>
+      <div class="block-sub">ご相談からはじまり、運用・改善でまた次の案件へ。受託開発は「ひと回りするサイクル」です。</div>
+
+      <div class="cycle-wrap">
+        <div class="cycle">
+          <!-- 円環の矢印 -->
+          <svg class="ring" viewBox="0 0 170 112" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="85" cy="56" r="35" fill="none" stroke="#d6eff9" stroke-width="7"/>
+            <circle cx="85" cy="56" r="35" fill="none" stroke="#64b9e6" stroke-width="2.4" stroke-dasharray="2 6" stroke-linecap="round"/>
+          </svg>
+
+          <div class="center">
+            <div class="ct">受託開発<br>サイクル</div>
+            <div class="cs">改善提案から、<br>また次の一手へ</div>
+          </div>
+
+          <!-- 9ノード（12時から時計回り・円周 中心85,76 半径56mm 上に正確配置） -->
+          <div class="node pos-top" style="left:85.0mm;top:21.0mm;">
+            <div class="circle"><div class="num">1</div><svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-12 7.5L3 21l2-6a8.5 8.5 0 1 1 16-3.5Z"/></svg></div>
+            <div class="txt"><div class="lbl">相談</div><div class="dsc">まずは両部へご連絡</div></div>
+          </div>
+
+          <div class="node pos-right" style="left:107.5mm;top:29.2mm;">
+            <div class="circle"><div class="num">2</div><svg viewBox="0 0 24 24"><path d="M9 4h6M9 4v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3V4M9 13h6M9 16h4"/></svg></div>
+            <div class="txt"><div class="lbl">作戦会議</div><div class="dsc">方法と役割分担を検討</div></div>
+          </div>
+
+          <div class="node pos-right" style="left:119.5mm;top:49.9mm;">
+            <div class="circle"><div class="num">3</div><svg viewBox="0 0 24 24"><path d="M16 11a3 3 0 1 0-3-3M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20a5 5 0 0 1 10 0M14 20a5 5 0 0 1 7-4.6"/></svg></div>
+            <div class="txt"><div class="lbl">打合せ・ヒアリング</div><div class="dsc">課題と要望を伺う</div></div>
+          </div>
+
+          <div class="node pos-right" style="left:115.3mm;top:73.5mm;">
+            <div class="circle"><div class="num">4</div><svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"/><path d="M14 3v5h5M8 13h8M8 16h6"/></svg></div>
+            <div class="txt"><div class="lbl">書類提出</div><div class="dsc">企画・提案・見積・契約</div></div>
+          </div>
+
+          <div class="node warn pos-bottom" style="left:97.0mm;top:88.9mm;">
+            <div class="circle"><div class="num">5</div><svg viewBox="0 0 24 24"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/><path d="m8 12 3 3 5-6"/></svg></div>
+            <div class="txt"><div class="lbl">受注<span>※失注の場合あり</span></div></div>
+          </div>
+
+          <div class="node pos-bottom" style="left:73.0mm;top:88.9mm;">
+            <div class="circle"><div class="num">6</div><svg viewBox="0 0 24 24"><path d="m16 18 5-6-5-6M8 6l-5 6 5 6M14 4l-4 16"/></svg></div>
+            <div class="txt"><div class="lbl">設計・開発・構築</div><div class="dsc">かたちにする</div></div>
+          </div>
+
+          <div class="node pos-left" style="left:54.7mm;top:73.5mm;">
+            <div class="circle"><div class="num">7</div><svg viewBox="0 0 24 24"><path d="M21 16V8l-9-5-9 5v8l9 5 9-5Z"/><path d="m3.3 7.5 8.7 5 8.7-5M12 22V12"/></svg></div>
+            <div class="txt"><div class="lbl">納品</div><div class="dsc">成果物をお渡し</div></div>
+          </div>
+
+          <div class="node pos-left" style="left:50.5mm;top:49.9mm;">
+            <div class="circle"><div class="num">8</div><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg></div>
+            <div class="txt"><div class="lbl">運用・保守</div><div class="dsc">安定稼働を支える</div></div>
+          </div>
+
+          <div class="node pos-left" style="left:62.5mm;top:29.2mm;">
+            <div class="circle"><div class="num">9</div><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 2a6 6 0 0 0-3.5 10.9c.6.5 1 1.3 1 2.1h5c0-.8.4-1.6 1-2.1A6 6 0 0 0 12 2Z"/></svg></div>
+            <div class="txt"><div class="lbl">追加改善提案</div><div class="dsc">次の案件へつなぐ</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== インセンティブ ===== -->
+    <section class="incentive">
+      <div class="ribbon">計画中</div>
+      <div class="big"><span class="n">5</span><span class="u">%</span></div>
+      <div class="info">
+        <div class="h">受託インセンティブ</div>
+        <div class="d">案件化にご協力いただいた方へ、受託金額の<b>5%</b>を還元する制度を準備中。あなたの一声が、評価とリターンにつながります。</div>
+      </div>
+    </section>
+
+    <!-- ===== 実績＋今後 ===== -->
+    <div class="two">
+      <section>
+        <div class="mini-title"><span class="ic"><svg viewBox="0 0 24 24"><path d="M5 21V8l7-5 7 5v13M9 21v-6h6v6"/></svg></span>直近半年の受注実績</div>
+        <ul class="results">
+          <li><span class="dot"></span><span><b>JTB様</b>／契約管理システムの追加開発</span></li>
+          <li><span class="dot"></span><span>海外配送管理システムの追加開発</span></li>
+          <li><span class="dot"></span><span>コーポレートサイトのリニューアル</span></li>
+          <li><span class="dot"></span><span><b>AWS</b>を活用したディザスタリカバリ環境の構築</span></li>
+        </ul>
+      </section>
+      <section>
+        <div class="mini-title"><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 7-7M14 8h6v6"/></svg></span>今後の事業の動き</div>
+        <div class="future">
+          <div class="item"><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 21V8l9-5 9 5v13M9 21v-6h6v6M3 21h18"/></svg></span><span><b>入札案件への挑戦</b><span>公共・大型案件へ拡大</span></span></div>
+          <div class="item"><span class="ic"><svg viewBox="0 0 24 24"><path d="M16 11a3 3 0 1 0-3-3M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 20a5 5 0 0 1 10 0M19 14v6M22 17h-6"/></svg></span><span><b>新規顧客の開拓</b><span>新たな取引先づくり</span></span></div>
+          <div class="item"><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 7-7M14 8h6v6"/></svg></span><span><b>保守領域の拡大</b><span>継続案件で売上成長</span></span></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ===== フッター ===== -->
+  <div class="foot">
+    <span class="ic"><svg viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.7a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.1-1.1a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.6a2 2 0 0 1 1.7 2Z"/></svg></span>
+    <div>
+      <div class="h">お問い合わせ・ご相談はお気軽に</div>
+      <div class="s">担当窓口：<b>マネジメント部</b> ／ <b>研究開発部</b> — 課題やニーズの「種」をぜひお聞かせください。</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
