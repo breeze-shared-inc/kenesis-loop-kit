@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ムードカラー ジェネレーター（プロトタイプ）</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --line: #e3e6ea;
+    --ink: #1f2933;
+    --muted: #6b7480;
+    --accent: #3b6ef6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  header {
+    padding: 28px 20px 16px;
+    text-align: center;
+  }
+  header h1 { margin: 0 0 6px; font-size: 22px; }
+  header p { margin: 0; color: var(--muted); font-size: 13px; }
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 16px 60px;
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 20px;
+  }
+  @media (max-width: 860px) {
+    .wrap { grid-template-columns: minmax(0, 1fr); }
+  }
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px;
+  }
+  .panel h2 {
+    font-size: 13px;
+    letter-spacing: .04em;
+    color: var(--muted);
+    margin: 0 0 12px;
+    text-transform: uppercase;
+  }
+  .kw-group { margin-bottom: 14px; }
+  .kw-group > span {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    position: relative;
+    cursor: pointer;
+    user-select: none;
+  }
+  .chip input { position: absolute; opacity: 0; pointer-events: none; }
+  .chip span {
+    display: inline-block;
+    padding: 6px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: 13px;
+    background: #fbfbfc;
+    transition: .15s;
+  }
+  .chip input:checked + span {
+    background: var(--ink);
+    color: #fff;
+    border-color: var(--ink);
+  }
+  .chip.color i {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: -1px;
+    border: 1px solid rgba(0,0,0,.18);
+  }
+  .chip.color i.none {
+    background: #fff;
+    background-image: linear-gradient(135deg, transparent 44%, #e35050 44%, #e35050 56%, transparent 56%);
+  }
+  .slider { margin: 16px 0; }
+  .slider label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .slider input[type=range] { width: 100%; }
+  .btn-row { display: flex; gap: 10px; margin-top: 18px; }
+  button {
+    flex: 1;
+    padding: 11px;
+    border: 0;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #gen { background: var(--accent); color: #fff; }
+  #reset { background: #eef0f3; color: var(--ink); flex: 0 0 auto; padding: 11px 16px; }
+
+  .basecolor { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .basecolor .toggle { flex-basis: 100%; font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .basecolor input[type=color] {
+    width: 40px; height: 34px; padding: 0; border: 1px solid var(--line);
+    border-radius: 8px; background: none; cursor: pointer;
+  }
+  .basecolor input[type=text] {
+    flex: 1; min-width: 110px; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 8px; font-family: ui-monospace, Menlo, monospace; font-size: 13px;
+  }
+  .basecolor.off input[type=color],
+  .basecolor.off input[type=text] { opacity: .4; pointer-events: none; }
+  .basecolor .presets { flex-basis: 100%; display: flex; gap: 6px; flex-wrap: wrap; }
+  .basecolor .presets button {
+    flex: 0 0 auto; padding: 5px 10px; font-size: 12px; font-weight: 500;
+    border: 1px solid var(--line); border-radius: 999px; background: #fff;
+    cursor: pointer; display: flex; align-items: center; gap: 6px;
+  }
+  .basecolor .presets button i {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 1px solid rgba(0,0,0,.18); display: inline-block;
+  }
+  .basecolor.off .presets { opacity: .4; pointer-events: none; }
+
+  .patterns { display: grid; gap: 16px; }
+  .pattern {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .pattern-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .pattern-head b { font-size: 14px; }
+  .pattern-head small { color: var(--muted); font-size: 12px; }
+  .swatches { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .sw {
+    aspect-ratio: 3 / 2;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 10px;
+    cursor: pointer;
+    position: relative;
+  }
+  .sw .role {
+    font-size: 11px;
+    opacity: .85;
+    font-weight: 600;
+  }
+  .sw .hex {
+    font-size: 12px;
+    font-family: ui-monospace, Menlo, monospace;
+    letter-spacing: 0;
+  }
+  .sw .copied {
+    position: absolute; top: 8px; right: 10px;
+    font-size: 11px; background: rgba(0,0,0,.35); color:#fff;
+    padding: 2px 7px; border-radius: 6px; opacity: 0; transition:.2s;
+  }
+  .sw.show-copied .copied { opacity: 1; }
+  .preview {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 18px;
+    border-top: 1px solid var(--line);
+  }
+  .preview .pv-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .preview .pv-text b { font-size: 15px; }
+  .preview .pv-text small { font-size: 11px; }
+  .preview .pv-btn {
+    flex: 0 0 auto;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .empty {
+    color: var(--muted);
+    text-align: center;
+    padding: 40px 20px;
+    border: 1px dashed var(--line);
+    border-radius: 14px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>ムードカラー ジェネレーター</h1>
+  <p>言葉と割合から、メイン / サブ / アクセントの配色を3案つくります（プロトタイプ）</p>
+</header>
+
+<div class="wrap">
+  <!-- 入力パネル -->
+  <div class="panel">
+    <h2>メインカラーの傾向（カラー）</h2>
+    <div id="colorfam" class="chips"></div>
+
+    <h2 style="margin-top:20px">言葉を選ぶ</h2>
+    <div id="keywords"></div>
+
+    <h2 style="margin-top:20px">基準カラー（任意）</h2>
+    <div class="basecolor off" id="basecolor">
+      <label class="toggle"><input type="checkbox" id="useBase"> メインカラーを指定して基準にする</label>
+      <input type="color" id="basePick" value="#3b6ef6">
+      <input type="text" id="baseHex" value="#3b6ef6" spellcheck="false">
+    </div>
+
+    <h2 style="margin-top:20px">背景カラー（任意）</h2>
+    <div class="basecolor off" id="bgcolor">
+      <label class="toggle"><input type="checkbox" id="useBg"> 背景色を指定する（白・薄ベージュなど）</label>
+      <input type="color" id="bgPick" value="#faf8f3">
+      <input type="text" id="bgHex" value="#faf8f3" spellcheck="false">
+      <div class="presets" id="bgPresets"></div>
+    </div>
+
+    <h2 style="margin-top:20px">割合を決める</h2>
+    <div class="slider">
+      <label><span>暖色</span><span>寒色</span></label>
+      <input type="range" id="warm" min="-100" max="100" value="0">
+    </div>
+    <div class="slider">
+      <label><span>男性向け</span><span>女性向け</span></label>
+      <input type="range" id="gender" min="-100" max="100" value="0">
+    </div>
+    <div class="slider">
+      <label><span>カジュアル</span><span>フォーマル</span></label>
+      <input type="range" id="formal" min="-100" max="100" value="0">
+    </div>
+    <div class="slider">
+      <label><span>暗い</span><span>明るい</span></label>
+      <input type="range" id="light" min="-100" max="100" value="0">
+    </div>
+    <div class="slider">
+      <label><span>モノクロ</span><span>ビビッド</span></label>
+      <input type="range" id="vivid" min="-100" max="100" value="0">
+    </div>
+    <div class="slider">
+      <label><span>純色</span><span>中間色（くすみ）</span></label>
+      <input type="range" id="muted" min="0" max="100" value="0">
+    </div>
+
+    <div class="btn-row">
+      <button id="gen">配色を生成</button>
+      <button id="reset">リセット</button>
+    </div>
+  </div>
+
+  <!-- 出力パネル -->
+  <div id="output" class="patterns">
+    <div class="empty">言葉を選ぶか、スライダーを動かして「配色を生成」を押してください。</div>
+  </div>
+</div>
+
+<script>
+/* ===== キーワード辞書 =====================================================
+   各語に、色相(h)・彩度(s 0-1)・明度(l 0-1)の傾向と、
+   3軸(warm: 暖-寒, gender: 男-女, formal: カジュアル-フォーマル)の寄与を持たせる。
+   軸は -1(左) 〜 +1(右)。ここが「言葉→色」の心臓部で、ここを育てていく。 */
+const KEYWORDS = {
+  '印象': {
+    'きれい':   { h: 200, s: .50, l: .66, warm: -.3, gender: +.2, formal: +.3 },
+    'かわいい': { h: 340, s: .70, l: .76, warm: +.4, gender: +.9, formal: -.6 },
+    '上品':     { h: 300, s: .30, l: .60, warm:  0,  gender: +.4, formal: +.7 },
+    'クール':   { h: 205, s: .58, l: .42, warm: -.7, gender: -.4, formal: +.4 },
+    'さわやか': { h: 165, s: .58, l: .64, warm: -.3, gender: +.1, formal: -.1 },
+    '楽しい':   { h:  48, s: .85, l: .64, warm: +.5, gender: +.2, formal: -.8 },
+    '清楚':     { h: 190, s: .28, l: .80, warm: -.2, gender: +.4, formal: +.3 },
+    '華やか':   { h: 330, s: .72, l: .62, warm: +.3, gender: +.6, formal: -.1 },
+    'シンプル': { h: 210, s: .10, l: .72, warm: -.1, gender:  0,  formal: +.5 },
+    'ポップ':   { h:  55, s: .90, l: .66, warm: +.5, gender: +.2, formal: -.9 },
+  },
+  '性格・信頼': {
+    '誠実':     { h: 220, s: .52, l: .46, warm: -.5, gender: -.3, formal: +.6 },
+    '落ち着き': { h: 210, s: .30, l: .46, warm: -.4, gender:  0,  formal: +.5 },
+    '優しい':   { h:  22, s: .45, l: .78, warm: +.5, gender: +.6, formal: -.2 },
+    '力強い':   { h:   2, s: .68, l: .36, warm: +.4, gender: -.7, formal: +.3 },
+    '情熱':     { h:   5, s: .88, l: .50, warm: +.9, gender: -.1, formal: -.2 },
+    '元気':     { h:  35, s: .85, l: .60, warm: +.9, gender:  0,  formal: -.7 },
+    '安心':     { h: 145, s: .40, l: .62, warm:  0,  gender: +.2, formal: +.2 },
+    '知的':     { h: 230, s: .35, l: .42, warm: -.5, gender: -.2, formal: +.7 },
+    '親しみ':   { h:  40, s: .65, l: .66, warm: +.7, gender: +.2, formal: -.5 },
+  },
+  'スタイル': {
+    '高級':     { h: 275, s: .35, l: .26, warm: -.1, gender: -.2, formal: +.9 },
+    'ナチュラル':{ h:  90, s: .40, l: .55, warm: +.1, gender: +.1, formal: -.2 },
+    'モダン':   { h: 185, s: .24, l: .45, warm: -.2, gender: -.2, formal: +.6 },
+    'レトロ':   { h:  30, s: .55, l: .50, warm: +.6, gender:  0,  formal:  0 },
+    '清潔':     { h: 195, s: .34, l: .80, warm: -.4, gender:  0,  formal: +.3 },
+    '神秘的':   { h: 270, s: .50, l: .32, warm: -.2, gender: +.2, formal: +.5 },
+    '温かい':   { h:  25, s: .65, l: .62, warm: +.9, gender: +.2, formal: -.3 },
+    'やわらか': { h:  45, s: .40, l: .82, warm: +.3, gender: +.5, formal: -.4 },
+    '和風':     { h:   8, s: .32, l: .38, warm: +.4, gender: -.1, formal: +.5 },
+    '北欧':     { h:  40, s: .20, l: .72, warm: +.1, gender: +.2, formal: +.2 },
+    'ヴィンテージ':{ h: 28, s: .45, l: .44, warm: +.5, gender: -.1, formal: +.2 },
+  },
+  // muuuuu.org のカテゴリー検索を参考にした「業種・ジャンル」。
+  // 各業種で実際に多い配色の傾向を種として持たせる（今後の拡張ポイント）。
+  'ジャンル（業種）': {
+    'コーポレート':     { h: 215, s: .55, l: .42, warm: -.5, gender: -.2, formal: +.8 },
+    'カフェ・飲食':     { h:  25, s: .50, l: .48, warm: +.7, gender: +.1, formal: -.1 },
+    '美容・コスメ':     { h: 345, s: .35, l: .74, warm: +.3, gender: +.8, formal: +.2 },
+    '医療・クリニック': { h: 190, s: .45, l: .60, warm: -.4, gender:  0,  formal: +.4 },
+    'テック・IT':       { h: 250, s: .55, l: .46, warm: -.3, gender: -.2, formal: +.5 },
+    'ファッション':     { h: 280, s: .08, l: .24, warm: -.1, gender: +.1, formal: +.7 },
+    'キッズ・教育':     { h:  45, s: .82, l: .66, warm: +.6, gender: +.3, formal: -.8 },
+    'ネイチャー・環境': { h: 130, s: .45, l: .48, warm:  0,  gender: +.1, formal:  0 },
+    'ラグジュアリー':   { h:  45, s: .55, l: .30, warm: +.3, gender:  0,  formal: +.9 },
+  },
+};
+
+/* ===== カラー（メインの色系統） =========================================
+   muuuuu.org の「カラー」カテゴリ相当。選ぶとメインの色相を固定寄りにする。
+   mono=無彩色寄り / colorful=生成のたびに色相が変わる。 */
+const COLORS = [
+  { key: 'red',      name: 'レッド',           h:   5, s: .75, l: .50 },
+  { key: 'pink',     name: 'ピンク',           h: 340, s: .65, l: .70 },
+  { key: 'orange',   name: 'オレンジ',         h:  28, s: .80, l: .55 },
+  { key: 'yellow',   name: 'イエロー',         h:  48, s: .85, l: .60 },
+  { key: 'ygreen',   name: 'イエローグリーン', h:  80, s: .60, l: .55 },
+  { key: 'green',    name: 'グリーン',         h: 135, s: .50, l: .45 },
+  { key: 'teal',     name: 'ミント・水色',     h: 185, s: .55, l: .60 },
+  { key: 'blue',     name: 'ブルー',           h: 210, s: .60, l: .50 },
+  { key: 'navy',     name: 'ネイビー',         h: 225, s: .55, l: .32 },
+  { key: 'purple',   name: 'パープル',         h: 275, s: .45, l: .50 },
+  { key: 'brown',    name: 'ブラウン',         h:  25, s: .40, l: .38 },
+  { key: 'beige',    name: 'ベージュ',         h:  38, s: .30, l: .78 },
+  { key: 'mono',     name: 'モノトーン',       h: 220, s: .00, l: .50, mono: true },
+  { key: 'colorful', name: 'カラフル',         h:   0, s: .70, l: .55, colorful: true },
+];
+
+/* ===== ユーティリティ ==================================================== */
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const wrap  = (h) => ((h % 360) + 360) % 360;
+
+// シード付き乱数（同じシードなら同じ結果 → 「別案」を再現・共有できる素地）
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// -amt 〜 +amt の微ゆらぎ（色相・彩度・明度に「案ごとの揺れ」を与える）
+const jit = (rng, amt) => (rng() * 2 - 1) * amt;
+
+/* ===== 配色スキームのプール ==============================================
+   ボタンを押すたびに、この中から3つを選び直して「別案」を作る。
+   各スキームは基準HSL(H,S,L)と乱数rngから main/sub/accent を返す。 */
+const SCHEMES = [
+  { name: '補色ベース', note: 'アクセント = メインの補色(+180°付近)',
+    make: (H, S, L, rng) => ({
+      main:   [H, S, L],
+      sub:    [wrap(H + jit(rng, 10)), S * 0.45, clamp(L + 0.20, 0, 0.92)],
+      accent: [wrap(H + 180 + jit(rng, 12)), clamp(S + 0.15, 0, 0.95), clamp(L + jit(rng, 0.04), 0.2, 0.9)],
+    }) },
+  { name: '類似色ベース', note: 'サブは近い色相、アクセントは反対寄り(+165°)',
+    make: (H, S, L, rng) => ({
+      main:   [H, S, L],
+      sub:    [wrap(H - 30 + jit(rng, 8)), S * 0.8, clamp(L + 0.12, 0, 0.90)],
+      accent: [wrap(H + 165 + jit(rng, 12)), clamp(S + 0.12, 0, 0.95), clamp(L - 0.05, 0.2, 1)],
+    }) },
+  { name: 'トーン差ベース', note: '同系でトーンを離し、アクセントで締める(+195°)',
+    make: (H, S, L, rng) => ({
+      main:   [H, S, L],
+      sub:    [wrap(H + 20 + jit(rng, 8)), S * 0.55, clamp(L + 0.24, 0, 0.92)],
+      accent: [wrap(H + 195 + jit(rng, 10)), S, clamp(L - 0.14, 0.18, 1)],
+    }) },
+  { name: '三色配色（トライアド）', note: '色相を120°ずつ離した鮮やかな3色',
+    make: (H, S, L, rng) => ({
+      main:   [H, S, L],
+      sub:    [wrap(H + 120 + jit(rng, 10)), S * 0.7, clamp(L + 0.06, 0, 0.90)],
+      accent: [wrap(H + 240 + jit(rng, 10)), clamp(S + 0.08, 0, 0.95), L],
+    }) },
+  { name: '分裂補色', note: '補色の両隣を使うバランス型(+150°/+210°)',
+    make: (H, S, L, rng) => ({
+      main:   [H, S, L],
+      sub:    [wrap(H + 150 + jit(rng, 10)), S * 0.6, clamp(L + 0.10, 0, 0.90)],
+      accent: [wrap(H + 210 + jit(rng, 10)), clamp(S + 0.12, 0, 0.95), clamp(L - 0.04, 0.2, 1)],
+    }) },
+  { name: '同系トーン', note: '同じ色相で明度差をつけた落ち着いた配色',
+    make: (H, S, L, rng) => ({
+      main:   [H, S, L],
+      sub:    [wrap(H + jit(rng, 6)), S * 0.4, clamp(L + 0.22, 0, 0.92)],
+      accent: [wrap(H + jit(rng, 6)), clamp(S + 0.20, 0, 0.95), clamp(L - 0.20, 0.15, 1)],
+    }) },
+];
+
+// 色相の平均は円環なので、単位ベクトルに直して平均する
+function circularMean(hues) {
+  let x = 0, y = 0;
+  for (const h of hues) { x += Math.cos(h * Math.PI / 180); y += Math.sin(h * Math.PI / 180); }
+  let a = Math.atan2(y, x) * 180 / Math.PI;
+  return (a + 360) % 360;
+}
+// h1 から h2 へ、比率 t(0-1) だけ最短方向に回す
+function blendHue(h1, h2, t) {
+  let d = ((h2 - h1 + 540) % 360) - 180;
+  return (h1 + d * t + 360) % 360;
+}
+function hslToHex(h, s, l) {
+  s = clamp(s, 0, 1); l = clamp(l, 0, 1);
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r, g, b;
+  if (h < 60)      [r, g, b] = [c, x, 0];
+  else if (h < 120)[r, g, b] = [x, c, 0];
+  else if (h < 180)[r, g, b] = [0, c, x];
+  else if (h < 240)[r, g, b] = [0, x, c];
+  else if (h < 300)[r, g, b] = [x, 0, c];
+  else             [r, g, b] = [c, 0, x];
+  const to = v => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+  return '#' + to(r) + to(g) + to(b);
+}
+// #RRGGBB → {h,s,l}（基準カラー指定を種に使うため）
+function hexToHsl(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60; if (h < 0) h += 360;
+  }
+  const l = (max + min) / 2;
+  const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+  return { h, s, l };
+}
+// 背景色に対して読みやすい文字色（白/黒）を返す
+function textOn(hex) {
+  const r = parseInt(hex.substr(1,2),16), g = parseInt(hex.substr(3,2),16), b = parseInt(hex.substr(5,2),16);
+  const lum = (0.299*r + 0.587*g + 0.114*b) / 255;
+  return lum > 0.6 ? '#1f2933' : '#ffffff';
+}
+
+/* ===== 入力を集めて基準HSLを決める ====================================== */
+function computeBase() {
+  // チェックされた言葉を集める
+  const checked = [];
+  document.querySelectorAll('#keywords input:checked').forEach(el => {
+    const [cat, key] = el.value.split('/');
+    checked.push(KEYWORDS[cat][key]);
+  });
+
+  // スライダー -1..1
+  const warmS   = -(+document.getElementById('warm').value)   / 100; // 左(暖)を +warm にしたいので反転
+  const genderS =  (+document.getElementById('gender').value) / 100; // 右(女性) = +
+  const formalS =  (+document.getElementById('formal').value) / 100; // 右(フォーマル) = +
+  const lightS  =  (+document.getElementById('light').value)  / 100; // 右(明るい) = +
+  const vividS  =  (+document.getElementById('vivid').value)  / 100; // 右(ビビッド) = +
+  const mutedS  =  (+document.getElementById('muted').value)  / 100; // 0(純色) 〜 1(くすみ)
+
+  // 基準カラー（任意）: チェックONかつ有効な#hexなら、これを種にする
+  const useBase = document.getElementById('useBase').checked;
+  const baseHsl = useBase ? hexToHsl(document.getElementById('basePick').value) : null;
+
+  // 背景カラー（任意）: 指定されたら3案すべての背景として使う
+  const useBg = document.getElementById('useBg').checked;
+  const bgOverride = useBg ? hexToHsl(document.getElementById('bgPick').value) : null;
+
+  // --- 種となるHSLと軸平均を作る（優先度: 基準カラー > 言葉 > 中立）---
+  let seedHue, seedS, seedL, kwWarm = 0, kwGender = 0, kwFormal = 0;
+  if (checked.length) {
+    kwWarm   = checked.reduce((a, k) => a + k.warm, 0)   / checked.length;
+    kwGender = checked.reduce((a, k) => a + k.gender, 0) / checked.length;
+    kwFormal = checked.reduce((a, k) => a + k.formal, 0) / checked.length;
+  }
+  // カラー（メインの色系統）の選択。基準カラーの次に優先する色相アンカー。
+  const famKey = document.querySelector('input[name=colorfam]:checked')?.value || '';
+  const fam = COLORS.find(c => c.key === famKey);
+
+  if (baseHsl) {
+    // 基準カラーを種に。色相はここで固定寄りにする（下のpullで弱めに扱う）
+    seedHue = baseHsl.h; seedS = baseHsl.s; seedL = baseHsl.l;
+  } else if (fam) {
+    // カラー選択が最優先の色相アンカー。カラフルは生成のたび色相が変わる
+    seedHue = fam.colorful ? (seed % 360) : fam.h;
+    if (checked.length) { // 言葉があればトーン(彩度・明度)は言葉から取る
+      seedS = checked.reduce((a, k) => a + k.s, 0) / checked.length;
+      seedL = checked.reduce((a, k) => a + k.l, 0) / checked.length;
+    } else {
+      seedS = fam.s; seedL = fam.l;
+    }
+    if (fam.mono) seedS = 0.05; // モノトーンは無彩色寄り
+  } else if (checked.length) {
+    seedHue = circularMean(checked.map(k => k.h));
+    seedS   = checked.reduce((a, k) => a + k.s, 0) / checked.length;
+    seedL   = checked.reduce((a, k) => a + k.l, 0) / checked.length;
+  } else {
+    seedHue = 210; seedS = 0.55; seedL = 0.55; // 言葉なし → 中立の種
+  }
+
+  // 言葉とスライダーを合成した実効の3軸（-1..1）
+  const warm   = clamp(kwWarm   * 0.5 + warmS   * (checked.length ? 0.6 : 1), -1, 1);
+  const gender = clamp(kwGender * 0.5 + genderS * (checked.length ? 0.6 : 1), -1, 1);
+  const formal = clamp(kwFormal * 0.5 + formalS * (checked.length ? 0.6 : 1), -1, 1);
+
+  // --- 色相：暖/寒スライダーで暖色(30°)⇔寒色(215°)へ引っぱる ---
+  // 基準カラー指定時は主色の色相をなるべく保つため引っぱりを弱める
+  const warmTarget = warm >= 0 ? 30 : 215;
+  const pull = Math.abs(warm) * (baseHsl ? 0.12 : (fam ? 0.15 : (checked.length ? 0.35 : 0.85)));
+  let H = blendHue(seedHue, warmTarget, pull);
+
+  // --- 彩度：フォーマル→下げ / 彩度スライダー / 中間色でくすませる ---
+  let S = seedS * (1 - formal * 0.4);
+  S = vividS >= 0 ? S + (1 - S) * vividS   // ビビッド寄り: 1へ近づける
+                  : S * (1 + vividS);      // モノクロ寄り: 0へ近づける
+  S = S * (1 - mutedS) + 0.30 * mutedS;    // 中間色: 彩度を鈍い値(0.30)へブレンド
+  S = clamp(S + gender * 0.05, 0, 0.98);
+
+  // --- 明度：女性→明るく / フォーマル→暗く / 明度スライダー / 中間色は中庸へ ---
+  let L = seedL + gender * 0.10 - formal * 0.10;
+  L = lightS >= 0 ? L + (0.92 - L) * lightS // 明るい方向
+                  : L + (L - 0.12) * lightS; // 暗い方向(lightS<0)
+  L = L * (1 - mutedS * 0.6) + 0.55 * (mutedS * 0.6); // くすみ: 中庸の明度へ寄せる
+  L = clamp(L, 0.12, 0.92);
+
+  const hasInput = checked.length > 0 || baseHsl || fam || bgOverride ||
+    warmS || genderS || formalS || lightS || vividS || mutedS;
+  return { H, S, L, hasInput, bgOverride };
+}
+
+/* ===== 3パターン生成 ====================================================
+   基準HSLから、配色理論の異なる3案を作る。乱数は使わず入力から一意に決まる。 */
+function makePatterns(b, seed) {
+  const { H, S, L } = b;
+  const rng = mulberry32(seed);
+  // 背景色: 指定があればそれを全案に使う。無ければメインから自動生成。
+  const bg = (mode) => {
+    if (b.bgOverride) return [b.bgOverride.h, b.bgOverride.s, b.bgOverride.l]; // ユーザー指定を優先
+    if (L < 0.40) return [H, clamp(S * 0.45, 0, 0.5), 0.13];        // ダーク配色 → 暗い背景
+    if (mode === 'neutral') return [H, clamp(S * 0.10, 0, 0.12), 0.97];
+    if (mode === 'tint')    return [H, clamp(S * 0.28, 0, 0.32), 0.95];
+    return [H, clamp(S * 0.20, 0, 0.25), 0.93];                      // soft
+  };
+  // スキームをシャッフルして3つ選ぶ（クリックのたびに別の組み合わせ）
+  const pool = SCHEMES.slice();
+  for (let i = pool.length - 1; i > 0; i--) {
+    const k = Math.floor(rng() * (i + 1));
+    [pool[i], pool[k]] = [pool[k], pool[i]];
+  }
+  const modes = ['neutral', 'tint', 'soft'];
+  return pool.slice(0, 3).map((sc, i) => {
+    const c = sc.make(H, S, L, rng);
+    return { name: sc.name, note: sc.note, main: c.main, sub: c.sub, accent: c.accent, bg: bg(modes[i]) };
+  });
+}
+
+/* ===== 描画 ============================================================== */
+// 「別案」を決めるシード。ボタンで更新、スライダー調整中は保持する。
+let seed = Math.floor(mulberry32(1234)() * 1e9) || 1;
+function render() {
+  const b = computeBase();
+  const out = document.getElementById('output');
+  if (!b.hasInput) {
+    out.innerHTML = '<div class="empty">言葉を選ぶか、スライダーを動かして「配色を生成」を押してください。</div>';
+    return;
+  }
+  const roles = ['メイン', 'サブ', 'アクセント', '背景'];
+  out.innerHTML = makePatterns(b, seed).map(p => {
+    const cols = [p.main, p.sub, p.accent, p.bg].map(c => hslToHex(c[0], c[1], c[2]));
+    const [main, sub, accent, bgc] = cols;
+    const swatches = cols.map((hex, i) => `
+      <div class="sw" style="background:${hex};color:${textOn(hex)}" data-hex="${hex}">
+        <span class="copied">コピー済</span>
+        <span class="role">${roles[i]}</span>
+        <span class="hex">${hex.toUpperCase()}</span>
+      </div>`).join('');
+    // 配色を実際の画面に当てたプレビュー（背景=bg / 見出し=main / ボタン=accent）
+    const preview = `
+      <div class="preview" style="background:${bgc}">
+        <div class="pv-text">
+          <b style="color:${main}">見出しテキスト</b>
+          <small style="color:${textOn(bgc)};opacity:.75">本文のサンプルです。背景に対する可読性を確認できます。</small>
+        </div>
+        <span class="pv-btn" style="background:${accent};color:${textOn(accent)}">ボタン</span>
+      </div>`;
+    return `
+      <div class="pattern">
+        <div class="pattern-head"><b>${p.name}</b><small>${p.note}</small></div>
+        <div class="swatches">${swatches}</div>
+        ${preview}
+      </div>`;
+  }).join('');
+
+  // クリックでコピー
+  out.querySelectorAll('.sw').forEach(sw => {
+    sw.addEventListener('click', () => {
+      navigator.clipboard?.writeText(sw.dataset.hex);
+      sw.classList.add('show-copied');
+      setTimeout(() => sw.classList.remove('show-copied'), 900);
+    });
+  });
+}
+
+/* ===== 初期化 ============================================================ */
+function buildColors() {
+  const box = document.getElementById('colorfam');
+  const none = `<label class="chip color">
+      <input type="radio" name="colorfam" value="" checked><span><i class="none"></i>指定なし</span>
+    </label>`;
+  box.innerHTML = none + COLORS.map(c => {
+    let dot;
+    if (c.colorful) dot = 'background:conic-gradient(from 0deg,#ff5252,#ffb142,#fdd835,#66bb6a,#26c6da,#42a5f5,#7e57c2,#ff5252)';
+    else if (c.mono) dot = 'background:#9aa0a6';
+    else dot = 'background:' + hslToHex(c.h, c.s, c.l);
+    return `<label class="chip color">
+        <input type="radio" name="colorfam" value="${c.key}"><span><i style="${dot}"></i>${c.name}</span>
+      </label>`;
+  }).join('');
+}
+
+function buildKeywords() {
+  const box = document.getElementById('keywords');
+  box.innerHTML = Object.entries(KEYWORDS).map(([cat, items]) => `
+    <div class="kw-group">
+      <span>${cat}</span>
+      <div class="chips">
+        ${Object.keys(items).map(k => `
+          <label class="chip">
+            <input type="checkbox" value="${cat}/${k}"><span>${k}</span>
+          </label>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+// --- 基準カラーの操作（カラーピッカーとテキストを同期・ON/OFF切替）---
+const basePick = document.getElementById('basePick');
+const baseHex  = document.getElementById('baseHex');
+const useBase  = document.getElementById('useBase');
+const baseBox  = document.getElementById('basecolor');
+function syncBaseUI() {
+  baseBox.classList.toggle('off', !useBase.checked);
+}
+useBase.addEventListener('change', () => { syncBaseUI(); render(); });
+basePick.addEventListener('input', () => { baseHex.value = basePick.value; render(); });
+baseHex.addEventListener('input', () => {
+  if (/^#?[0-9a-f]{6}$/i.test(baseHex.value.trim())) {
+    basePick.value = baseHex.value.trim().replace(/^#?/, '#');
+    render();
+  }
+});
+
+// --- 背景カラーの操作（ピッカー・テキスト・プリセット・ON/OFF）---
+const bgPick = document.getElementById('bgPick');
+const bgHex  = document.getElementById('bgHex');
+const useBg  = document.getElementById('useBg');
+const bgBox  = document.getElementById('bgcolor');
+const BG_PRESETS = [
+  { name: '白',          hex: '#ffffff' },
+  { name: 'オフホワイト', hex: '#faf8f3' },
+  { name: 'ベージュ',     hex: '#f2e9d8' },
+  { name: 'ライトグレー', hex: '#eef0f2' },
+  { name: 'ダーク',       hex: '#1e2126' },
+];
+document.getElementById('bgPresets').innerHTML = BG_PRESETS.map(p =>
+  `<button type="button" data-hex="${p.hex}"><i style="background:${p.hex}"></i>${p.name}</button>`).join('');
+function syncBgUI() { bgBox.classList.toggle('off', !useBg.checked); }
+function setBg(hex) { bgPick.value = hex; bgHex.value = hex; }
+useBg.addEventListener('change', () => { syncBgUI(); render(); });
+bgPick.addEventListener('input', () => { bgHex.value = bgPick.value; render(); });
+bgHex.addEventListener('input', () => {
+  if (/^#?[0-9a-f]{6}$/i.test(bgHex.value.trim())) {
+    bgPick.value = bgHex.value.trim().replace(/^#?/, '#');
+    render();
+  }
+});
+document.getElementById('bgPresets').addEventListener('click', (e) => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  setBg(btn.dataset.hex);
+  useBg.checked = true; syncBgUI();
+  render();
+});
+
+buildColors();
+buildKeywords();
+syncBaseUI();
+syncBgUI();
+// 「配色を生成」= シードを更新して別案へシャッフル
+document.getElementById('gen').addEventListener('click', () => {
+  seed = Math.floor(Math.random() * 1e9) || 1;
+  render();
+});
+document.getElementById('reset').addEventListener('click', () => {
+  document.querySelectorAll('#keywords input').forEach(el => el.checked = false);
+  document.querySelector('input[name=colorfam][value=""]').checked = true;
+  ['warm','gender','formal','light','vivid'].forEach(id => document.getElementById(id).value = 0);
+  document.getElementById('muted').value = 0;
+  useBase.checked = false; syncBaseUI();
+  useBg.checked = false; syncBgUI();
+  render();
+});
+// 入力が変わったら自動で更新（生成ボタンを押さなくても反映）
+document.querySelectorAll('#colorfam input, #keywords input, .slider input').forEach(el =>
+  el.addEventListener('input', render));
+</script>
+</body>
+</html>
