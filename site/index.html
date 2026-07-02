@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Kenesis は ITインフラと SES の2事業で、堅実な技術と人の成長を支えます。サービスのご相談・SES採用エンジニアの応募はこちらから。">
+  <meta name="color-scheme" content="light">
+  <title>Kenesis ｜ ITインフラ・SES 2事業で技術と成長を支える</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="js/main.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#fv">本文へスキップ</a>
+
+  <!-- ============ ヘッダー ============ -->
+  <header class="site-header" id="site-header">
+    <div class="container site-header__inner">
+      <a class="site-header__logo" href="#fv" aria-label="Kenesis ホーム">
+        <img src="assets/logo-placeholder.svg" width="160" height="40" alt="Kenesis">
+      </a>
+
+      <button
+        class="nav-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="primary-nav"
+        aria-label="メニューを開く">
+        <span class="nav-toggle__bar" aria-hidden="true"></span>
+        <span class="nav-toggle__bar" aria-hidden="true"></span>
+        <span class="nav-toggle__bar" aria-hidden="true"></span>
+      </button>
+
+      <nav class="primary-nav" id="primary-nav" aria-label="グローバルナビゲーション">
+        <ul class="primary-nav__list">
+          <li><a href="#news">お知らせ</a></li>
+          <li><a href="#business">事業内容</a></li>
+          <li><a href="#recruit">採用情報</a></li>
+          <li><a href="#company">会社案内</a></li>
+          <li><a class="primary-nav__cta" href="#contact" data-cta="nav-contact">お問い合わせ</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============ FV（ファーストビュー） ============ -->
+    <section id="fv" class="fv" aria-labelledby="fv-heading">
+      <div class="container fv__inner">
+        <!-- DOM順: テキスト → ビジュアル → CTA（CSS無効時も要件順を維持） -->
+        <div class="fv__text">
+          <!-- h1 はページ恒常の大見出し。カルーセルでは書き換えない（アウトライン/SEO/SR安定のため静的） -->
+          <h1 id="fv-heading" class="fv__title">堅実な技術で、<br>事業と人の成長を支える。</h1>
+          <!-- スライドで切り替わるのは eyebrow / サブコピーのみ。aria-live で SR へ穏当に通知 -->
+          <div class="fv__copy" aria-live="polite">
+            <!-- スライド1はタグ非表示（JSがスライド2/3で表示・差し替え）。JS無効時もスライド1の見え方を維持 -->
+            <p class="fv__eyebrow" style="display:none"></p>
+            <p class="fv__sub">
+              止まらないインフラを設計・運用する「ITインフラ事業」と、現場で力を伸ばすエンジニアを支える「SES事業」。
+              2つの軸で、お客様とエンジニア双方の未来を育てます。
+            </p>
+          </div>
+        </div>
+
+        <div class="fv__visual">
+          <!-- 写真領域はCSSグラデーションのプレースホルダ。実写真支給時に各レイヤーへ差し替え。
+               3レイヤーをJSでクロスフェード切替（テキストと同期）。装飾のため aria-hidden -->
+          <div class="fv__photo-stage">
+            <div class="fv__photo fv__photo--1 is-active" aria-hidden="true">
+              <svg class="fv__accent" viewBox="0 0 220 220" aria-hidden="true" focusable="false">
+                <circle cx="150" cy="70" r="50" fill="#d8efe2"/>
+                <path d="M110 200 C110 150 110 110 110 80" stroke="#1f7a4d" stroke-width="6" stroke-linecap="round" fill="none"/>
+                <path d="M110 130 C80 122 60 96 60 60 C100 60 110 92 110 132 Z" fill="#1f7a4d"/>
+                <path d="M110 150 C150 142 180 116 180 80 C140 80 110 108 110 152 Z" fill="#7cc79e"/>
+              </svg>
+            </div>
+            <div class="fv__photo fv__photo--2" aria-hidden="true">
+              <svg class="fv__accent" viewBox="0 0 220 220" aria-hidden="true" focusable="false">
+                <rect x="55" y="45" width="110" height="34" rx="6" fill="#d8efe2" stroke="#14603b" stroke-width="4"/>
+                <rect x="55" y="93" width="110" height="34" rx="6" fill="#7cc79e" stroke="#14603b" stroke-width="4"/>
+                <rect x="55" y="141" width="110" height="34" rx="6" fill="#d8efe2" stroke="#14603b" stroke-width="4"/>
+                <circle cx="74" cy="62" r="5" fill="#14603b"/>
+                <circle cx="74" cy="110" r="5" fill="#14603b"/>
+                <circle cx="74" cy="158" r="5" fill="#14603b"/>
+              </svg>
+            </div>
+            <div class="fv__photo fv__photo--3" aria-hidden="true">
+              <svg class="fv__accent" viewBox="0 0 220 220" aria-hidden="true" focusable="false">
+                <circle cx="110" cy="78" r="34" fill="#d8efe2" stroke="#14603b" stroke-width="5"/>
+                <path d="M52 168 C52 128 80 108 110 108 C140 108 168 128 168 168" fill="#7cc79e" stroke="#14603b" stroke-width="5" stroke-linecap="round"/>
+                <path d="M150 60 C170 60 184 74 184 96" fill="none" stroke="#1f7a4d" stroke-width="6" stroke-linecap="round"/>
+              </svg>
+            </div>
+          </div>
+          <div class="fv__controls">
+            <div class="fv__dots" role="group" aria-label="メインビジュアルのスライド切替">
+              <button type="button" class="fv__dot is-active" data-fv-dot="0" aria-label="スライド1: 会社全体を表示" aria-pressed="true"></button>
+              <button type="button" class="fv__dot" data-fv-dot="1" aria-label="スライド2: ITインフラ事業を表示" aria-pressed="false"></button>
+              <button type="button" class="fv__dot" data-fv-dot="2" aria-label="スライド3: SES事業を表示" aria-pressed="false"></button>
+            </div>
+            <!-- 恒常的な一時停止/再生コントロール（WCAG 2.2.2 Pause, Stop, Hide）。aria-pressed=true で停止中 -->
+            <button type="button" class="fv__playpause" data-fv-playpause aria-pressed="false">
+              <span class="fv__playpause-icon" aria-hidden="true"></span>
+              <span class="fv__playpause-text">一時停止する</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="fv__cta">
+          <a class="btn btn--primary" href="#contact" data-cta="contact">お問い合わせ</a>
+          <a class="btn btn--secondary" href="#recruit" data-cta="recruit">採用情報</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 事業紹介（2事業 対等） ============ -->
+    <section id="business" class="business section" aria-labelledby="business-heading">
+      <div class="container">
+        <h2 id="business-heading" class="section__title">2つの事業</h2>
+        <p class="section__lead">ITインフラと SES。どちらも私たちの主軸であり、対等に力を注いでいます。</p>
+
+        <ul class="biz-grid">
+          <li class="biz-card">
+            <div class="biz-card__icon" aria-hidden="true">
+              <svg viewBox="0 0 48 48" focusable="false">
+                <rect x="8" y="10" width="32" height="20" rx="3" fill="none" stroke="#1f7a4d" stroke-width="3"/>
+                <line x1="16" y1="38" x2="32" y2="38" stroke="#1f7a4d" stroke-width="3" stroke-linecap="round"/>
+                <line x1="24" y1="30" x2="24" y2="38" stroke="#1f7a4d" stroke-width="3"/>
+              </svg>
+            </div>
+            <h3 class="biz-card__title">ITインフラ事業</h3>
+            <p class="biz-card__desc">
+              サーバー・ネットワーク・クラウドの設計から構築・運用保守まで。止まらない基盤で、お客様のビジネスを足元から支えます。
+            </p>
+            <a class="biz-card__link" href="#contact" data-cta="biz-infra">サービスを相談する</a>
+          </li>
+
+          <li class="biz-card">
+            <div class="biz-card__icon" aria-hidden="true">
+              <svg viewBox="0 0 48 48" focusable="false">
+                <circle cx="24" cy="17" r="8" fill="none" stroke="#1f7a4d" stroke-width="3"/>
+                <path d="M10 40 C10 31 17 26 24 26 C31 26 38 31 38 40" fill="none" stroke="#1f7a4d" stroke-width="3" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <h3 class="biz-card__title">SES事業</h3>
+            <p class="biz-card__desc">
+              エンジニアが力を発揮できる現場へ。スキルと志向に合ったプロジェクトをマッチングし、一人ひとりの成長を伴走支援します。
+            </p>
+            <a class="biz-card__link" href="#recruit" data-cta="biz-ses">採用情報を見る</a>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============ 採用情報（SES） ============ -->
+    <section id="recruit" class="recruit section" aria-labelledby="recruit-heading">
+      <div class="container recruit__inner">
+        <div class="recruit__text">
+          <h2 id="recruit-heading" class="section__title">いっしょに、育とう。</h2>
+          <p class="section__lead">
+            未経験からでも、経験を積んだ方も。Kenesis は一人ひとりのペースに寄り添いながら、
+            技術もキャリアも伸ばせる環境を用意しています。まずは気軽にのぞいてみてください。
+          </p>
+          <a class="btn btn--accent" href="#contact" data-cta="recruit-apply">採用エントリー・お問い合わせ</a>
+          <p class="recruit__note">※ 採用ページ本体・専用窓口は別途準備中です（導線プレースホルダ）。</p>
+        </div>
+        <div class="recruit__visual">
+          <div class="media-photo" role="img" aria-label="成長するエンジニアと自然をイメージしたビジュアル（プレースホルダ）"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 会社案内 ============ -->
+    <section id="company" class="company section" aria-labelledby="company-heading">
+      <div class="container company__inner">
+        <div class="company__text">
+          <h2 id="company-heading" class="section__title">会社案内</h2>
+          <p class="section__lead">
+            「技術で、事業と人の成長を支える」を理念に、ITインフラと SES の2事業を展開しています。
+            堅実な技術と誠実な伴走で、お客様にもエンジニアにも長く選ばれる会社を目指します。
+          </p>
+          <a class="btn btn--secondary" href="#contact" data-cta="company-more">会社案内を見る</a>
+        </div>
+        <div class="company__visual">
+          <div class="media-photo" role="img" aria-label="Kenesisの拠点・チームをイメージしたビジュアル（プレースホルダ）"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ お知らせ ============ -->
+    <section id="news" class="news section" aria-labelledby="news-heading">
+      <div class="container news__inner">
+        <div class="news__head">
+          <h2 id="news-heading" class="section__title">お知らせ</h2>
+          <a class="news__more" href="#news" data-cta="news-list">お知らせ一覧へ</a>
+        </div>
+        <ul class="news__list">
+          <li class="news__item">
+            <a class="news__link" href="#news">
+              <time class="news__date" datetime="2026-06-20">2026.06.20</time>
+              <span class="news__title">サマーインターンシップ募集開始のお知らせ（プレースホルダ）</span>
+            </a>
+          </li>
+          <li class="news__item">
+            <a class="news__link" href="#news">
+              <time class="news__date" datetime="2026-06-10">2026.06.10</time>
+              <span class="news__title">クラウド基盤構築の新サービス提供を開始しました（プレースホルダ）</span>
+            </a>
+          </li>
+          <li class="news__item">
+            <a class="news__link" href="#news">
+              <time class="news__date" datetime="2026-05-28">2026.05.28</time>
+              <span class="news__title">本社移転のお知らせ（プレースホルダ）</span>
+            </a>
+          </li>
+        </ul>
+        <p class="news__note">※ お知らせ一覧・個別記事ページは別途実装予定です（リンクプレースホルダ）。</p>
+      </div>
+    </section>
+
+    <!-- ============ お問い合わせ ============ -->
+    <section id="contact" class="contact section" aria-labelledby="contact-heading">
+      <div class="container contact__inner">
+        <h2 id="contact-heading" class="section__title">お問い合わせ</h2>
+        <p class="section__lead">サービスのご相談・採用に関するお問い合わせは、こちらから承ります。</p>
+        <div class="contact__actions">
+          <a class="btn btn--primary" href="#contact" data-cta="contact-service">サービスについて相談する</a>
+          <a class="btn btn--secondary" href="#recruit" data-cta="contact-recruit">採用について問い合わせる</a>
+        </div>
+        <p class="contact__note">※ フォーム本体は別チケットで実装予定です（リンクプレースホルダ）。</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ フッター ============ -->
+  <footer class="site-footer">
+    <div class="container site-footer__inner">
+      <div class="site-footer__col site-footer__col--brand">
+        <p class="site-footer__brand">Kenesis</p>
+        <p class="site-footer__desc">ITインフラと SES の2事業で、堅実な技術と人の成長を支えます。</p>
+      </div>
+      <nav class="site-footer__col" aria-label="事業内容">
+        <p class="site-footer__heading">事業内容</p>
+        <ul>
+          <li><a href="#business">ITインフラ</a></li>
+          <li><a href="#business">SES</a></li>
+        </ul>
+      </nav>
+      <nav class="site-footer__col" aria-label="会社情報">
+        <p class="site-footer__heading">会社情報</p>
+        <ul>
+          <li><a href="#news">お知らせ</a></li>
+          <li><a href="#company">会社案内</a></li>
+          <li><a href="#recruit">採用情報</a></li>
+        </ul>
+      </nav>
+      <nav class="site-footer__col" aria-label="お問い合わせ">
+        <p class="site-footer__heading">お問い合わせ</p>
+        <ul>
+          <li><a href="#contact">お問い合わせフォーム</a></li>
+        </ul>
+      </nav>
+      <p class="site-footer__copy">&copy; 2026 Kenesis. All rights reserved.</p>
+    </div>
+  </footer>
+</body>
+</html>
