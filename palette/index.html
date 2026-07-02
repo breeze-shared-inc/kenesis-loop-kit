@@ -137,6 +137,12 @@
   }
   .basecolor.off .presets { opacity: .4; pointer-events: none; }
 
+  .toggle-row {
+    display: flex; align-items: flex-start; gap: 6px;
+    font-size: 13px; cursor: pointer;
+  }
+  .toggle-row input { margin-top: 4px; }
+
   .patterns { display: grid; gap: 16px; }
   .pattern {
     background: var(--card);
@@ -237,6 +243,12 @@
       <input type="text" id="bgHex" value="#faf8f3" spellcheck="false">
       <div class="presets" id="bgPresets"></div>
     </div>
+
+    <h2 style="margin-top:20px">配色の傾向</h2>
+    <label class="toggle-row">
+      <input type="checkbox" id="sameHue">
+      同系色でまとめる（アクセントを補色にせず、メインと同系統の色相に寄せる）
+    </label>
 
     <h2 style="margin-top:20px">割合を決める</h2>
     <div class="slider">
@@ -546,14 +558,35 @@ function computeBase() {
   L = clamp(L, 0.12, 0.92);
 
   const hasInput = checked.length > 0 || baseHsl || fam || bgOverride ||
+    document.getElementById('sameHue').checked ||
     warmS || genderS || formalS || lightS || vividS || mutedS;
   return { H, S, L, hasInput, bgOverride };
+}
+
+/* ===== 同系色モード ======================================================
+   「同系色でまとめる」ON時の後処理。スキームが作った sub/accent の色相を
+   メイン近傍（sub: ±20° / accent: ±35°）へ圧縮し、色相差の代わりに
+   彩度・明度の差でアクセントを成立させる。補色の派手さを抑えたマイルド版。 */
+function toSameHue(c, H, S, L) {
+  // hue をメイン(H)から range 以内に圧縮する（最短方向の差を比例縮小）
+  const near = (hue, range) => {
+    const d = ((hue - H + 540) % 360) - 180; // -180..180 の最短差
+    return wrap(H + (d / 180) * range);
+  };
+  const sub = [near(c.sub[0], 20), c.sub[1], c.sub[2]];
+  // アクセント: 色相はメイン寄り、彩度をやや上げ、明度をメインから離して差別化
+  const aH = near(c.accent[0], 35);
+  const aS = clamp(Math.max(c.accent[1], S + 0.12), 0, 0.92);
+  const aL = L >= 0.5 ? clamp(L - 0.28, 0.15, 0.90)
+                      : clamp(L + 0.30, 0.10, 0.90);
+  return { main: c.main, sub, accent: [aH, aS, aL] };
 }
 
 /* ===== 3パターン生成 ====================================================
    基準HSLから、配色理論の異なる3案を作る。乱数は使わず入力から一意に決まる。 */
 function makePatterns(b, seed) {
   const { H, S, L } = b;
+  const sameHue = document.getElementById('sameHue').checked;
   const rng = mulberry32(seed);
   // 背景色: 指定があればそれを全案に使う。無ければメインから自動生成。
   const bg = (mode) => {
@@ -571,8 +604,13 @@ function makePatterns(b, seed) {
   }
   const modes = ['neutral', 'tint', 'soft'];
   return pool.slice(0, 3).map((sc, i) => {
-    const c = sc.make(H, S, L, rng);
-    return { name: sc.name, note: sc.note, main: c.main, sub: c.sub, accent: c.accent, bg: bg(modes[i]) };
+    let c = sc.make(H, S, L, rng);
+    let note = sc.note;
+    if (sameHue) {
+      c = toSameHue(c, H, S, L);
+      note = '同系色モード: 色相を揃えて彩度・明度で差別化';
+    }
+    return { name: sc.name, note, main: c.main, sub: c.sub, accent: c.accent, bg: bg(modes[i]) };
   });
 }
 
@@ -718,8 +756,10 @@ document.getElementById('reset').addEventListener('click', () => {
   document.getElementById('muted').value = 0;
   useBase.checked = false; syncBaseUI();
   useBg.checked = false; syncBgUI();
+  document.getElementById('sameHue').checked = false;
   render();
 });
+document.getElementById('sameHue').addEventListener('change', render);
 // 入力が変わったら自動で更新（生成ボタンを押さなくても反映）
 document.querySelectorAll('#colorfam input, #keywords input, .slider input').forEach(el =>
   el.addEventListener('input', render));
