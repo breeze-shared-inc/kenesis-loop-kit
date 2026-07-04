@@ -9,13 +9,16 @@
 
 | コマンド | 用途 | 引数 |
 |---|---|---|
+| `/spec-interview` | 対話形式で要件定義書(docs/SPEC.md)を作成・改訂する | モード（最短/フル・省略可） |
+| `/wireframe-gen` | SPECの画面一覧からワイヤーフレーム(docs/wireframes/)を生成する | SCR-ID/モード（省略可） |
 | `/start-loop` | ループを開始・再開する | チケットID（省略可） |
 | `/new-ticket` | チケットを新規作成する | タイトル（必須） |
 | `/improvement-loop` | 改善ループを起動する | チケットID 差し戻し先（省略可） |
 | `/archive` | 完了チケットを個人vaultへ移動する | アーカイブ先パス（省略可） |
 | `/metrics` | ループの観測メトリクスを表示する | チケットID/プロジェクト名（省略可・フィルタ） |
 
-各コマンドの詳細は `.claude/commands/` を参照してください。
+- `/spec-interview` と `/wireframe-gen` は開発ループの**前工程**（SPEC・ワイヤーフレームの整備）を担うスキル。定義は `.claude/skills/` を参照。
+- ループ本体のコマンド（`/start-loop` 以降）の詳細は `.claude/commands/` を参照してください。
 
 ---
 
@@ -37,10 +40,10 @@
 ## 開発ループフロー
 
 ```
-[チケット作成]
-      ↓
-orchestrator
-      ↓
+[SPEC作成 /spec-interview] → [ワイヤーフレーム /wireframe-gen] → [チケット作成]
+                                                                      ↓
+                                                                orchestrator
+                                                                      ↓
 investigator → architect → implementer → tester → reviewer
                                  ↑                     |
                                  └────── 実装ループ ────┘
@@ -72,12 +75,14 @@ reviewerが承認し、人間が成果物を確認した後に判断する。
 
 | ファイル | 作成者 | 用途 |
 |---|---|---|
-| `docs/SPEC.md` | 人間 | 要件定義・仕様。investigatorとarchitectが参照する |
+| `docs/SPEC.md` | 人間（`/spec-interview` で対話生成し人間が承認） | 要件定義・仕様。investigatorとarchitectが参照する |
+| `docs/wireframes/*.html` | `/wireframe-gen`（人間が確認） | 画面のレイアウト・見た目の正。SPEC §6と対をなす |
+| `.claude/skills/spec-interview/templates/SPEC_TEMPLATE.md` | - | SPEC.mdのテンプレート（`/spec-interview` がコピー元に使う） |
 | `docs/designs/{ID}.md` | architect | チケット単位の設計書。architectが生成し、implementerが参照する |
 | `docs/designs/_TEMPLATE.md` | - | 設計書テンプレート（architectがコピー元に使う） |
 | `docs/obsidian-setup.md` | - | Obsidianの初期設定ガイド |
 
-- `docs/SPEC.md` が存在しない場合、investigatorは作業を開始する前に人間へ作成を依頼すること
+- `docs/SPEC.md` が存在しない・不完全な場合、investigatorは作業を開始せず `/spec-interview` の実行（人間による要件定義）を促すこと
 - 設計書はチケットごとに `docs/designs/{ID}.md` として分割管理する（単一 `DESIGN.md` への追記方式は廃止）。architectは `docs/designs/_TEMPLATE.md` をコピーして作成する
 - 設計を作り直す場合は同じ `docs/designs/{ID}.md` を上書きし、チケットのログに改訂理由を残す。過去の設計はGitヒストリで追える（設計ファイルにライフサイクル状態は持たせない）。詳細は `docs/designs/README.md` を参照
 
