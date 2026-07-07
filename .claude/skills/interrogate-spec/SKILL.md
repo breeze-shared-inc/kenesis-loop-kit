@@ -48,8 +48,8 @@ allowed-tools: Read, Grep, Glob, Agent
 
 state-machine.md §6 に従い、SPEC改訂検知 → 中断バッチ再開確認 → deferred棚卸し通知
 の順で実行する。状態ディレクトリが存在しない場合は初期化する: `QUESTIONS.yaml` は
-`templates/questions.yaml` を、`DECISION_LOG.md` / `VERIFICATION_BACKLOG.md` /
-`ESCAPES.md` は `templates/init/` の同名ファイルをコピーする(内容の改変・省略は
+`references/templates/questions.yaml` を、`DECISION_LOG.md` / `VERIFICATION_BACKLOG.md` /
+`ESCAPES.md` は `references/templates/init/` の同名ファイルをコピーする(内容の改変・省略は
 しない)。初期化後 Phase 1 へ進む。
 
 ### Phase 1: 尋問スキャン(初回、またはSPEC改訂検知後の再スキャン時のみ)
