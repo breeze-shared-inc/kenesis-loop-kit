@@ -1,0 +1,33 @@
+# QUESTIONS.yaml — interrogate-spec 状態ファイル(ライブ状態)
+# スキーマ定義: .claude/skills/interrogate-spec/references/question-schema.yaml
+# 状態遷移規則: .claude/skills/interrogate-spec/references/state-machine.md
+#
+# 運用注意:
+# - エントリの物理削除は禁止(無効化は status: invalidated で表現)
+# - batches の completed_at: null は「中断中のバッチ」を意味する
+#   (次回起動時に Phase 0 で再開確認の対象となる)
+# - このファイルへの書き込みは 1 遷移 = 1 保存(state-machine.md §7)
+
+meta:
+  spec_path: "<SPEC の相対パス>"          # 例: SPEC.md
+  spec_version: "<尋問開始時点の版>"       # 例: "1.4"
+  spec_hash: "<git hash-object SPEC.md>"  # 起動時ガードの改訂検知に使用
+  created_at: "<ISO8601>"
+  last_triaged_at: null
+  next_id: 1
+
+batches: []
+# 例:
+# - batch_id: "B-001"
+#   mode: batch            # all | batch | single(all モードの連続バッチは全て "all")
+#   question_ids: ["Q-001", "Q-002", "Q-003", "Q-004", "Q-005"]
+#   completed_at: null     # null = 中断中
+
+questions: []
+# エントリの完全な形は question-schema.yaml の example を参照。
+# 起票時の必須: id / created_at / derived_from(初回起票は null)/ spec_refs /
+#               classification / question / authority / depends_on(なければ [])/
+#               priority / impact_scope(再トリアージの波及スキャンの突き合わせキー。
+#               必ず起票時に埋める)/ status: open /
+#               resolution: null / deferrals: [] / invalidation: null
+# research は Phase 2(調査委譲)完了時に格納する(null の間は提示対象外)
