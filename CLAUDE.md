@@ -185,12 +185,16 @@ tickets/.obsidian/
 
 **パブリックリポジトリ:**
 ```
-tickets/
+tickets/active/*
+tickets/done/*
+!tickets/active/.gitkeep
+!tickets/done/.gitkeep
+tickets/.obsidian/
 ```
 
-tickets/が存在しない環境（パブリックリポジトリのclone直後など）で
-ticketsフォルダの操作が必要になった場合は、
-フォルダを新規作成してよいか必ずユーザーに確認すること。
+チケット本体（tickets/active/*.md・tickets/done/*.md）のみが除外対象であり、
+tickets/Templates/・tickets/_index.md はどちらのプリセットでも追跡対象として
+配布される。パブリックリポジトリのclone直後もこれらのファイルは存在する前提でよい。
 
 ---
 
