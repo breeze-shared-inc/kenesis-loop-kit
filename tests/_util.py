@@ -17,6 +17,7 @@ VALIDATOR = os.path.join(HOOKS, "validate_ticket_state.py")
 INTEGRITY = os.path.join(HOOKS, "check_loop_integrity.py")
 RECORDER = os.path.join(HOOKS, "record_metrics.py")
 GUARD = os.path.join(HOOKS, "guard_spec_writes.py")
+GUARD_BASH = os.path.join(HOOKS, "guard_bash_writes.py")
 AGGREGATE = os.path.join(METRICS, "aggregate.py")
 
 
@@ -92,3 +93,22 @@ def write_ticket(cwd, filename, **kwargs):
     with open(path, "w", encoding="utf-8") as f:
         f.write(ticket(**kwargs))
     return path
+
+
+def write_state(cwd, records):
+    """hook管理サイドカー tickets/.metrics_state.json をテスト用に書き出す。
+    records: {ticket_id: {"status": ..., "retry_counts": {...}}}"""
+    tickets = os.path.join(cwd, "tickets")
+    os.makedirs(tickets, exist_ok=True)
+    path = os.path.join(tickets, ".metrics_state.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(records, f, ensure_ascii=False)
+    return path
+
+
+def state_record(status, tti=0, rti=0, rtv=0, ts="2026-06-14T00:00:00"):
+    """write_state 用のレコードを生成する。"""
+    return {"status": status, "ts": ts,
+            "retry_counts": {"tester_to_implementer": tti,
+                             "reviewer_to_implementer": rti,
+                             "reviewer_to_investigator": rtv}}

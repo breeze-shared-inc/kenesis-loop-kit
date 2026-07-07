@@ -111,6 +111,48 @@ class TestLoopIntegrity(unittest.TestCase):
         _util.write_ticket(self.cwd, "APP-001.md", status="design_done", tti=0)
         self.assertIsNone(self.run_stop())  # ログ無し → fail-open
 
+    # --- ドリフト検知: サイドカー観測値との突き合わせ ---
+
+    def test_status_drift_blocks(self):
+        # 観測=design_done なのにファイルは done（Write/Editを経ない書き換え）
+        _util.write_ticket(self.cwd, "APP-001.md", status="done")
+        _util.write_state(self.cwd, {"APP-001": _util.state_record("design_done")})
+        out = self.assertBlock(must_contain="Write/Edit を経ない")
+        self.assertIn("design_done", out.get("reason", ""))
+
+    def test_status_matches_state_allows(self):
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
+        _util.write_state(self.cwd, {"APP-001": _util.state_record("design_done")})
+        self.assertIsNone(self.run_stop())
+
+    def test_no_state_record_skips_drift(self):
+        # サイドカーに記録が無いチケット（hook導入前）は照合しない
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
+        _util.write_state(self.cwd, {"APP-999": _util.state_record("todo")})
+        self.assertIsNone(self.run_stop())
+
+    def test_counter_drift_blocks(self):
+        # 観測 tti=2 なのにファイルは 0（Bash等での減少 = cap回避）
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done", tti=0)
+        _util.write_state(
+            self.cwd, {"APP-001": _util.state_record("design_done", tti=2)})
+        self.assertBlock(must_contain="retry_counts.tester_to_implementer")
+
+    def test_counter_ahead_of_state_allows(self):
+        # ファイルが観測値より進んでいるのは正常（stateは遅行しうる）
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done", tti=2)
+        _util.write_state(
+            self.cwd, {"APP-001": _util.state_record("design_done", tti=1)})
+        self.assertIsNone(self.run_stop())
+
+    def test_legacy_state_without_counters_skips_counter_drift(self):
+        # 旧形式の state（retry_counts無し）でも status 照合のみで通る
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done", tti=1)
+        _util.write_state(
+            self.cwd,
+            {"APP-001": {"status": "design_done", "ts": "2026-06-14T00:00:00"}})
+        self.assertIsNone(self.run_stop())
+
 
 if __name__ == "__main__":
     unittest.main()

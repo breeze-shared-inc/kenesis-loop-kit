@@ -83,7 +83,7 @@ resulting updates to the ticket.
 ## Never
 - Modify code
 - Modify any file outside ticket sections (Mode A) / any file at all (Mode B)
-- Modify tickets or SPEC.md via Bash (redirect, sed, tee, etc.) — investigation is read-only; report to orchestrator
+- Modify tickets or SPEC.md via Bash — any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); investigation is read-only; report to orchestrator
 - Speculate without labeling assumptions
 - Fabricate file paths, URLs, or citations (research-conventions §2)
 - Skip edge cases within the asked scope

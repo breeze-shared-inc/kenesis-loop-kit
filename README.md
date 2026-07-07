@@ -40,7 +40,8 @@ kenesis-loop-kit/
 │   ├── hooks/                       ← 状態検証・メトリクス記録hook
 │   │   ├── validate_ticket_state.py ← 書き込み前の状態検証（PreToolUse）
 │   │   ├── guard_spec_writes.py     ← SPEC.md書き込みゲート（PreToolUse）
-│   │   ├── check_loop_integrity.py  ← 終了時のループ整合性チェック（Stop）
+│   │   ├── guard_bash_writes.py     ← チケット・SPECへのBash書き込みゲート（PreToolUse）
+│   │   ├── check_loop_integrity.py  ← 終了時のループ整合性チェック・ドリフト検知（Stop）
 │   │   ├── record_metrics.py        ← ステータス遷移の記録（PostToolUse）
 │   │   └── _ticket_lib.py           ← 検証ルール共有ライブラリ
 │   ├── metrics/
