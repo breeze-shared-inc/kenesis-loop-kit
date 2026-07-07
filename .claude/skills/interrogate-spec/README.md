@@ -34,12 +34,28 @@ docs/spec-qa/<spec名>/               # 状態ファイル(スキル起動時に
 
 ## セットアップ
 
-### 1. パススコープ権限の設定(必須)
+### 1. SPEC書き込みゲートと状態ファイル権限(必須)
 
-このスキルは意図的に `Write` / `Edit` を allowed-tools に含めていない。
-SPEC.md への書き込みを毎回 diff 承認させるための設計である。
-一方、状態ファイル(docs/spec-qa/ 配下)への保存は頻繁に発生するため、
-プロジェクトの `.claude/settings.json` にパススコープ許可を追加する:
+「SPEC.md への書き込みは毎回人間の diff 承認を経る」という安全弁は、2層で担保される:
+
+1. **手順層**: SKILL.md Phase 4 / state-machine.md T3 が
+   「diff 提示 → 人間の承認 → 適用」の順序を義務づける(LLMの手順遵守に依存)。
+2. **強制層**: PreToolUse hook `.claude/hooks/guard_spec_writes.py` が SPEC.md
+   (basename一致)への Write / Edit を検知し、`permissionDecision: ask` で
+   人間への確認を強制する(`.claude/settings.json` に登録済み)。
+   このキットはループ運用のため autoモード(自動承認)を推奨構成としており、
+   権限プロンプトに頼れないため、hook による強制が安全弁の実体である。
+   ただし `--dangerously-skip-permissions` 起動だけは ask が貫通する点に注意。
+
+**注意**: SKILL.md の `allowed-tools` は「事前承認リスト」であり、ツールの利用を
+制限するものではない(Write / Edit を載せていないのは事前承認しないという意味で、
+書き込み自体は権限設定に従って可能)。したがって permissions.allow に Edit を
+追加しても hook のゲートは消えないが、hook を settings.json から外すと
+安全弁は手順層(LLMの遵守)だけになる。
+
+状態ファイル(docs/spec-qa/ 配下)への保存は頻繁に発生するため、権限プロンプトが
+出るモードで運用する場合に備え、`.claude/settings.json` のパススコープ許可で
+静かに保存できるようにしてある(登録済み):
 
 ```json
 {
@@ -52,11 +68,8 @@ SPEC.md への書き込みを毎回 diff 承認させるための設計である
 }
 ```
 
-これにより「状態ファイルは静かに保存、SPEC.md だけ毎回 diff 承認」が実現される。
-
-**注意**: この設定を省略してもスキルは動作するが、状態保存のたびに承認プロンプトが
-発生し、対話体験が著しく劣化する。逆に `Edit` を無条件で allow したり
-allowed-tools に足したりすると、SPEC.md の diff 承認という安全弁が消えるので禁止。
+この2つを合わせて「状態ファイルは静かに保存、SPEC.md だけ毎回 diff 承認」が
+権限モードに依存せず実現される。
 
 ### 2. investigator サブエージェントの拡張(必須)
 

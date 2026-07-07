@@ -8,6 +8,7 @@
 | `validate_ticket_state.py` | PreToolUse（Write\|Edit） | 書き込み前に不変条件を検証し違反を `permissionDecision: deny` でブロック。スキーマ・状態遷移・retry上限に加え **L2: カウンタ単調性（減少禁止）** |
 | `check_loop_integrity.py` | Stop | 応答終了時に tickets/active/*.md を一括検査し `decision: block` で継続強制。schema・blocker・本文同期に加え **L3: 差し戻し履歴（.metrics.jsonl）とカウンタの整合照合** |
 | `record_metrics.py` | PostToolUse（Write\|Edit） | ステータス遷移を `tickets/.metrics.jsonl` に追記する（観測性）。前回状態は `tickets/.metrics_state.json` で保持 |
+| `guard_spec_writes.py` | PreToolUse（Write\|Edit） | SPEC.md（basename一致・.claude/配下を除く）への書き込みを `permissionDecision: ask` で人間確認に回す。autoモードでも SPEC 改訂の diff 承認を機械的に担保する（`--dangerously-skip-permissions` は貫通） |
 | `_ticket_lib.py` | -（共有） | frontmatterパーサと検証ルール（status enum・必須キー・遷移表・retry上限）を集約 |
 
 メトリクスの集計は `.claude/metrics/aggregate.py`（`/metrics` コマンドが実行）が担う。
