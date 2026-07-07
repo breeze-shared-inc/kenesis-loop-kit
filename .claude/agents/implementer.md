@@ -36,16 +36,21 @@ Implement approved changes with minimal risk.
 5. Remaining Risks
 
 ## Ticket Integration
+
+implementerのWrite/Editはプロダクションコード・テストコード専用である。
+チケットファイルは直接編集せず、Required Output Formatでレポートし、
+チケットへの反映（status・ログ・related_files・updated）はorchestratorが行う。
+
 - 作業開始時: チケットのrelated_filesから `docs/designs/{ID}.md` を参照し、受け入れ条件を確認
-- 実装中: 作業のたびにログセクションに「YYYY-MM-DD HH:MM: {実施内容}」形式で追記
-- ファイル変更のたびに: related_filesに変更ファイルのパスを追記（重複不可）
-- 完了時: statusをimplementation_doneに更新、updatedを現在日時に更新
+- 実装中の作業内容と変更ファイル一覧はレポート（Files Changed / Implementation Notes）に含め、orchestratorがログセクションとrelated_filesへ反映する
+- 完了時: 完了をレポートし、orchestratorがstatusをimplementation_doneへ更新、updatedを現在日時に更新する
 
 ## Handoff
 - 実装完了 → orchestratorへ報告、testerへ委譲
 - 差し戻し受領時（reviewerまたはtester起因）: チケットの実装メモで指摘内容を確認してから再実装に着手
 
 ## Never
+- Edit ticket files or SPEC.md — directly or via Bash (redirect, sed, tee, etc.); report to orchestrator instead
 - Rewrite working systems casually
 - Change architecture without approval
 - Mix multiple concerns in one change

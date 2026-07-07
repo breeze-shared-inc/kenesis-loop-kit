@@ -111,6 +111,27 @@ class TestAggregate(unittest.TestCase):
         self.assertIn("test_passed→design_done", out)  # rollback captured
         self.assertIn("APP-001", out)
 
+    def test_improvement_loop_not_counted_as_rollback(self):
+        import subprocess
+        rows = [
+            {"ts": "2026-06-10T09:00:00", "ticket": "APP-001", "type": "created",
+             "from": None, "to": "todo", "project": "demo"},
+            {"ts": "2026-06-11T09:00:00", "ticket": "APP-001", "type": "transition",
+             "from": "test_passed", "to": "done", "project": "demo"},
+            {"ts": "2026-06-12T09:00:00", "ticket": "APP-001", "type": "transition",
+             "from": "done", "to": "todo", "project": "demo"},
+        ]
+        self.write_log(rows)
+        proc = subprocess.run([sys.executable, _util.AGGREGATE],
+                              capture_output=True, text=True, cwd=self.cwd)
+        out = proc.stdout
+        # done→todo は改善ループとして計上し、差し戻しには含めない
+        imp_section = out.split("— 改善ループ")[1].split("— blocked")[0]
+        self.assertIn("done→todo", imp_section)
+        rb_section = out.split("— 差し戻し")[1].split("— 改善ループ")[0]
+        self.assertNotIn("done→todo", rb_section)
+        self.assertIn("なし", rb_section)
+
     def test_filter(self):
         import subprocess
         rows = [

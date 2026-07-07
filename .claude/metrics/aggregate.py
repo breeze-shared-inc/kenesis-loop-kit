@@ -102,8 +102,10 @@ def main():
     now = datetime.datetime.now()
     cycle_times = []          # (ticket, seconds)
     dwell_totals = {}         # status -> [seconds,...]
-    rollbacks = {}            # "from→to" -> count
+    rollbacks = {}            # "from→to" -> count（実装ループ内の差し戻し）
     rollback_by_ticket = {}   # ticket -> count
+    improvements = {}         # "from→to" -> count（done起点の改善ループ）
+    improvement_by_ticket = {}  # ticket -> count
     blocked_events = []       # (ticket, ts)
     in_progress = []          # (ticket, status, age_seconds)
 
@@ -125,12 +127,19 @@ def main():
                             (nxt - ts).total_seconds()
                         )
 
-            # 差し戻し: 前進順で後退している遷移
+            # 後退遷移の分類: done起点は改善ループ（人間判断による再開）、
+            # それ以外（test_passed起点）は実装ループ内の差し戻し
             if frm in PHASE_ORDER and to in PHASE_ORDER:
                 if PHASE_ORDER[to] < PHASE_ORDER[frm]:
                     key = "%s→%s" % (frm, to)
-                    rollbacks[key] = rollbacks.get(key, 0) + 1
-                    rollback_by_ticket[ticket] = rollback_by_ticket.get(ticket, 0) + 1
+                    if frm == "done":
+                        improvements[key] = improvements.get(key, 0) + 1
+                        improvement_by_ticket[ticket] = (
+                            improvement_by_ticket.get(ticket, 0) + 1)
+                    else:
+                        rollbacks[key] = rollbacks.get(key, 0) + 1
+                        rollback_by_ticket[ticket] = (
+                            rollback_by_ticket.get(ticket, 0) + 1)
 
             if to == "blocked":
                 blocked_events.append((ticket, ev.get("ts")))
@@ -182,6 +191,18 @@ def main():
         for key, cnt in sorted(rollbacks.items(), key=lambda x: -x[1]):
             print("    %-28s %d" % (key, cnt))
         worst = sorted(rollback_by_ticket.items(), key=lambda x: -x[1])
+        print("  チケット別: " + ", ".join("%s×%d" % (t, c) for t, c in worst))
+    else:
+        print("  なし")
+    print()
+
+    print("— 改善ループ（done起点の再開） —")
+    total_imp = sum(improvements.values())
+    if total_imp:
+        print("  総数: %d" % total_imp)
+        for key, cnt in sorted(improvements.items(), key=lambda x: -x[1]):
+            print("    %-28s %d" % (key, cnt))
+        worst = sorted(improvement_by_ticket.items(), key=lambda x: -x[1])
         print("  チケット別: " + ", ".join("%s×%d" % (t, c) for t, c in worst))
     else:
         print("  なし")

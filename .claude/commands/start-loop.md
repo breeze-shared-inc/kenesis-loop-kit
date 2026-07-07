@@ -13,7 +13,10 @@
   tickets/active/ の全チケットを読み取り、`status = blocked` かつ `updated` から14日以上経過しているチケットを一覧表示する。該当チケットがあれば人間に「再開 / クローズ / 期限延長」のいずれかを確認する。
 
 - [ ] **in_progress上限チェック**
-  `status != todo` かつ `status != done` かつ `status != cancelled` のチケット件数を集計する。3件以上の場合は「既存チケットを完了またはcancelledにしてから新規着手してよいか」を人間に確認する。
+  `status` が `investigation_done` / `design_done` / `implementation_done` / `test_passed` のいずれかのチケット件数を集計する（blockedは数えない。積み上がりは14日トリアージが担当）。3件以上の場合は「既存チケットを完了またはcancelledにしてから新規着手してよいか」を人間に確認する。
+
+- [ ] **done/件数チェック（アーカイブ提案）**
+  tickets/done/ のチケット件数（.gitkeepを除く）を確認する。20件を超えている場合は `/archive` の実行を人間に提案する（CLAUDE.md「アーカイブ」参照）。
 
 ## ループ実行手順
 
