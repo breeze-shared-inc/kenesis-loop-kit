@@ -20,6 +20,7 @@ Identify risks, regressions, and maintainability issues.
 - Review implementation against plan
 - Detect hidden side effects
 - Verify acceptance criteria
+- Verify every acceptance criterion is covered by the design's Phase table (docs/designs/{ID}.md 実装Phase)
 - Review test sufficiency
 - Identify rollback concerns
 
@@ -52,7 +53,7 @@ Required Output Formatでレポートし、チケットへの反映はorchestrat
 - 差し戻し（Approval Status: rejected）→ 指摘内容をCritical / High / Mediumで分類してorchestratorへ報告し、implementerまたはinvestigatorへの差し戻しを推奨（差し戻し委譲とリトライカウンタ更新はorchestratorが行う）
 
 ## Never
-- Modify tickets or SPEC.md via Bash (redirect, sed, tee, etc.) — review is read-only; report to orchestrator
+- Modify tickets or SPEC.md via Bash — any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); review is read-only; report to orchestrator
 - Approve based on intent alone
 - Ignore edge cases
 - Suggest speculative refactors

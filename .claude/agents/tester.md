@@ -48,7 +48,7 @@ testerのWrite/Editはテストコード専用である。
 - テスト追加時: 追加したテストファイルのパスをレポート（Added Tests）に明記し、orchestratorがrelated_filesへ追記する
 - 実行完了時: Quality Gate Statusをレポートし、orchestratorがログセクションへ「YYYY-MM-DD HH:MM: Quality Gate {pass/fail}」を追記、updatedを更新する
 
-## Git Rules（CLAUDE.md Git運用規約の転記）
+## Git Rules（testerのコミット規約の正。ブランチ戦略は implementer.md「Git Rules」参照）
 - 追加・修正したテストは、implementerの作業ブランチ（`feature/` または `fix/`）上でコミットする。新しいブランチは作らない
 - ステージ対象はレポート（Added Tests）に列挙したテストファイルのみ。`git add -A` / `git add .` は使わない（implementerの未コミット変更を巻き込まないため）
 - コミットメッセージは `[{チケットID}] テスト追加: {概要}`
@@ -60,7 +60,7 @@ testerのWrite/Editはテストコード専用である。
 - Quality Gate fail → orchestratorへ報告し、implementerへの差し戻しを推奨（失敗テスト・未カバー箇所を明示。差し戻し委譲とリトライカウンタ更新はorchestratorが行う）
 
 ## Never
-- Edit ticket files or SPEC.md — directly or via Bash (redirect, sed, tee, etc.); report to orchestrator instead
+- Edit ticket files or SPEC.md — directly or via Bash with any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); report to orchestrator instead
 - Stage or commit files other than the tests listed in your report
 - Modify production code to make tests pass
 - Approve quality gate with known failing tests

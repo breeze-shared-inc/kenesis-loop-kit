@@ -1,6 +1,6 @@
 # /rollback
 
-reviewer承認後に問題が発覚したチケットをロールバックしてください。CLAUDE.md「ロールバック手順」（通常のロールバック＋ロールバック時のチケット運用）を実行します。
+reviewer承認後に問題が発覚したチケットをロールバックしてください。`git revert` による通常のロールバックとチケット運用を実行します（revertはコミット履歴を保持するため、チームでの追跡が容易になる）。本コマンドがロールバック手順の正の定義です。
 
 ## 手順
 
@@ -8,7 +8,7 @@ reviewer承認後に問題が発覚したチケットをロールバックして
    - 形式: `{チケットID} [コミットハッシュ]`（例: `APP-001` / `APP-001 a1b2c3d`）
    - チケットIDが無い場合は「ロールバック対象のチケットIDを指定してください」と尋ねる
 2. 対象チケットを tickets/done/ または tickets/active/ から読み込む。見つからない場合は報告して停止する
-3. 現在のブランチを確認する（`git branch --show-current`）。mainの場合は通常ロールバックを実行せず、緊急ロールバック（hotfixブランチ運用・CLAUDE.md「緊急ロールバック」）を人間に案内して停止する
+3. 現在のブランチを確認する（`git branch --show-current`）。mainの場合は通常ロールバックを実行せず、下記「緊急ロールバック（本番障害時）」のhotfixブランチ運用を人間に案内して停止する
 4. revert対象コミットを特定する
    - ハッシュ指定あり → `git log --oneline -1 {ハッシュ}` で存在と内容を確認する
    - 指定なし → `git log --oneline` から `[{チケットID}]` を含むコミットを一覧表示し、人間に選択してもらう
@@ -24,6 +24,18 @@ reviewer承認後に問題が発覚したチケットをロールバックして
    - `updated` を現在日時に更新する
    - チケットの変更は必ずWrite/Editツールで行う（Bashリダイレクト・sed・tee禁止）
 8. revertコミットとチケットの状態を報告し、`/start-loop {チケットID}` でループを再開できることを伝える
+
+## 緊急ロールバック（本番障害時）
+
+本番障害時はrevertではなく、hotfixブランチをmainから作成し、修正後にmainとdevelopの両方にマージする。git操作は人間が主導し、このコマンドは以下の手順を案内するのみで実行しない。
+
+```bash
+git checkout main
+git checkout -b hotfix/APP-XXX-{内容}
+# 修正を実施
+git checkout main && git merge hotfix/APP-XXX-{内容}
+git checkout develop && git merge hotfix/APP-XXX-{内容}
+```
 
 ## Never
 

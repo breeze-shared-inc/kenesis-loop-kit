@@ -3,12 +3,24 @@
 
 orchestrator（メインエージェント）が応答を終えるたびに発火し、
 tickets/active/ の各チケットが不変条件を満たしているか検査する。
+tickets/done/ はドリフト検知のみ実施する（アーカイブ済み・hook導入前の
+旧チケットを誤検知しないため。done/ のチケットは正規フローでは
+状態が変化しない — 改善ループ/ロールバックは active/ へ移動してから編集する）。
 不整合があれば decision=block で継続を強制し、終了前の修正を促す。
 
 PreToolUse が Write/Edit を防いでも、Bash の mv や手編集で混入したドリフトは
 この Stop hook が最後の砦として捕捉する。
 
-fail-open: 内部エラーでは継続を許可（exit 0）。
+ドリフト検知:
+hook管理のサイドカー tickets/.metrics_state.json（record_metrics.py が
+最後に観測した status / retry_counts）と各チケットの実体を突き合わせ、
+Write/Edit を経ない書き換え（Bashリダイレクト・インタプリタ・手編集）を検出する。
+検出時は block し、orchestrator に Edit ツールでの再適用
+（観測値へ戻す、または観測値からの正当な遷移として適用し直す）を強制する。
+サイドカー側を直接書き換えて解消してはならない。
+
+fail-open: 内部エラーでは継続を許可（exit 0）。サイドカーに記録が無い
+チケット（hook導入前の旧チケット等）はドリフト照合をスキップする。
 無限ループ防止: stop_hook_active が真なら何もしない。
 """
 import glob
@@ -82,7 +94,45 @@ def load_metrics_by_ticket(metrics_path):
     return by_ticket
 
 
-def check_ticket(path, events_by_ticket):
+def check_state_drift(fm, record):
+    """サイドカーの最終観測値との突き合わせ。Write/Edit を経ない
+    書き換え（Bash・手編集）の痕跡を文字列リストで返す。
+    record が無い（hook導入前の旧チケット等）場合は照合しない（fail-open）。"""
+    errors = []
+    if not isinstance(record, dict):
+        return errors
+
+    observed = record.get("status")
+    current = fm.get("status")
+    if observed and current and observed != current:
+        errors.append(
+            "Write/Edit を経ないステータス変更を検出: 最後に検証された status は "
+            "'%s'（現在 '%s'）。Edit ツールで '%s' へ戻すか、意図した変更なら "
+            "'%s' からの正当な遷移として Edit で適用し直してください"
+            "（tickets/.metrics_state.json は直接編集しないこと）"
+            % (observed, current, observed, observed)
+        )
+
+    observed_rc = record.get("retry_counts")
+    current_rc = fm.get("retry_counts")
+    if isinstance(observed_rc, dict) and isinstance(current_rc, dict):
+        for key in lib.RETRY_CAPS:
+            try:
+                before = int(observed_rc[key])
+                after = int(current_rc[key])
+            except (TypeError, ValueError, KeyError):
+                continue
+            if after < before:
+                errors.append(
+                    "Write/Edit を経ない retry_counts.%s の減少を検出: "
+                    "最後に検証された値は %d（現在 %d）。Edit ツールで %d 以上へ"
+                    "戻してください（正規のリトライ予算リセットは Edit + "
+                    "人間承認で行う）" % (key, before, after, before)
+                )
+    return errors
+
+
+def check_ticket(path, events_by_ticket, state):
     """1チケットの不整合を文字列リストで返す。"""
     base = os.path.basename(path)
     try:
@@ -102,11 +152,27 @@ def check_ticket(path, events_by_ticket):
 
     errors += check_body_table_sync(fm, text)
 
+    # ドリフト検知: サイドカーの最終観測値との突き合わせ
+    errors += check_state_drift(fm, state.get(fm.get("id")))
+
     # L3: 差し戻し履歴とカウンタの照合（イベントログがあれば）
     events = events_by_ticket.get(fm.get("id"), [])
     errors += lib.reconcile_rollbacks(fm.get("retry_counts"), events)
 
     return ["%s: %s" % (base, e) for e in errors]
+
+
+def check_done_ticket_drift(path, state):
+    """done/ のチケットはドリフト検知のみ（全量検査は active/ 限定）。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            fm = lib.parse_frontmatter(f.read())
+    except Exception:
+        return []
+    if not fm:
+        return []
+    errors = check_state_drift(fm, state.get(fm.get("id")))
+    return ["%s: %s" % (os.path.basename(path), e) for e in errors]
 
 
 def main():
@@ -120,17 +186,21 @@ def main():
 
     cwd = data.get("cwd") or os.getcwd()
     active_dir = os.path.join(cwd, "tickets", "active")
+    done_dir = os.path.join(cwd, "tickets", "done")
     if not os.path.isdir(active_dir):
         sys.exit(0)
 
     events_by_ticket = load_metrics_by_ticket(
         os.path.join(cwd, "tickets", ".metrics.jsonl"))
+    state = lib.load_state(os.path.join(cwd, "tickets"))
 
     problems = []
     for path in sorted(glob.glob(os.path.join(active_dir, "*.md"))):
         if os.path.basename(path) == "_index.md":
             continue
-        problems.extend(check_ticket(path, events_by_ticket))
+        problems.extend(check_ticket(path, events_by_ticket, state))
+    for path in sorted(glob.glob(os.path.join(done_dir, "*.md"))):
+        problems.extend(check_done_ticket_drift(path, state))
 
     if problems:
         reason = (

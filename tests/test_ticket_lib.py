@@ -124,7 +124,7 @@ class TestTransition(unittest.TestCase):
         self.assertIsNone(lib.validate_transition("done", "todo"))
 
     def test_rollback_from_done(self):
-        # ロールバック手順: revert実装をtesterから再開（CLAUDE.md「ロールバック時のチケット運用」）
+        # ロールバック手順: revert実装をtesterから再開（.claude/commands/rollback.md 手順7）
         self.assertIsNone(lib.validate_transition("done", "implementation_done"))
         self.assertIsNotNone(lib.validate_transition("done", "design_done"))
 
@@ -225,6 +225,66 @@ class TestReconcile(unittest.TestCase):
 
     def test_no_events_skipped(self):
         self.assertEqual(lib.reconcile_rollbacks({"tester_to_implementer": 5}, []), [])
+
+    # --- retry_reset をエポックとする照合 ---
+
+    @staticmethod
+    def reset_ev(**to_counts):
+        counts = {"tester_to_implementer": 0, "reviewer_to_implementer": 0,
+                  "reviewer_to_investigator": 0}
+        counts.update(to_counts)
+        return {"ticket": "APP-001", "type": "retry_reset", "to_counts": counts}
+
+    def test_reset_epoch_match(self):
+        # 差し戻し3回 → リセット(0) → 差し戻し1回。カウンタは 1 が正
+        events = self.created_then(("implementation_done", "design_done"),
+                                   ("implementation_done", "design_done"),
+                                   ("implementation_done", "design_done"))
+        events.append(self.reset_ev())
+        events.append(self.ev("implementation_done", "design_done"))
+        rc = {"tester_to_implementer": 1, "reviewer_to_implementer": 0,
+              "reviewer_to_investigator": 0}
+        self.assertEqual(lib.reconcile_rollbacks(rc, events), [])
+
+    def test_reset_epoch_mismatch_flagged(self):
+        # リセット後の差し戻しは1回なのにカウンタが3のまま → 不一致
+        events = self.created_then(("implementation_done", "design_done"))
+        events.append(self.reset_ev())
+        events.append(self.ev("implementation_done", "design_done"))
+        rc = {"tester_to_implementer": 3, "reviewer_to_implementer": 0,
+              "reviewer_to_investigator": 0}
+        errs = lib.reconcile_rollbacks(rc, events)
+        self.assertTrue(any("tester_to_implementer" in e for e in errs))
+
+    def test_reset_nonzero_baseline(self):
+        # 部分リセット（2に減）→ 以降1回 → カウンタ 3 が正
+        events = self.created_then(("implementation_done", "design_done"),
+                                   ("implementation_done", "design_done"),
+                                   ("implementation_done", "design_done"))
+        events.append(self.reset_ev(tester_to_implementer=2))
+        events.append(self.ev("implementation_done", "design_done"))
+        rc = {"tester_to_implementer": 3, "reviewer_to_implementer": 0,
+              "reviewer_to_investigator": 0}
+        self.assertEqual(lib.reconcile_rollbacks(rc, events), [])
+
+    def test_last_reset_wins(self):
+        # 複数リセットがある場合は最後のリセットがエポック
+        events = self.created_then(("implementation_done", "design_done"))
+        events.append(self.reset_ev())
+        events.append(self.ev("implementation_done", "design_done"))
+        events.append(self.reset_ev())
+        rc = {"tester_to_implementer": 0, "reviewer_to_implementer": 0,
+              "reviewer_to_investigator": 0}
+        self.assertEqual(lib.reconcile_rollbacks(rc, events), [])
+
+    def test_broken_reset_record_skipped(self):
+        # to_counts が壊れているリセット記録 → 照合不能で素通り（fail-open）
+        events = self.created_then(("implementation_done", "design_done"))
+        events.append({"ticket": "APP-001", "type": "retry_reset",
+                       "to_counts": "broken"})
+        rc = {"tester_to_implementer": 9, "reviewer_to_implementer": 0,
+              "reviewer_to_investigator": 0}
+        self.assertEqual(lib.reconcile_rollbacks(rc, events), [])
 
 
 if __name__ == "__main__":

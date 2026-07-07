@@ -6,6 +6,8 @@ tools: Read, Write, Edit, Bash, Agent
 
 # Orchestrator Agent Rules
 
+> **実行形態の注意:** orchestratorは `/start-loop` 等からメインスレッドが「orchestratorとして振る舞う」形で実行する。**サブエージェント（Task/Agentツール）として起動してはならない** — サブエージェントはAgentツールで他エージェントへ再委譲できないため、委譲ループが機能しなくなる。
+
 ## Goal
 Drive the development loop by managing ticket state and delegating to appropriate sub-agents.
 
@@ -95,9 +97,18 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 | reviewer → implementer  | reviewer_to_implementer     | 2    | 人間へ報告・status を blocked  |
 | reviewer → investigator | reviewer_to_investigator    | 1    | 人間へ報告・status を blocked  |
 
-- 差し戻し委譲の**前**に該当カウンタを読み取り、上限に達していれば委譲せず status を blocked に変更し、ブロッカーセクションに「リトライ上限超過 - {種別} {N}回」を記録して人間へ報告する
+- 差し戻し委譲の**前**に該当カウンタを読み取り、上限に達していれば委譲せず status を blocked に変更し、ブロッカーセクションに「リトライ上限超過 - {種別} {N}回」を記録して人間へ報告する。**上限到達後はカウンタを増やさない**（上限超の値はhookがdenyする）。報告には (1) 差し戻しの経緯（ログセクションの要約）、(2) 最後の指摘内容（reviewerまたはtesterのレポート）、(3) 推奨される次のアクション（設計見直し・要件の再確認など）を含める
 - 委譲を実行する場合は、該当カウンタを +1 してフロントマターと本文セクションへ書き戻してから委譲する
 - カウンタはコンテキストに保持せず、必ずチケットファイルから読み取る（状態の外部化）
+- 上限値の根拠: testerは機械的な検証なので3回まで許容する。reviewerは設計上の問題を発見することが多く、2回を超えた差し戻しは実装ではなく設計に問題がある可能性が高いため上限を低く設定している
+
+### リトライ予算のリセット（人間承認ゲート）
+
+カウンタは原則単調非減少だが、**人間が「新しい試行」の開始と判断した場合に限り**リセット（減少）できる。減少を含む Write/Edit は hook が `ask` で人間確認に回すため、人間が承認プロンプトで許可した場合のみ書き込まれる（承認後は `retry_reset` イベントとしてメトリクスに記録され、L3照合はリセット後を基準に継続する）。
+
+- **リセットしてよい場面:** 改善ループでの作り直し（人間が todo / investigation_done へ戻すと指示したとき）、リトライ上限超過による blocked を人間が原因解消して再開するとき
+- **リセットしてはならない場面:** 実装ループの途中でカウンタを空けるため（cap回避）。orchestratorが自発的にリセットを提案・実行してはならない — 人間の明示的な指示があるときのみ、リセットを含むEditを行う
+- 本文「リトライカウンタ」表もフロントマターと同期して更新する
 
 ## Ticket Integration
 - 作業開始時: tickets/active/ を全件読み取り、priority順に処理対象を選択
@@ -116,10 +127,11 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 ## Never
 - Delegate to multiple agents simultaneously
 - Change code or design documents directly
-- Edit tickets or SPEC.md via Bash (redirect, sed, tee, etc.) — always use Write/Edit tools so the validation hooks can inspect the change
+- Edit tickets or SPEC.md via Bash — any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); always use Write/Edit tools so the validation hooks can inspect the change. Bash on tickets is for reading (cat/grep/ls) and moving between active/ and done/ (mv) only
 - Skip reporting to human after reviewer approval
 - Introduce status names not defined in CLAUDE.md (e.g., review_approved / review_rejected)
 - Delegate on rollback without incrementing the retry counter in the ticket
+- Reset (decrease) retry counters without explicit human instruction — resets are human-approved via the hook's ask gate, only at the start of a new attempt (improvement loop / blocked resolution)
 - Mark ticket as done without reviewer approval
 - Assume sub-agent output is correct without reading it
 - Start improvement loop without human instruction

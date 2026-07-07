@@ -19,7 +19,8 @@ python3 -m unittest discover -s tests -v
 | `test_loop_integrity.py` | `check_loop_integrity.py`（Stop）の整合性チェック |
 | `test_metrics.py` | `record_metrics.py`（PostToolUse）の記録と `aggregate.py` の集計 |
 | `test_guard_spec_writes.py` | `guard_spec_writes.py`（PreToolUse）の ask/allow 判定（SPEC.md書き込みゲート） |
-| `_util.py` | 共有ヘルパ（hook起動・チケット生成テンプレート） |
+| `test_guard_bash_writes.py` | `guard_bash_writes.py`（PreToolUse・Bash）の deny/allow 判定（チケット・SPECへのBash書き込みゲート） |
+| `_util.py` | 共有ヘルパ（hook起動・チケット生成テンプレート・状態サイドカー生成） |
 
 ## ルールを変更したら
 

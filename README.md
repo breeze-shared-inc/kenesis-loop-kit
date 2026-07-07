@@ -40,7 +40,8 @@ kenesis-loop-kit/
 │   ├── hooks/                       ← 状態検証・メトリクス記録hook
 │   │   ├── validate_ticket_state.py ← 書き込み前の状態検証（PreToolUse）
 │   │   ├── guard_spec_writes.py     ← SPEC.md書き込みゲート（PreToolUse）
-│   │   ├── check_loop_integrity.py  ← 終了時のループ整合性チェック（Stop）
+│   │   ├── guard_bash_writes.py     ← チケット・SPECへのBash書き込みゲート（PreToolUse）
+│   │   ├── check_loop_integrity.py  ← 終了時のループ整合性チェック・ドリフト検知（Stop）
 │   │   ├── record_metrics.py        ← ステータス遷移の記録（PostToolUse）
 │   │   └── _ticket_lib.py           ← 検証ルール共有ライブラリ
 │   ├── metrics/
@@ -65,7 +66,7 @@ kenesis-loop-kit/
 │   └── workflows/
 │       └── test.yml                 ← hookテストのCI（unittest / Python 3.10–3.13）
 ├── docs/
-│   ├── SPEC.md                      ← 要件定義（人間が記述）
+│   ├── SPEC.md                      ← 要件定義（/spec-interviewで対話生成・人間が承認）
 │   ├── designs/                     ← チケット単位の設計書（architectが生成）
 │   │   ├── _TEMPLATE.md             ← 設計書テンプレート
 │   │   └── {ID}.md                  ← 例: APP-001.md
@@ -132,7 +133,9 @@ ObsidianでOpen folder as vaultから`tickets/`フォルダを選択します。
 
 ### 4. docs/SPEC.mdを作成する
 
-要件定義をまとめた`docs/SPEC.md`を作成します。investigatorとarchitectがこのファイルを参照して作業を進めます。SPEC.mdが存在しない場合、エージェントは作業を開始しません。
+Claude Code起動後に `/spec-interview` を実行すると、対話形式で要件定義書 `docs/SPEC.md` を作成できます（非エンジニアでも回答するだけで完成します）。作成後は `/interrogate-spec` での敵対的レビュー、`/wireframe-gen` でのワイヤーフレーム生成へ進むのが標準フローです。
+
+investigatorとarchitectはこのファイルを参照して作業を進めます。SPEC.mdが存在しない場合、エージェントは作業を開始せず `/spec-interview` の実行を促します。
 
 ### 5. Claude Codeでの初回起動
 

@@ -50,7 +50,7 @@
 | 基盤 | VPS + Docker | docker compose によるコンテナ構成 |
 | コンテナ分割 | api / frontend / db / proxy の4コンテナを基本とする | frontendはビルド成果物をproxyから静的配信する構成も可(architectの設計判断) |
 | リバースプロキシ・SSL | Caddy または nginx + Let's Encrypt | HTTPS必須 |
-| シークレット管理 | 環境変数(.envファイル) | .envはGit管理外とし、SPECおよび設計書には環境変数名のみを記載する(CLAUDE.mdセキュリティ規約に準拠) |
+| シークレット管理 | 環境変数(.envファイル) | .envはGit管理外とし、SPECおよび設計書には環境変数名のみを記載する(docs/security-policy.md に準拠) |
 
 ---
 
