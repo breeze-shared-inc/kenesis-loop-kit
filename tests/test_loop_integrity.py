@@ -90,10 +90,11 @@ class TestLoopIntegrity(unittest.TestCase):
         self.assertBlock(must_contain="不一致")
 
     def test_rollback_reconcile_match_allows(self):
+        # tester差し戻し（implementation_done起点）は tester_to_implementer と照合される
         _util.write_ticket(self.cwd, "APP-001.md", status="design_done", tti=1)
         write_metrics(self.cwd, [
             {"ticket": "APP-001", "from": None, "to": "todo"},
-            {"ticket": "APP-001", "from": "test_passed", "to": "design_done"},
+            {"ticket": "APP-001", "from": "implementation_done", "to": "design_done"},
         ])
         self.assertIsNone(self.run_stop())
 
