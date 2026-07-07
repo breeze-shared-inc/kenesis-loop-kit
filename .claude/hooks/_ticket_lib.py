@@ -30,7 +30,7 @@ REQUIRED_KEYS = [
     "retry_counts",
 ]
 
-# 差し戻し種別ごとの上限（CLAUDE.md「実装ループのリトライ制限」と一致させること）
+# 差し戻し種別ごとの上限（orchestrator.md「リトライカウンタ管理」と一致させること）
 RETRY_CAPS = {
     "tester_to_implementer": 3,
     "reviewer_to_implementer": 2,
@@ -56,7 +56,7 @@ LEGAL_TRANSITIONS = {
     # 差し戻し: reviewer reject(実装起因) -> design_done、reviewer reject(設計起因) -> todo
     "test_passed": {"done", "design_done", "todo"},
     # 改善ループ: done から再開（architect -> investigation_done、investigator -> todo）
-    # ロールバック: done -> implementation_done（revert実装をtesterから再開。CLAUDE.md「ロールバック手順」）
+    # ロールバック: done -> implementation_done（revert実装をtesterから再開。.claude/commands/rollback.md）
     "done": {"investigation_done", "todo", "implementation_done"},
     # blocked からの再開（CLAUDE.md ステータス定義表の「遷移先 any」に対応。
     # done 段階で blocked になったチケットの復帰も許可する）
