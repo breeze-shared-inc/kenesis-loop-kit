@@ -53,13 +53,15 @@ LEGAL_TRANSITIONS = {
     "test_passed": {"done", "design_done", "todo"},
     # 改善ループ: done から再開（architect -> investigation_done、investigator -> todo）
     "done": {"investigation_done", "todo"},
-    # blocked からの再開（任意の非終端ステータスへ戻す）
+    # blocked からの再開（CLAUDE.md ステータス定義表の「遷移先 any」に対応。
+    # done 段階で blocked になったチケットの復帰も許可する）
     "blocked": {
         "todo",
         "investigation_done",
         "design_done",
         "implementation_done",
         "test_passed",
+        "done",
     },
     "cancelled": set(),
 }

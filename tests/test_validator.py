@@ -55,6 +55,11 @@ class TestValidator(unittest.TestCase):
                                            "tester_to_implementer: 4"))
         self.assertIn("上限", out.get("permissionDecisionReason", ""))
 
+    def test_blocked_to_done_resume_allow(self):
+        # CLAUDE.md ステータス定義表: blocked の遷移先は any（done含む）
+        path = _util.write_ticket(self.cwd, "APP-001.md", status="blocked")
+        self.assertAllow(edit_payload(path, "status: blocked", "status: done"))
+
     def test_log_append_status_unchanged_allow(self):
         path = _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
         self.assertAllow(edit_payload(path, "## ログ", "## ログ\n- 2026-06-14: note"))

@@ -39,22 +39,34 @@ kenesis-loop-kit/
 │   │   └── reviewer.md
 │   ├── hooks/                       ← 状態検証・メトリクス記録hook
 │   │   ├── validate_ticket_state.py ← 書き込み前の状態検証（PreToolUse）
+│   │   ├── guard_spec_writes.py     ← SPEC.md書き込みゲート（PreToolUse）
 │   │   ├── check_loop_integrity.py  ← 終了時のループ整合性チェック（Stop）
 │   │   ├── record_metrics.py        ← ステータス遷移の記録（PostToolUse）
 │   │   └── _ticket_lib.py           ← 検証ルール共有ライブラリ
 │   ├── metrics/
 │   │   └── aggregate.py             ← メトリクス集計（/metricsが実行）
-│   └── commands/                    ← スラッシュコマンド定義
-│       ├── start-loop.md            ← /start-loop
-│       ├── new-ticket.md            ← /new-ticket
-│       ├── improvement-loop.md      ← /improvement-loop
-│       ├── archive.md               ← /archive
-│       └── metrics.md               ← /metrics
+│   ├── commands/                    ← スラッシュコマンド定義
+│   │   ├── start-loop.md            ← /start-loop
+│   │   ├── new-ticket.md            ← /new-ticket
+│   │   ├── improvement-loop.md      ← /improvement-loop
+│   │   ├── archive.md               ← /archive
+│   │   └── metrics.md               ← /metrics
+│   └── skills/                      ← 前工程スキル（SPEC整備・ワイヤーフレーム）
+│       ├── spec-interview/          ← /spec-interview（対話形式の要件定義）
+│       ├── interrogate-spec/        ← /interrogate-spec（SPECの敵対的レビュー）
+│       ├── wireframe-gen/           ← /wireframe-gen（ワイヤーフレーム生成）
+│       └── research-conventions/    ← investigatorの調査規約
+├── .github/
+│   └── workflows/
+│       └── test.yml                 ← hookテストのCI（unittest / Python 3.10–3.13）
 ├── docs/
 │   ├── SPEC.md                      ← 要件定義（人間が記述）
 │   ├── designs/                     ← チケット単位の設計書（architectが生成）
 │   │   ├── _TEMPLATE.md             ← 設計書テンプレート
 │   │   └── {ID}.md                  ← 例: APP-001.md
+│   ├── wireframes/                  ← ワイヤーフレーム（/wireframe-genが生成）
+│   ├── spec-qa/                     ← SPEC尋問の状態ファイル（/interrogate-specが生成）
+│   ├── batch-loop.md                ← 複数チケットの連続ループ実行ガイド
 │   └── obsidian-setup.md            ← Obsidian初期設定ガイド
 ├── src/                             ← プロジェクトのソースコード
 ├── tests/                           ← hook検証・メトリクスの自動テスト（unittest）
@@ -186,11 +198,16 @@ Claude Codeのスラッシュコマンドでよく使う操作を呼び出せま
 
 | コマンド | 用途 | 使用例 |
 |---|---|---|
+| `/spec-interview` | 対話形式で要件定義書(docs/SPEC.md)を作成・改訂する | `/spec-interview` `/spec-interview 最短` |
+| `/interrogate-spec` | SPECを敵対的にレビューし、対話解決で改訂・決定ログ化する | `/interrogate-spec docs/SPEC.md` |
+| `/wireframe-gen` | SPECの画面一覧からワイヤーフレームを生成する | `/wireframe-gen` `/wireframe-gen SCR-001` |
 | `/start-loop` | ループを開始・再開する | `/start-loop` `/start-loop APP-001` |
 | `/new-ticket` | チケットを新規作成する | `/new-ticket ログイン機能の実装` |
 | `/improvement-loop` | 改善ループを起動する | `/improvement-loop APP-001 architect` |
 | `/archive` | 完了チケットを個人vaultへ移動する | `/archive ~/my-vault/Archives/project-a/` |
 | `/metrics` | ループの観測メトリクスを表示する | `/metrics` `/metrics APP-001` |
+
+`/spec-interview`・`/interrogate-spec`・`/wireframe-gen` は開発ループの前工程（SPEC・ワイヤーフレームの整備）を担うスキルです。定義は `.claude/skills/` を参照してください。
 
 ---
 

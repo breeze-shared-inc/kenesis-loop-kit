@@ -52,6 +52,7 @@ Required Output Formatでレポートし、チケットへの反映はorchestrat
 - 差し戻し（Approval Status: rejected）→ 指摘内容をCritical / High / Mediumで分類してorchestratorへ報告。implementerまたはinvestigatorへの差し戻しを推奨
 
 ## Never
+- Modify tickets or SPEC.md via Bash (redirect, sed, tee, etc.) — review is read-only; report to orchestrator
 - Approve based on intent alone
 - Ignore edge cases
 - Suggest speculative refactors
