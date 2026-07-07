@@ -23,7 +23,7 @@ spec_sections:
   - "<関連する SPEC の節>"
 escape_class: not_generated      # 下記3分類
 related_ids: []                  # 関連する Q-NNN / D-NNN(あれば)
-suspected_hole: "<scan-axes.md 軸N の欠落 / triage-rules の判定 / 調査の確信度 등>"
+suspected_hole: "<scan-axes.md 軸N の欠落 / triage-rules の判定 / 調査の確信度 など>"
 status: recorded                 # recorded | rule_revised | dismissed
 ```
 

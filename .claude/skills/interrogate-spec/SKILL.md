@@ -6,7 +6,7 @@ description: >
   SPEC改訂またはスコープ外記録として決定ログに固定する。/interrogate-spec で起動。
 argument-hint: "[spec-path] [all | Q-NNN | (empty=next 5)]"
 disable-model-invocation: true
-allowed-tools: Read, Grep, Glob, Task
+allowed-tools: Read, Grep, Glob, Agent
 ---
 
 # interrogate-spec — SPEC尋問ワークフロー
