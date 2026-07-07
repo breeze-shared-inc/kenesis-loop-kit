@@ -85,11 +85,11 @@ def ticket(status="todo", tti=0, rti=0, rtv=0, tid="APP-001", blocker="<!-- な�
     )
 
 
-def write_ticket(cwd, filename, **kwargs):
-    """tickets/active/<filename> にチケットを書き出し、絶対パスを返す。"""
-    active = os.path.join(cwd, "tickets", "active")
-    os.makedirs(active, exist_ok=True)
-    path = os.path.join(active, filename)
+def write_ticket(cwd, filename, dirname="active", **kwargs):
+    """tickets/<dirname>/<filename> にチケットを書き出し、絶対パスを返す。"""
+    target = os.path.join(cwd, "tickets", dirname)
+    os.makedirs(target, exist_ok=True)
+    path = os.path.join(target, filename)
     with open(path, "w", encoding="utf-8") as f:
         f.write(ticket(**kwargs))
     return path

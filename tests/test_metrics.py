@@ -62,13 +62,36 @@ class TestRecorder(unittest.TestCase):
             state["APP-001"]["retry_counts"]["tester_to_implementer"], 0)
 
     def test_state_counters_refresh_without_event(self):
-        # status不変で retry_counts のみ変化 → イベントは増えず state だけ更新
+        # status不変で retry_counts が増加 → イベントは増えず state だけ更新
         self.record("design_done")
         self.assertEqual(len(self.events()), 1)
         self.record("design_done", tti=1)
         self.assertEqual(len(self.events()), 1)  # イベント追加なし
         self.assertEqual(
             self.state()["APP-001"]["retry_counts"]["tester_to_implementer"], 1)
+
+    def test_counter_decrease_records_retry_reset(self):
+        # 減少（人間承認済みリセット）→ retry_reset イベントを記録し state 更新
+        self.record("design_done", tti=2)
+        self.record("design_done", tti=0)
+        evs = self.events()
+        self.assertEqual(len(evs), 2)
+        reset = evs[-1]
+        self.assertEqual(reset["type"], "retry_reset")
+        self.assertEqual(reset["from_counts"]["tester_to_implementer"], 2)
+        self.assertEqual(reset["to_counts"]["tester_to_implementer"], 0)
+        self.assertEqual(
+            self.state()["APP-001"]["retry_counts"]["tester_to_implementer"], 0)
+
+    def test_transition_with_reset_orders_events(self):
+        # 遷移とリセットが同時 → 遷移イベントの後にリセットイベント
+        self.record("blocked", tti=3)
+        self.record("design_done", tti=0)
+        evs = self.events()
+        self.assertEqual([e["type"] for e in evs],
+                         ["created", "transition", "retry_reset"])
+        self.assertEqual(evs[1]["from"], "blocked")
+        self.assertEqual(evs[1]["to"], "design_done")
 
     def test_non_ticket_ignored(self):
         payload = {"tool_name": "Write", "cwd": self.cwd,

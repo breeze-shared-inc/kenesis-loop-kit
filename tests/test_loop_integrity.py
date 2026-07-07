@@ -153,6 +153,51 @@ class TestLoopIntegrity(unittest.TestCase):
             {"APP-001": {"status": "design_done", "ts": "2026-06-14T00:00:00"}})
         self.assertIsNone(self.run_stop())
 
+    # --- done/ のドリフト検知 ---
+
+    def test_done_ticket_drift_blocks(self):
+        # done/ のチケットがBash等で書き換えられた（観測=done、実体=todo）
+        os.makedirs(os.path.join(self.cwd, "tickets", "active"), exist_ok=True)
+        _util.write_ticket(self.cwd, "APP-001.md", dirname="done", status="todo")
+        _util.write_state(self.cwd, {"APP-001": _util.state_record("done")})
+        self.assertBlock(must_contain="Write/Edit を経ない")
+
+    def test_done_ticket_matching_state_allows(self):
+        os.makedirs(os.path.join(self.cwd, "tickets", "active"), exist_ok=True)
+        _util.write_ticket(self.cwd, "APP-001.md", dirname="done", status="done")
+        _util.write_state(self.cwd, {"APP-001": _util.state_record("done")})
+        self.assertIsNone(self.run_stop())
+
+    def test_done_legacy_ticket_not_fully_checked(self):
+        # done/ はドリフト検知のみ。retry_counts の無い旧チケットでも block しない
+        content = _util.ticket(status="done").replace(
+            "retry_counts:\n  tester_to_implementer: 0\n"
+            "  reviewer_to_implementer: 0\n  reviewer_to_investigator: 0\n", "")
+        done = os.path.join(self.cwd, "tickets", "done")
+        os.makedirs(done, exist_ok=True)
+        with open(os.path.join(done, "OLD-001.md"), "w", encoding="utf-8") as f:
+            f.write(content)
+        os.makedirs(os.path.join(self.cwd, "tickets", "active"), exist_ok=True)
+        self.assertIsNone(self.run_stop())
+
+    # --- L3: retry_reset エポックの統合確認 ---
+
+    def test_reconcile_respects_reset_epoch(self):
+        # 差し戻し1回 → リセット(0) → 差し戻し1回。カウンタ1で整合
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done", tti=1)
+        write_metrics(self.cwd, [
+            {"ticket": "APP-001", "from": None, "to": "todo"},
+            {"ticket": "APP-001", "from": "implementation_done",
+             "to": "design_done"},
+            {"ticket": "APP-001", "type": "retry_reset",
+             "to_counts": {"tester_to_implementer": 0,
+                           "reviewer_to_implementer": 0,
+                           "reviewer_to_investigator": 0}},
+            {"ticket": "APP-001", "from": "implementation_done",
+             "to": "design_done"},
+        ])
+        self.assertIsNone(self.run_stop())
+
 
 if __name__ == "__main__":
     unittest.main()
