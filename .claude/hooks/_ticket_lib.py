@@ -48,8 +48,10 @@ LEGAL_TRANSITIONS = {
     "todo": {"investigation_done"},
     "investigation_done": {"design_done"},
     "design_done": {"implementation_done"},
-    "implementation_done": {"test_passed"},
-    # 差し戻し: tester fail / reviewer reject(実装起因) -> design_done、reviewer reject(設計起因) -> todo
+    # 差し戻し: tester Quality Gate fail -> design_done（test_passedは合格時のみ付与されるため、
+    # tester差し戻しは implementation_done 起点になる）
+    "implementation_done": {"test_passed", "design_done"},
+    # 差し戻し: reviewer reject(実装起因) -> design_done、reviewer reject(設計起因) -> todo
     "test_passed": {"done", "design_done", "todo"},
     # 改善ループ: done から再開（architect -> investigation_done、investigator -> todo）
     "done": {"investigation_done", "todo"},
@@ -226,10 +228,10 @@ def validate_retry_monotonic(prior_fm, new_fm):
     return errors
 
 
-def _count_rollbacks(events, to_status):
+def _count_transitions(events, from_status, to_status):
     return sum(
         1 for e in events
-        if e.get("from") == "test_passed" and e.get("to") == to_status
+        if e.get("from") == from_status and e.get("to") == to_status
     )
 
 
@@ -250,10 +252,11 @@ def _retry_ints(rc):
 def reconcile_rollbacks(retry_counts, events):
     """L3: 差し戻し履歴（events）と現在の retry_counts の整合を照合する。
 
-    events は当該チケットの ts 昇順イベント列。照合はカテゴリ個別ではなく
-    「和」で行う（test_passed→design_done は tester / reviewer-impl の判別不能なため）:
-        test_passed→design_done の回数 == tester_to_implementer + reviewer_to_implementer
-        test_passed→todo        の回数 == reviewer_to_investigator
+    events は当該チケットの ts 昇順イベント列。差し戻し3種は遷移元で
+    区別できるため、カテゴリ個別に照合する:
+        implementation_done→design_done の回数 == tester_to_implementer
+        test_passed→design_done         の回数 == reviewer_to_implementer
+        test_passed→todo                の回数 == reviewer_to_investigator
 
     履歴が created（from=None）で始まっていなければ全履歴が無いとみなし、
     照合不能として [] を返す（fail-open）。型不正も照合せず [] を返す
@@ -266,20 +269,17 @@ def reconcile_rollbacks(retry_counts, events):
         return []
 
     tti, rti, rtv = vals
-    rb_design = _count_rollbacks(events, "design_done")
-    rb_todo = _count_rollbacks(events, "todo")
-
+    checks = [
+        ("implementation_done", "design_done", tti, "tester_to_implementer"),
+        ("test_passed", "design_done", rti, "reviewer_to_implementer"),
+        ("test_passed", "todo", rtv, "reviewer_to_investigator"),
+    ]
     errors = []
-    if tti + rti != rb_design:
-        errors.append(
-            "design_doneへの差し戻し %d回 に対し "
-            "tester+reviewer_impl カウンタ合計=%d が不一致（増やし忘れ/誤計上の疑い）"
-            % (rb_design, tti + rti)
-        )
-    if rtv != rb_todo:
-        errors.append(
-            "todoへの差し戻し %d回 に対し "
-            "reviewer_to_investigator=%d が不一致（増やし忘れ/誤計上の疑い）"
-            % (rb_todo, rtv)
-        )
+    for frm, to, counter, key in checks:
+        n = _count_transitions(events, frm, to)
+        if counter != n:
+            errors.append(
+                "%s→%s の差し戻し %d回 に対し %s=%d が不一致"
+                "（増やし忘れ/誤計上の疑い）" % (frm, to, n, key, counter)
+            )
     return errors

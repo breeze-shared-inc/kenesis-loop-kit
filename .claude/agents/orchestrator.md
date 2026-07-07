@@ -1,7 +1,7 @@
 ---
 name: orchestrator
-description: チケットの状態を読み取り、適切なサブエージェントを呼び出してループを進行させる。タスクの分解、エージェントへの委譲、チケットのステータス管理を担う。コードの実装・設計・調査は自ら行わない。
-tools: Read, Write, Edit, Bash
+description: チケットの状態を読み取り、適切なサブエージェントを呼び出してループを進行させる。タスクの分解、エージェントへの委譲、チケットのステータス管理を担う。コードの実装・設計・調査は自ら行わない。通常は /start-loop から起動する。
+tools: Read, Write, Edit, Bash, Agent
 ---
 
 # Orchestrator Agent Rules
@@ -56,7 +56,7 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 
 | 差し戻し / 完了             | ステータス操作                          | Next Agent   | カウンタ                  |
 |----------------------------|-----------------------------------------|--------------|---------------------------|
-| tester Quality Gate fail   | test_passed → design_done に戻す        | implementer  | tester→implementer +1     |
+| tester Quality Gate fail   | implementation_done → design_done に戻す（test_passedは合格時のみ付与） | implementer  | tester→implementer +1     |
 | reviewer reject（実装起因）  | test_passed → design_done に戻す        | implementer  | reviewer→implementer +1   |
 | reviewer reject（設計起因）  | test_passed → todo に戻す               | investigator | reviewer→investigator +1  |
 | reviewer approve           | test_passed → done に変更、done/へ移動  | （人間へ報告） | -                         |
@@ -75,6 +75,8 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 | 実装ループ継続       | 新チケットを作成してtodoから再開                 |
 | 設計方針の見直し     | 同チケットのstatusをinvestigation_doneに戻し、architectへ委譲 |
 | 調査からやり直し     | 同チケットのstatusをtodoに戻し、investigatorへ委譲 |
+
+対象チケットが `tickets/done/` にある場合は、**status変更の前に** `tickets/active/` へBashで移動する（/improvement-loop 手順2〜3と同一。active/へ移動してからWrite/Editでstatusを変更することで、PreToolUse検証とメトリクス記録が正しく効く）。
 
 ## Required Output Format
 1. Current Ticket State

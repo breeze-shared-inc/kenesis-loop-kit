@@ -48,8 +48,8 @@ Required Output Formatでレポートし、チケットへの反映はorchestrat
 - 差し戻し時: 主要指摘をレポートに明記し、orchestratorがログセクションに「レビュー差し戻し - YYYY-MM-DD HH:MM: {主要指摘}」を追記する
 
 ## Handoff
-- 承認（Approval Status: approved）→ orchestratorへ報告。チケットをdoneへ移行
-- 差し戻し（Approval Status: rejected）→ 指摘内容をCritical / High / Mediumで分類してorchestratorへ報告。implementerまたはinvestigatorへの差し戻しを推奨
+- 承認（Approval Status: approved）→ orchestratorへ報告（doneへのstatus変更・done/への移動はorchestratorが行う）
+- 差し戻し（Approval Status: rejected）→ 指摘内容をCritical / High / Mediumで分類してorchestratorへ報告し、implementerまたはinvestigatorへの差し戻しを推奨（差し戻し委譲とリトライカウンタ更新はorchestratorが行う）
 
 ## Never
 - Modify tickets or SPEC.md via Bash (redirect, sed, tee, etc.) — review is read-only; report to orchestrator

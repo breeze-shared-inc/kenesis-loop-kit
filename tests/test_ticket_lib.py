@@ -93,7 +93,11 @@ class TestTransition(unittest.TestCase):
     def test_illegal_skip(self):
         self.assertIsNotNone(lib.validate_transition("design_done", "done"))
 
-    def test_rollback_tester_or_reviewer_impl(self):
+    def test_rollback_tester_fail(self):
+        # tester差し戻しは implementation_done 起点（test_passedは合格時のみ）
+        self.assertIsNone(lib.validate_transition("implementation_done", "design_done"))
+
+    def test_rollback_reviewer_impl(self):
         self.assertIsNone(lib.validate_transition("test_passed", "design_done"))
 
     def test_rollback_reviewer_design(self):
@@ -156,15 +160,21 @@ class TestReconcile(unittest.TestCase):
             evs.append(self.ev(frm, to))
         return evs
 
-    def test_match(self):
-        events = self.created_then(("test_passed", "design_done"))
+    def test_match_tester(self):
+        events = self.created_then(("implementation_done", "design_done"))
         rc = {"tester_to_implementer": 1, "reviewer_to_implementer": 0,
               "reviewer_to_investigator": 0}
         self.assertEqual(lib.reconcile_rollbacks(rc, events), [])
 
-    def test_match_via_sum(self):
-        # design_doneへの差し戻し2回 = tester1 + reviewer_impl1
-        events = self.created_then(("test_passed", "design_done"),
+    def test_match_reviewer_impl(self):
+        events = self.created_then(("test_passed", "design_done"))
+        rc = {"tester_to_implementer": 0, "reviewer_to_implementer": 1,
+              "reviewer_to_investigator": 0}
+        self.assertEqual(lib.reconcile_rollbacks(rc, events), [])
+
+    def test_match_per_category(self):
+        # tester差し戻し1回 + reviewer実装差し戻し1回を個別に照合
+        events = self.created_then(("implementation_done", "design_done"),
                                    ("test_passed", "design_done"))
         rc = {"tester_to_implementer": 1, "reviewer_to_implementer": 1,
               "reviewer_to_investigator": 0}
@@ -178,12 +188,13 @@ class TestReconcile(unittest.TestCase):
         self.assertTrue(any("design_done" in e for e in errs))
 
     def test_wrong_category_flagged(self):
-        # design_doneへ差し戻したのに investigator カウンタを上げている
-        events = self.created_then(("test_passed", "design_done"))
-        rc = {"tester_to_implementer": 0, "reviewer_to_implementer": 0,
-              "reviewer_to_investigator": 1}
+        # tester差し戻しなのに reviewer_impl カウンタを上げている
+        # → 遷移元で区別できるため「和」では隠れず、両カテゴリの不一致を検出
+        events = self.created_then(("implementation_done", "design_done"))
+        rc = {"tester_to_implementer": 0, "reviewer_to_implementer": 1,
+              "reviewer_to_investigator": 0}
         errs = lib.reconcile_rollbacks(rc, events)
-        self.assertEqual(len(errs), 2)  # design_done不足 と todo過剰
+        self.assertEqual(len(errs), 2)  # tester不足 と reviewer_impl過剰
 
     def test_todo_rollback_match(self):
         events = self.created_then(("test_passed", "todo"))

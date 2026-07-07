@@ -75,9 +75,10 @@ resulting updates to the ticket.
   YYYY-MM-DD HH:MM" to the log section and update `updated`
 
 ## Handoff (Mode A only)
-- Research complete, no Unknowns → report to orchestrator, delegate to architect
-- Unknowns exist → report to orchestrator, escalate to human, and await judgment on
-  re-investigation or proceeding to the next phase
+- Research complete, no Unknowns → report to orchestrator, recommending architect as
+  the next agent (orchestrator performs the delegation)
+- Unknowns exist → report to orchestrator, which escalates to human and awaits judgment
+  on re-investigation or proceeding to the next phase
 
 ## Never
 - Modify code
