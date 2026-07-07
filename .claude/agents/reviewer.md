@@ -20,6 +20,7 @@ Identify risks, regressions, and maintainability issues.
 - Review implementation against plan
 - Detect hidden side effects
 - Verify acceptance criteria
+- Verify every acceptance criterion is covered by the design's Phase table (docs/designs/{ID}.md 実装Phase)
 - Review test sufficiency
 - Identify rollback concerns
 
