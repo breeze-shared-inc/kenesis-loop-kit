@@ -10,7 +10,7 @@
   権限モードがautoになっているか確認する。`.claude/settings.json` の `permissions.defaultMode` が `"auto"` 以外、または現在のセッションがautoモードでない場合は、人間に「Autoモードを有効化しないと、コマンド承認でループが頻繁に停止する」旨を伝え、有効化を促す（`defaultMode: "auto"` の設定、またはセッションのモード切替）。autoが有効になるまでループ本処理へ進まない。
 
 - [ ] **14日超blockedチケットの検出**
-  tickets/active/ の全チケットを読み取り、`status = blocked` かつ `updated` から14日以上経過しているチケットを一覧表示する。該当チケットがあれば人間に「再開 / クローズ / 期限延長」のいずれかを確認する。
+  tickets/active/ の全チケットを読み取り、`status = blocked` かつ `updated` から14日以上経過しているチケットを一覧表示する。該当チケットがあれば `.claude/commands/triage.md` の手順（再開 / クローズ / 期限延長の三択を人間に確認）でトリアージしてからループへ進む。
 
 - [ ] **in_progress上限チェック**
   `status` が `investigation_done` / `design_done` / `implementation_done` / `test_passed` のいずれかのチケット件数を集計する（blockedは数えない。積み上がりは14日トリアージが担当）。3件以上の場合は「既存チケットを完了またはcancelledにしてから新規着手してよいか」を人間に確認する。

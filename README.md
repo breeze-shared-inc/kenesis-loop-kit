@@ -51,6 +51,7 @@ kenesis-loop-kit/
 │   │   ├── new-ticket.md            ← /new-ticket
 │   │   ├── improvement-loop.md      ← /improvement-loop
 │   │   ├── rollback.md              ← /rollback
+│   │   ├── triage.md                ← /triage
 │   │   ├── archive.md               ← /archive
 │   │   └── metrics.md               ← /metrics
 │   └── skills/                      ← 前工程スキル（SPEC整備・ワイヤーフレーム）
@@ -208,6 +209,7 @@ Claude Codeのスラッシュコマンドでよく使う操作を呼び出せま
 | `/new-ticket` | チケットを新規作成する | `/new-ticket ログイン機能の実装` |
 | `/improvement-loop` | 改善ループを起動する | `/improvement-loop APP-001 architect` |
 | `/rollback` | 承認後に問題が発覚したチケットをロールバックする | `/rollback APP-001` |
+| `/triage` | 長期放置blockedチケットをトリアージする | `/triage` `/triage 7` `/triage APP-003` |
 | `/archive` | 完了チケットを個人vaultへ移動する | `/archive ~/my-vault/Archives/project-a/` |
 | `/metrics` | ループの観測メトリクスを表示する | `/metrics` `/metrics APP-001` |
 
@@ -261,6 +263,11 @@ IDの形式: `{プロジェクト略称}-{3桁連番}`（例: `APP-001`）
 **承認後に問題が発覚したチケットをロールバックする:**
 ```
 /rollback APP-001
+```
+
+**放置されたblockedチケットをトリアージする:**
+```
+/triage
 ```
 
 **完了チケットをアーカイブする:**

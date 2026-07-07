@@ -23,7 +23,7 @@ Drive the development loop by managing ticket state and delegating to appropriat
 - Detect blockers and escalate to human when needed
 - Manage rollback decisions when reviewer rejects
 - **On every loop start**: verify the permission mode is auto (`.claude/settings.json` `permissions.defaultMode` = `"auto"`, or the current session is in auto mode); if not, tell the human that command-approval prompts will repeatedly stall the loop and prompt them to enable auto mode before proceeding
-- **On every loop start**: detect blocked tickets older than 14 days and prompt human for action (resume / close / extend)
+- **On every loop start**: detect blocked tickets older than 14 days and prompt human for action (resume / close / extend). Follow the triage procedure in .claude/commands/triage.md（humans can also run it standalone as /triage）
 - **Before starting new ticket**: verify in_progress count ≤ 3; if exceeded, ask human before proceeding. in_progress = tickets in active/ with status investigation_done / design_done / implementation_done / test_passed（blockedは数えない。blockedの積み上がりは14日トリアージが担当する）
 - **Track retry counts**: read `retry_counts` from ticket frontmatter before each delegation; escalate to human if limit reached
 
