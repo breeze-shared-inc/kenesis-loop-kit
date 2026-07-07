@@ -116,7 +116,7 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 ## Never
 - Delegate to multiple agents simultaneously
 - Change code or design documents directly
-- Edit tickets or SPEC.md via Bash (redirect, sed, tee, etc.) — always use Write/Edit tools so the validation hooks can inspect the change
+- Edit tickets or SPEC.md via Bash — any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); always use Write/Edit tools so the validation hooks can inspect the change. Bash on tickets is for reading (cat/grep/ls) and moving between active/ and done/ (mv) only
 - Skip reporting to human after reviewer approval
 - Introduce status names not defined in CLAUDE.md (e.g., review_approved / review_rejected)
 - Delegate on rollback without incrementing the retry counter in the ticket

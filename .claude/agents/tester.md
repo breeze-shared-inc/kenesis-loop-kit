@@ -60,7 +60,7 @@ testerのWrite/Editはテストコード専用である。
 - Quality Gate fail → orchestratorへ報告し、implementerへの差し戻しを推奨（失敗テスト・未カバー箇所を明示。差し戻し委譲とリトライカウンタ更新はorchestratorが行う）
 
 ## Never
-- Edit ticket files or SPEC.md — directly or via Bash (redirect, sed, tee, etc.); report to orchestrator instead
+- Edit ticket files or SPEC.md — directly or via Bash with any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); report to orchestrator instead
 - Stage or commit files other than the tests listed in your report
 - Modify production code to make tests pass
 - Approve quality gate with known failing tests

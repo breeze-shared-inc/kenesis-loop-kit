@@ -21,13 +21,18 @@ class TestRecorder(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def record(self, status):
+    def record(self, status, **kwargs):
         with open(self.path, "w", encoding="utf-8") as f:
-            f.write(_util.ticket(status=status))
+            f.write(_util.ticket(status=status, **kwargs))
         payload = {"tool_name": "Write", "cwd": self.cwd,
                    "tool_input": {"file_path": self.path}}
         rc, _, _ = _util.run_script(_util.RECORDER, payload, cwd=self.cwd)
         self.assertEqual(rc, 0)
+
+    def state(self):
+        path = os.path.join(self.cwd, "tickets", ".metrics_state.json")
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
 
     def events(self):
         if not os.path.exists(self.jsonl):
@@ -51,11 +56,19 @@ class TestRecorder(unittest.TestCase):
 
     def test_state_sidecar_written(self):
         self.record("todo")
-        state_path = os.path.join(self.cwd, "tickets", ".metrics_state.json")
-        self.assertTrue(os.path.exists(state_path))
-        with open(state_path, encoding="utf-8") as f:
-            state = json.load(f)
+        state = self.state()
         self.assertEqual(state["APP-001"]["status"], "todo")
+        self.assertEqual(
+            state["APP-001"]["retry_counts"]["tester_to_implementer"], 0)
+
+    def test_state_counters_refresh_without_event(self):
+        # status不変で retry_counts のみ変化 → イベントは増えず state だけ更新
+        self.record("design_done")
+        self.assertEqual(len(self.events()), 1)
+        self.record("design_done", tti=1)
+        self.assertEqual(len(self.events()), 1)  # イベント追加なし
+        self.assertEqual(
+            self.state()["APP-001"]["retry_counts"]["tester_to_implementer"], 1)
 
     def test_non_ticket_ignored(self):
         payload = {"tool_name": "Write", "cwd": self.cwd,

@@ -111,6 +111,15 @@
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/guard_spec_writes.py\""
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/guard_bash_writes.py\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

@@ -4,6 +4,8 @@ stdlib のみ。外部依存なし。
 呼び出し側は「内部エラー時は allow（fail-open）」「検知した違反のみ deny（fail-closed）」
 という方針で利用する。
 """
+import json
+import os
 
 VALID_STATUS = {
     "todo",
@@ -68,6 +70,31 @@ LEGAL_TRANSITIONS = {
     },
     "cancelled": set(),
 }
+
+
+def tickets_dir_for(ticket_path):
+    """チケットファイルのパスから tickets/ ディレクトリを導出する。
+    .../tickets/active/X.md → .../tickets。導出できなければ None。"""
+    n = ticket_path.replace("\\", "/")
+    for marker in ("/tickets/active/", "/tickets/done/"):
+        idx = n.rfind(marker)
+        if idx != -1:
+            return n[:idx] + "/tickets"
+    return None
+
+
+def load_state(tickets_dir):
+    """hook管理のサイドカー tickets/.metrics_state.json を読む。
+    読めない・無い場合は {}（fail-open）。"""
+    if not tickets_dir:
+        return {}
+    path = os.path.join(tickets_dir, ".metrics_state.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 def _unquote(value):
