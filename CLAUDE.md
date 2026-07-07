@@ -10,6 +10,7 @@
 | コマンド | 用途 | 引数 |
 |---|---|---|
 | `/spec-interview` | 対話形式で要件定義書(docs/SPEC.md)を作成・改訂する | モード（最短/フル・省略可） |
+| `/interrogate-spec` | SPECを敵対的にレビューし、質問リストの対話解決でSPEC改訂・決定ログ化する | spec-path モード（省略可） |
 | `/wireframe-gen` | SPECの画面一覧からワイヤーフレーム(docs/wireframes/)を生成する | SCR-ID/モード（省略可） |
 | `/start-loop` | ループを開始・再開する | チケットID（省略可） |
 | `/new-ticket` | チケットを新規作成する | タイトル（必須） |
@@ -17,7 +18,7 @@
 | `/archive` | 完了チケットを個人vaultへ移動する | アーカイブ先パス（省略可） |
 | `/metrics` | ループの観測メトリクスを表示する | チケットID/プロジェクト名（省略可・フィルタ） |
 
-- `/spec-interview` と `/wireframe-gen` は開発ループの**前工程**（SPEC・ワイヤーフレームの整備）を担うスキル。定義は `.claude/skills/` を参照。
+- `/spec-interview`・`/interrogate-spec`・`/wireframe-gen` は開発ループの**前工程**（SPEC・ワイヤーフレームの整備）を担うスキル。定義は `.claude/skills/` を参照。
 - ループ本体のコマンド（`/start-loop` 以降）の詳細は `.claude/commands/` を参照してください。
 
 ---
@@ -26,12 +27,12 @@
 
 | エージェント   | 役割                                 | 定義ファイル                      |
 |----------------|--------------------------------------|-----------------------------------|
-| orchestrator   | ループ管理・エージェント委譲         | agents/orchestrator.md            |
-| investigator   | 既存コード調査・影響範囲特定         | agents/investigator.md            |
-| architect      | 設計・docs/designs/{ID}.md作成・受け入れ基準定義| agents/architect.md          |
-| implementer    | 承認済み設計に基づくコード実装       | agents/implementer.md             |
-| tester         | テスト実行・カバレッジ確認・品質検証 | agents/tester.md                  |
-| reviewer       | コードレビュー・整合性チェック       | agents/reviewer.md                |
+| orchestrator   | ループ管理・エージェント委譲         | .claude/agents/orchestrator.md    |
+| investigator   | 既存コード調査・影響範囲特定         | .claude/agents/investigator.md    |
+| architect      | 設計・docs/designs/{ID}.md作成・受け入れ基準定義| .claude/agents/architect.md  |
+| implementer    | 承認済み設計に基づくコード実装       | .claude/agents/implementer.md     |
+| tester         | テスト実行・カバレッジ確認・品質検証 | .claude/agents/tester.md          |
+| reviewer       | コードレビュー・整合性チェック       | .claude/agents/reviewer.md        |
 
 各エージェントを呼び出す際は、対応する定義ファイルを必ず参照してください。
 
@@ -40,10 +41,10 @@
 ## 開発ループフロー
 
 ```
-[SPEC作成 /spec-interview] → [ワイヤーフレーム /wireframe-gen] → [チケット作成]
-                                                                      ↓
-                                                                orchestrator
-                                                                      ↓
+[SPEC作成 /spec-interview] → [SPEC尋問 /interrogate-spec] → [ワイヤーフレーム /wireframe-gen] → [チケット作成]
+                                                                                                       ↓
+                                                                                                 orchestrator
+                                                                                                       ↓
 investigator → architect → implementer → tester → reviewer
                                  ↑                     |
                                  └────── 実装ループ ────┘
@@ -77,6 +78,7 @@ reviewerが承認し、人間が成果物を確認した後に判断する。
 |---|---|---|
 | `docs/SPEC.md` | 人間（`/spec-interview` で対話生成し人間が承認） | 要件定義・仕様。investigatorとarchitectが参照する |
 | `docs/wireframes/*.html` | `/wireframe-gen`（人間が確認） | 画面のレイアウト・見た目の正。SPEC §6と対をなす |
+| `docs/spec-qa/<spec名>/` | `/interrogate-spec`（人間が回答・承認） | SPEC尋問の状態ファイル（QUESTIONS.yaml・DECISION_LOG.md・VERIFICATION_BACKLOG.md・ESCAPES.md）。SPEC.mdの改訂は人間のdiff承認を経る |
 | `.claude/skills/spec-interview/templates/SPEC_TEMPLATE.md` | - | SPEC.mdのテンプレート（`/spec-interview` がコピー元に使う） |
 | `docs/designs/{ID}.md` | architect | チケット単位の設計書。architectが生成し、implementerが参照する |
 | `docs/designs/_TEMPLATE.md` | - | 設計書テンプレート（architectがコピー元に使う） |

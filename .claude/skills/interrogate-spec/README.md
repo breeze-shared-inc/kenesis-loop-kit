@@ -78,10 +78,10 @@ SPEC と同じライフサイクルでレビュー対象とする)。
 ## 使い方
 
 ```
-/interrogate-spec                        # ルートの SPEC.md、優先度上位5件のバッチ対話
-/interrogate-spec docs/expense/SPEC.md   # 対象SPECを指定
-/interrogate-spec SPEC.md all            # 全件を5件ずつの連続バッチで実行
-/interrogate-spec SPEC.md Q-017          # 指定質問のみ
+/interrogate-spec                          # docs/SPEC.md、優先度上位5件のバッチ対話
+/interrogate-spec docs/expense/SPEC.md     # 対象SPECを指定
+/interrogate-spec docs/SPEC.md all         # 全件を5件ずつの連続バッチで実行
+/interrogate-spec docs/SPEC.md Q-017       # 指定質問のみ
 ```
 
 典型的なセッションの流れ:

@@ -9,9 +9,9 @@
 # - このファイルへの書き込みは 1 遷移 = 1 保存(state-machine.md §7)
 
 meta:
-  spec_path: "<SPEC の相対パス>"          # 例: SPEC.md
+  spec_path: "<SPEC の相対パス>"          # 例: docs/SPEC.md
   spec_version: "<尋問開始時点の版>"       # 例: "1.4"
-  spec_hash: "<git hash-object SPEC.md>"  # 起動時ガードの改訂検知に使用
+  spec_hash: "<git hash-object docs/SPEC.md>"  # 起動時ガードの改訂検知に使用
   created_at: "<ISO8601>"
   last_triaged_at: null
   next_id: 1

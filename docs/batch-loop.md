@@ -4,7 +4,7 @@
 
 ## 前提：承認ゲートの仕組み
 
-通常、チケットが reviewer承認で `done` に到達すると、orchestrator は停止して人間に報告し、改善ループの判断（実装ループ継続 / 設計見直し / 調査やり直し）を待ちます（`agents/orchestrator.md` の改善ループ判断テーブル、および Never ルール `Skip reporting to human after reviewer approval` / `Start improvement loop without human instruction`）。
+通常、チケットが reviewer承認で `done` に到達すると、orchestrator は停止して人間に報告し、改善ループの判断（実装ループ継続 / 設計見直し / 調査やり直し）を待ちます（`.claude/agents/orchestrator.md` の改善ループ判断テーブル、および Never ルール `Skip reporting to human after reviewer approval` / `Start improvement loop without human instruction`）。
 
 「次のチケットに進む」こと自体が改善ループ判断テーブルの **「実装ループ継続」= 人間の判断** に当たるため、既定では1件ごとに承認ゲートが挟まります。
 
@@ -40,7 +40,7 @@
 
 ## 制約・注意点
 
-- **逐次実行であり並行ではない** — `One ticket, one active sub-agent at a time`（`agents/orchestrator.md`）により、1件を最後まで流してから次へ進む。同時並行はしない。
+- **逐次実行であり並行ではない** — `One ticket, one active sub-agent at a time`（`.claude/agents/orchestrator.md`）により、1件を最後まで流してから次へ進む。同時並行はしない。
 - **事前承認は明示した遷移のみに有効** — 範囲外のチケットには通常どおり承認ゲートが入る。
 - **in_progress上限3件** — 連続対象が3件以内なら抵触しない（逐次なので同時は常に1件）。4件以上を一気に着手しようとすると上限チェックで停止する。
 - **差し戻し・リトライ上限超過・blocked** が発生した場合は、バッチ承認に関わらず停止して報告される。

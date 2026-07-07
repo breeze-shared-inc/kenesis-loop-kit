@@ -35,7 +35,7 @@ allowed-tools: Read, Grep, Glob, Task
 
 `$ARGUMENTS` を space 区切りで解釈する:
 
-1. 第1引数 = spec-path。省略時はリポジトリルートの `SPEC.md`。存在しなければ中止して確認。
+1. 第1引数 = spec-path。省略時は `docs/SPEC.md`。存在しなければ中止して確認。
 2. 第2引数 = モード:
    - 空: 優先度上位5件のバッチ対話(デフォルト)
    - `all`: 全件を5件ずつの連続バッチで実行(state-machine.md §3)
