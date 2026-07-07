@@ -124,7 +124,7 @@ class TestTransition(unittest.TestCase):
         self.assertIsNone(lib.validate_transition("done", "todo"))
 
     def test_rollback_from_done(self):
-        # ロールバック手順: revert実装をtesterから再開（CLAUDE.md「ロールバック時のチケット運用」）
+        # ロールバック手順: revert実装をtesterから再開（.claude/commands/rollback.md 手順7）
         self.assertIsNone(lib.validate_transition("done", "implementation_done"))
         self.assertIsNotNone(lib.validate_transition("done", "design_done"))
 

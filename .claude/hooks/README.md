@@ -14,11 +14,17 @@
 
 メトリクスの集計は `.claude/metrics/aggregate.py`（`/metrics` コマンドが実行）が担う。
 
+## メトリクスの運用
+
+- `tickets/.metrics.jsonl`・`tickets/.metrics_state.json` は hook が自動生成する。**LLM・エージェントは直接編集しない**（サイドカーの直接編集はドリフト検知の基準を壊す）
+- これらのファイルはデフォルトで `.gitignore` 対象（環境固有のため）。チームで履歴を共有したい場合は `.gitignore` の該当行を解除する
+- 記録されるのは「ステータス遷移」のみ。ログ追記や related_files 更新など状態を変えない編集は記録しない
+
 ## 設計方針
 
 - **fail-open**: hook内部のエラー（IO・パース不能など）ではループをブロックしない。検知した違反のみ deny する。
 - **依存なし**: Python3標準ライブラリのみ。
-- **単一の真実**: 検証ルールは `_ticket_lib.py` に集約。CLAUDE.md のステータス定義・リトライ上限と定数を同期させること。
+- **単一の真実**: 検証ルールは `_ticket_lib.py` に集約。CLAUDE.md のステータス定義・orchestrator.md「リトライカウンタ管理」のリトライ上限と定数を同期させること。
 - **無限ループ防止**: Stop hook は `stop_hook_active` が真のとき再ブロックしない。
 
 ## ローカルでの動作確認
@@ -42,8 +48,13 @@ exit 0 かつ無出力なら allow、JSON を出力すれば block。
 
 自動テストは `tests/` にある（`python3 -m unittest discover -s tests -v`）。検証ロジックを変更したら必ず実行すること。
 
+## 注意
+
+- `retry_counts` を持たない旧チケットは検証エラーになる。既存チケットには frontmatter へ `retry_counts` を追加すること
+- hook を一時的に無効化したい場合は `.claude/settings.json` の `hooks` セクションを編集する
+
 ## ルールを変更するとき
 
 1. `_ticket_lib.py` の定数（`VALID_STATUS` / `REQUIRED_KEYS` / `RETRY_CAPS` / `LEGAL_TRANSITIONS`）を更新する
-2. CLAUDE.md の対応する定義（ステータス定義・リトライ上限）も合わせて更新する
+2. 対応する定義（CLAUDE.md ステータス定義・orchestrator.md リトライカウンタ管理）も合わせて更新する
 3. `tests/` のテストを更新し、`python3 -m unittest discover -s tests -v` で全件パスを確認する

@@ -16,7 +16,7 @@
   `status` が `investigation_done` / `design_done` / `implementation_done` / `test_passed` のいずれかのチケット件数を集計する（blockedは数えない。積み上がりは14日トリアージが担当）。3件以上の場合は「既存チケットを完了またはcancelledにしてから新規着手してよいか」を人間に確認する。
 
 - [ ] **done/件数チェック（アーカイブ提案）**
-  tickets/done/ のチケット件数（.gitkeepを除く）を確認する。20件を超えている場合は `/archive` の実行を人間に提案する（CLAUDE.md「アーカイブ」参照）。
+  tickets/done/ のチケット件数（.gitkeepを除く）を確認する。20件を超えている場合は `/archive` の実行（個人vaultの `Archives/{project}/` への移動）を人間に提案する。
 
 ## ループ実行手順
 
