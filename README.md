@@ -47,8 +47,10 @@ kenesis-loop-kit/
 │   │   └── aggregate.py             ← メトリクス集計（/metricsが実行）
 │   ├── commands/                    ← スラッシュコマンド定義
 │   │   ├── start-loop.md            ← /start-loop
+│   │   ├── batch-loop.md            ← /batch-loop
 │   │   ├── new-ticket.md            ← /new-ticket
 │   │   ├── improvement-loop.md      ← /improvement-loop
+│   │   ├── rollback.md              ← /rollback
 │   │   ├── archive.md               ← /archive
 │   │   └── metrics.md               ← /metrics
 │   └── skills/                      ← 前工程スキル（SPEC整備・ワイヤーフレーム）
@@ -202,8 +204,10 @@ Claude Codeのスラッシュコマンドでよく使う操作を呼び出せま
 | `/interrogate-spec` | SPECを敵対的にレビューし、対話解決で改訂・決定ログ化する | `/interrogate-spec docs/SPEC.md` |
 | `/wireframe-gen` | SPECの画面一覧からワイヤーフレームを生成する | `/wireframe-gen` `/wireframe-gen SCR-001` |
 | `/start-loop` | ループを開始・再開する | `/start-loop` `/start-loop APP-001` |
+| `/batch-loop` | 複数チケットを承認ゲートで止めずに連続ループさせる | `/batch-loop APP-001 APP-002` |
 | `/new-ticket` | チケットを新規作成する | `/new-ticket ログイン機能の実装` |
 | `/improvement-loop` | 改善ループを起動する | `/improvement-loop APP-001 architect` |
+| `/rollback` | 承認後に問題が発覚したチケットをロールバックする | `/rollback APP-001` |
 | `/archive` | 完了チケットを個人vaultへ移動する | `/archive ~/my-vault/Archives/project-a/` |
 | `/metrics` | ループの観測メトリクスを表示する | `/metrics` `/metrics APP-001` |
 
@@ -243,10 +247,20 @@ IDの形式: `{プロジェクト略称}-{3桁連番}`（例: `APP-001`）
 /new-ticket バグ: ログイン後にセッションが切れる
 ```
 
+**複数チケットを連続でループさせる:**
+```
+/batch-loop APP-001 APP-002
+```
+
 **成果物確認後に改善ループを起動する:**
 ```
 /improvement-loop APP-001
 /improvement-loop APP-001 investigator
+```
+
+**承認後に問題が発覚したチケットをロールバックする:**
+```
+/rollback APP-001
 ```
 
 **完了チケットをアーカイブする:**
