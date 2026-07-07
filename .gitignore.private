@@ -23,6 +23,13 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Claude Code の個人ローカル設定（個人環境の許可設定を含むため共有しない）
+.claude/settings.local.json
+
 # 環境変数
 .env
 .env.local
+
+# スキルのパッケージ成果物（ソースの正は .claude/skills/**/*.md。
+# ZIP配布物はコミットしない — 二重管理による乖離を防ぐため）
+*.skill

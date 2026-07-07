@@ -86,7 +86,7 @@ skills:
 ### 3. 状態ディレクトリ
 
 手動作成は不要。初回起動時に `docs/spec-qa/<spec名>/` が自動初期化される
-(QUESTIONS.yaml は `templates/questions.yaml`、他3ファイルは `templates/init/` の
+(QUESTIONS.yaml は `references/templates/questions.yaml`、他3ファイルは `references/templates/init/` の
 同名ファイルのコピー)。状態ファイルは git 管理に含めること(尋問の履歴・決定ログは
 SPEC と同じライフサイクルでレビュー対象とする)。
 

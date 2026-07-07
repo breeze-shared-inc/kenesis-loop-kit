@@ -10,18 +10,24 @@
   権限モードがautoになっているか確認する。`.claude/settings.json` の `permissions.defaultMode` が `"auto"` 以外、または現在のセッションがautoモードでない場合は、人間に「Autoモードを有効化しないと、コマンド承認でループが頻繁に停止する」旨を伝え、有効化を促す（`defaultMode: "auto"` の設定、またはセッションのモード切替）。autoが有効になるまでループ本処理へ進まない。
 
 - [ ] **14日超blockedチケットの検出**
-  tickets/active/ の全チケットを読み取り、`status = blocked` かつ `updated` から14日以上経過しているチケットを一覧表示する。該当チケットがあれば人間に「再開 / クローズ / 期限延長」のいずれかを確認する。
+  tickets/active/ の全チケットを読み取り、`status = blocked` かつ `updated` から14日以上経過しているチケットを一覧表示する。該当チケットがあれば `.claude/commands/triage.md` の手順（再開 / クローズ / 期限延長の三択を人間に確認）でトリアージしてからループへ進む。
 
 - [ ] **in_progress上限チェック**
-  `status != todo` かつ `status != done` かつ `status != cancelled` のチケット件数を集計する。3件以上の場合は「既存チケットを完了またはcancelledにしてから新規着手してよいか」を人間に確認する。
+  `status` が `investigation_done` / `design_done` / `implementation_done` / `test_passed` のいずれかのチケット件数を集計する（blockedは数えない。積み上がりは14日トリアージが担当）。3件以上の場合は「既存チケットを完了またはcancelledにしてから新規着手してよいか」を人間に確認する。
+
+- [ ] **done/件数チェック（アーカイブ提案）**
+  tickets/done/ のチケット件数（.gitkeepを除く）を確認する。20件を超えている場合は `/archive` の実行を人間に提案する（CLAUDE.md「アーカイブ」参照）。
 
 ## ループ実行手順
 
 1. tickets/active/ を全件読み取り、statusとpriorityを確認する
-2. 処理対象チケットをpriority順に一覧表示する（cancelled / blocked を除く）
-3. 最優先チケットのstatusに応じて、次に委譲すべきエージェントを判断する
-4. 対応するエージェント定義ファイル（.claude/agents/*.md）を読み込み、作業を開始する
+2. **処理対象が0件の場合は原因に応じて分岐する**
+   - **active/ が完全に0件（.gitkeepを除く）** → チケット不足なので、その旨を報告して `.claude/commands/plan-tickets.md` の手順を実行する（SPECからの分割・一括起票へ。done/ の有無で分岐しない — SPEC改訂後の差分起票や全REQカバー済みの判定は /plan-tickets のカバレッジ突き合わせが行う。SPEC.md が無い場合も /plan-tickets が `/spec-interview` へ誘導する）
+   - **チケットはあるが全件が blocked / cancelled** → チケット不足ではなくブロッカー滞留なので、/plan-tickets へは進まない。blockedチケットの一覧とブロッカー内容を提示し、`/triage` またはブロッカー解消を人間に促して停止する
+3. 処理対象チケットをpriority順に一覧表示する（cancelled / blocked を除く）
+4. 最優先チケットのstatusに応じて、次に委譲すべきエージェントを判断する
+5. 対応するエージェント定義ファイル（.claude/agents/*.md）を読み込み、作業を開始する
 
 引数が指定された場合（例: /start-loop APP-001）は、指定されたチケットIDを優先して処理する。
 
-複数チケットを各完了時の承認ゲートで止めずに連続実行したい場合は、`docs/batch-loop.md`（複数チケットの連続ループ実行ガイド）を参照する。
+複数チケットを各完了時の承認ゲートで止めずに連続実行したい場合は `/batch-loop {ID-1} {ID-2} ...` を使う（運用の背景は `docs/batch-loop.md` を参照）。

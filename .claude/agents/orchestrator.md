@@ -1,7 +1,7 @@
 ---
 name: orchestrator
-description: チケットの状態を読み取り、適切なサブエージェントを呼び出してループを進行させる。タスクの分解、エージェントへの委譲、チケットのステータス管理を担う。コードの実装・設計・調査は自ら行わない。
-tools: Read, Write, Bash
+description: チケットの状態を読み取り、適切なサブエージェントを呼び出してループを進行させる。タスクの分解、エージェントへの委譲、チケットのステータス管理を担う。コードの実装・設計・調査は自ら行わない。通常は /start-loop から起動する。
+tools: Read, Write, Edit, Bash, Agent
 ---
 
 # Orchestrator Agent Rules
@@ -19,12 +19,12 @@ Drive the development loop by managing ticket state and delegating to appropriat
 ## Responsibilities
 - Read tickets/active/ and determine next action
 - Delegate to appropriate sub-agents based on ticket status
-- Update ticket status and logs after each agent completes
+- **Sole ticket writer**: apply all ticket file updates (status / log / related_files / updated / retry counters) yourself, based on each sub-agent's report. Sub-agents do not edit ticket files. Append with the Edit tool; use Write only when creating a new ticket file
 - Detect blockers and escalate to human when needed
 - Manage rollback decisions when reviewer rejects
 - **On every loop start**: verify the permission mode is auto (`.claude/settings.json` `permissions.defaultMode` = `"auto"`, or the current session is in auto mode); if not, tell the human that command-approval prompts will repeatedly stall the loop and prompt them to enable auto mode before proceeding
-- **On every loop start**: detect blocked tickets older than 14 days and prompt human for action (resume / close / extend)
-- **Before starting new ticket**: verify in_progress count ≤ 3; if exceeded, ask human before proceeding
+- **On every loop start**: detect blocked tickets older than 14 days and prompt human for action (resume / close / extend). Follow the triage procedure in .claude/commands/triage.md（humans can also run it standalone as /triage）
+- **Before starting new ticket**: verify in_progress count ≤ 3; if exceeded, ask human before proceeding. in_progress = tickets in active/ with status investigation_done / design_done / implementation_done / test_passed（blockedは数えない。blockedの積み上がりは14日トリアージが担当する）
 - **Track retry counts**: read `retry_counts` from ticket frontmatter before each delegation; escalate to human if limit reached
 
 ## Constraints
@@ -56,7 +56,7 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 
 | 差し戻し / 完了             | ステータス操作                          | Next Agent   | カウンタ                  |
 |----------------------------|-----------------------------------------|--------------|---------------------------|
-| tester Quality Gate fail   | test_passed → design_done に戻す        | implementer  | tester→implementer +1     |
+| tester Quality Gate fail   | implementation_done → design_done に戻す（test_passedは合格時のみ付与） | implementer  | tester→implementer +1     |
 | reviewer reject（実装起因）  | test_passed → design_done に戻す        | implementer  | reviewer→implementer +1   |
 | reviewer reject（設計起因）  | test_passed → todo に戻す               | investigator | reviewer→investigator +1  |
 | reviewer approve           | test_passed → done に変更、done/へ移動  | （人間へ報告） | -                         |
@@ -75,6 +75,8 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 | 実装ループ継続       | 新チケットを作成してtodoから再開                 |
 | 設計方針の見直し     | 同チケットのstatusをinvestigation_doneに戻し、architectへ委譲 |
 | 調査からやり直し     | 同チケットのstatusをtodoに戻し、investigatorへ委譲 |
+
+対象チケットが `tickets/done/` にある場合は、**status変更の前に** `tickets/active/` へBashで移動する（/improvement-loop 手順2〜3と同一。active/へ移動してからWrite/Editでstatusを変更することで、PreToolUse検証とメトリクス記録が正しく効く）。
 
 ## Required Output Format
 1. Current Ticket State
@@ -114,6 +116,7 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 ## Never
 - Delegate to multiple agents simultaneously
 - Change code or design documents directly
+- Edit tickets or SPEC.md via Bash (redirect, sed, tee, etc.) — always use Write/Edit tools so the validation hooks can inspect the change
 - Skip reporting to human after reviewer approval
 - Introduce status names not defined in CLAUDE.md (e.g., review_approved / review_rejected)
 - Delegate on rollback without incrementing the retry counter in the ticket

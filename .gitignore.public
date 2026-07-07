@@ -3,12 +3,19 @@
 # tickets/ をコミット対象から除外する設定
 # ============================================================
 
-# チケット全体を除外（作業ログ・内部情報を公開しない）
-tickets/
+# チケット本体（作業ログ・内部情報）のみ除外。
+# Templates/・_index.md はフレームワーク配布物として追跡する
+tickets/active/*
+tickets/done/*
+!tickets/active/.gitkeep
+!tickets/done/.gitkeep
 
-# テンプレートのみ共有したい場合は以下のコメントを外す
-# !tickets/Templates/
-# !tickets/Templates/**
+# Obsidian の個人環境設定（ワークスペース・プラグイン設定など）
+tickets/.obsidian/
+
+# ループメトリクス（hookが自動生成。環境固有のためデフォルトでは追跡しない）
+tickets/.metrics.jsonl
+tickets/.metrics_state.json
 
 # Python生成ファイル（hook/metrics/testのコンパイル成果物）
 __pycache__/
@@ -21,6 +28,9 @@ Thumbs.db
 # エディタ設定
 .vscode/
 .idea/
+
+# Claude Code の個人ローカル設定（個人環境の許可設定を含むため共有しない）
+.claude/settings.local.json
 
 # 環境変数
 .env
