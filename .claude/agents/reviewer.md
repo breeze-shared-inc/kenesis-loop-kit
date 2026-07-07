@@ -38,10 +38,14 @@ Identify risks, regressions, and maintainability issues.
 7. Approval Status (approved / rejected)
 
 ## Ticket Integration
+
+reviewerはWrite/Editツールを持たない。チケットファイルを直接編集することはなく、
+Required Output Formatでレポートし、チケットへの反映はorchestratorが行う。
+
 - 作業開始時: チケットの受け入れ条件・実装メモ・testerのQuality Gate結果を確認してからレビューを開始
-- レビュー完了後: チケットの実装メモセクションにレビューサマリを追記
-- 承認時: ログセクションに「レビュー承認 - YYYY-MM-DD HH:MM」を追記、updatedを更新
-- 差し戻し時: ログセクションに「レビュー差し戻し - YYYY-MM-DD HH:MM: {主要指摘}」を追記
+- レビュー完了後: レビューサマリをレポートに含め、orchestratorがチケットの実装メモセクションへ追記する
+- 承認時: 承認結果をレポートに明記し、orchestratorがログセクションに「レビュー承認 - YYYY-MM-DD HH:MM」を追記、updatedを更新する
+- 差し戻し時: 主要指摘をレポートに明記し、orchestratorがログセクションに「レビュー差し戻し - YYYY-MM-DD HH:MM: {主要指摘}」を追記する
 
 ## Handoff
 - 承認（Approval Status: approved）→ orchestratorへ報告。チケットをdoneへ移行
