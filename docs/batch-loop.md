@@ -2,6 +2,8 @@
 
 複数のactiveチケットを、各チケット完了時の承認ゲートで止めずに連続でループさせるための運用手順です。
 
+> **`/batch-loop {ID-1} {ID-2} ...` で自動化されています。** コマンドが下記テンプレート相当の事前承認を組み立てて確認を取り、ループを起動します（定義: `.claude/commands/batch-loop.md`）。このドキュメントは仕組みの背景説明と、テンプレートを手動で送りたい場合の参照用です。
+
 ## 前提：承認ゲートの仕組み
 
 通常、チケットが reviewer承認で `done` に到達すると、orchestrator は停止して人間に報告し、改善ループの判断（実装ループ継続 / 設計見直し / 調査やり直し）を待ちます（`.claude/agents/orchestrator.md` の改善ループ判断テーブル、および Never ルール `Skip reporting to human after reviewer approval` / `Start improvement loop without human instruction`）。

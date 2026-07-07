@@ -54,7 +54,8 @@ LEGAL_TRANSITIONS = {
     # 差し戻し: reviewer reject(実装起因) -> design_done、reviewer reject(設計起因) -> todo
     "test_passed": {"done", "design_done", "todo"},
     # 改善ループ: done から再開（architect -> investigation_done、investigator -> todo）
-    "done": {"investigation_done", "todo"},
+    # ロールバック: done -> implementation_done（revert実装をtesterから再開。CLAUDE.md「ロールバック手順」）
+    "done": {"investigation_done", "todo", "implementation_done"},
     # blocked からの再開（CLAUDE.md ステータス定義表の「遷移先 any」に対応。
     # done 段階で blocked になったチケットの復帰も許可する）
     "blocked": {
