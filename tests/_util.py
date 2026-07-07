@@ -16,6 +16,7 @@ METRICS = os.path.join(REPO, ".claude", "metrics")
 VALIDATOR = os.path.join(HOOKS, "validate_ticket_state.py")
 INTEGRITY = os.path.join(HOOKS, "check_loop_integrity.py")
 RECORDER = os.path.join(HOOKS, "record_metrics.py")
+GUARD = os.path.join(HOOKS, "guard_spec_writes.py")
 AGGREGATE = os.path.join(METRICS, "aggregate.py")
 
 

@@ -1,6 +1,6 @@
 # /improvement-loop
 
-agents/orchestrator.md を読み込み、orchestratorとして改善ループを起動してください。
+.claude/agents/orchestrator.md を読み込み、orchestratorとして改善ループを起動してください。
 
 ## 手順
 

@@ -1,0 +1,242 @@
+# =============================================================================
+# question-schema.yaml — interrogate-spec スキル: 質問スキーマ定義
+# =============================================================================
+# 目的:
+#   QUESTIONS.yaml(ライブ状態ファイル)の構造・各フィールドの意味・制約を定義する。
+#   実ファイルの雛形は templates/questions.yaml を参照。状態遷移の詳細規則は
+#   state-machine.md、回答権限の判定手順は authority-tests.md を参照。
+#
+# 設計原則:
+#   1. 質問IDは不変・欠番保持。削除は禁止し、無効化(invalidated)で表現する。
+#   2. QUESTIONS.yaml = ライブ状態 / DECISION_LOG.md = 不変ファクトレコード。
+#      回答の「結論」はここに持たず、決定ログへの参照のみ保持する。
+#   3. 回答権限の誤分類は human_only 側に倒す(非対称コスト原則)。
+#   4. 矛盾ソースの融合は禁止。矛盾検出時は confidence を low に強制する。
+#   5. 「調査では確定不能」は正当な成果である(降参の出口)。
+# =============================================================================
+
+schema_version: "1.0"
+
+# -----------------------------------------------------------------------------
+# ファイルレベル構造
+# -----------------------------------------------------------------------------
+file_structure:
+  meta:
+    spec_path:        # string。尋問対象SPECの相対パス
+    spec_version:     # string。尋問開始時点のSPECバージョン(例: "1.4")
+    spec_hash:        # string。尋問開始時点のSPECファイルのハッシュ(git blob等)。
+                      # SPECが外部で改訂された場合の陳腐化検知に使う
+    created_at:       # ISO8601
+    last_triaged_at:  # ISO8601。最後に再トリアージを実行した時刻
+    next_id:          # integer。次に採番するID番号(欠番保持のため単調増加)
+  batches:            # バッチ対話の実行履歴(リスト)
+    - batch_id:       # string。例: "B-003"
+      mode:           # enum: all | batch | single。
+                      # allモードで生成される連続バッチは全エントリ "all" とする
+                      # (起動モードの記録。件数・進行は batch と同じ5件区切り)
+      question_ids:   # 提示した質問IDのリスト
+      completed_at:   # ISO8601 | null(中断時はnull)
+  questions:          # 質問エントリのリスト(下記 question_entry 参照)
+
+# -----------------------------------------------------------------------------
+# 質問エントリ定義
+# -----------------------------------------------------------------------------
+question_entry:
+
+  # --- 識別・出自 -------------------------------------------------------------
+  id:
+    type: string
+    format: "Q-NNN"       # ゼロ埋め3桁。不変。再利用禁止(欠番保持)
+  created_at:
+    type: ISO8601
+  derived_from:
+    type: string | null   # 派生元の質問ID。バッチ回答から新質問が生まれた場合に設定
+  spec_refs:
+    type: list
+    item:
+      section:            # string。SPECの節番号または見出し(例: "4.2 実費計算")
+      excerpt:            # string。該当箇所の短い引用(20語以内)。節改編後の追跡用
+
+  # --- 分類 -------------------------------------------------------------------
+  classification:
+    type: enum
+    values:
+      - contradiction        # 矛盾: SPEC内の記述同士が両立しない
+      - undefined_behavior   # 未定義動作: 発生しうる状況への挙動が記述されていない
+      - implicit_assumption  # 暗黙の前提: 明文化されずに依存している前提
+      - external_unknown     # 外部依存未知: freee API等の外部実挙動に依存し
+                             # ドキュメントのみでは確定できない
+      - fitness_concern      # 運用適合懸念: 仕様として明確だが、実運用
+                             # (業務手順・規程の運用実態)との突き合わせが未確認。
+                             # 原則 human_only。成果物は「誰に何を確認すべきか」の
+                             # リスト化であり、確認自体はセッション外で行う
+                             # (多くは T4(b) で deferred へ)。scan-axes.md 軸7 参照
+  question:
+    type: string             # 質問文。「当社では〜」「一般に〜」の主語を明確にする
+
+  # --- 回答権限 ---------------------------------------------------------------
+  authority:
+    type: enum
+    values:
+      - agent_recommendable  # コードベース・ドキュメント・公開情報で正誤検証可能。
+                             # research.recommendation の提示を許可
+      - human_only           # 組織規程・経理運用・経営判断が真実源。
+                             # recommendation の提示は禁止。options のみ許可
+    rules:
+      - "判定は authority-tests.md の検証可能性テスト・主語テストに従う"
+      - "迷った場合は human_only に倒す(誤分類コストの非対称性)"
+      - "ハイブリッド質問(組織事実の確認 + 技術推奨)は生成時に2問へ分解し、
+         技術推奨側の質問に depends_on で組織事実側のIDを設定する"
+  depends_on:
+    type: list[string]       # 先に回答が必要な質問ID。ハイブリッド分解の後半で使用
+
+  # --- 優先度(トリアージ) ---------------------------------------------------
+  priority:
+    type: object
+    fields:
+      likelihood:            # enum: high | medium | low。発生尤度(エージェント仮置き)
+      impact:                # enum: high | medium | low。業務影響度(エージェント仮置き)
+      rank:                  # enum: high | medium | low。導出規則は triage-rules.md
+                             # (likelihood × impact マトリクス。ただし
+                             # classification = contradiction は無条件で high)
+      human_override:        # enum | null。人間による上書き。設定時は rank より優先
+      override_reason:       # string | null
+    rules:
+      - "初期値はエージェントの仮説にすぎない。バッチ提示時に人間が上書き可能"
+      - "再トリアージ時、human_override が設定済みの質問の rank は変更しない"
+
+  # --- 調査結果(investigatorサブエージェントの出力を格納) --------------------
+  research:
+    type: object | null      # 未調査は null
+    fields:
+      sources:
+        type: list
+        item:
+          kind:              # enum: empirical | codebase | local_docs | web_docs
+                             #     | general_knowledge
+                             # empirical = 実測・検証結果(サンドボックス実行、
+                             # 動作確認等)。信頼度序列の最上位。主に T5(a) で追加される
+          ref:               # string。ファイルパス、URL、または「一般知識」の根拠記述
+          summary:           # string。このソースから得た事実の要約
+      confidence:            # enum: high | medium | low
+      conflicts:
+        type: object | null
+        fields:
+          description:       # string。どのソース間で何が食い違うか
+        rules:
+          - "conflicts が非null の場合、confidence は low に強制する"
+          - "矛盾ソースの内容を融合・折衷した記述の生成は禁止。矛盾自体を報告する"
+      surrendered:
+        type: boolean        # true = 調査では確定不能と判断(正当な成果)
+      # authority = agent_recommendable の場合のみ:
+      recommendation:
+        type: object | null
+        fields:
+          plan:              # string。推奨方針
+          rationale:         # string。根拠(どのソースのどの事実に基づくか)
+      alternatives:
+        type: list
+        item:
+          plan:              # string。代替方針
+          tradeoff:          # string。推奨案と比較したときの得失
+      # authority = human_only の場合のみ(recommendation は設定禁止):
+      options:
+        type: list
+        item:
+          option:            # string。選択肢の記述
+          implications:      # string。この選択肢を採った場合の帰結・波及
+    rules:
+      - "human_only の質問に recommendation を設定してはならない(アンカリング防止)"
+      - "surrendered: true が格納された時点で T4(a) により即座に deferred へ遷移する
+         (バッチ編成を待たない)。T5 での再開時は surrendered を false に戻すこと"
+
+  # --- 影響範囲 ---------------------------------------------------------------
+  impact_scope:
+    type: list[string]       # この質問の回答が影響するSPEC節・機能の列挙。
+                             # 再トリアージ時の波及探索に使う
+
+  # --- 状態 -------------------------------------------------------------------
+  status:
+    type: enum
+    values:
+      - open           # 未回答
+      - presented      # バッチ提示済み・回答待ち(セッション中断からの再開用)
+      - answered       # 回答確定・終端処理完了(decision_log_ref 必須)
+      - deferred       # 棚上げ(有効な deferrals エントリ必須)。検証完了後 open に戻せる
+      - invalidated    # 他の質問の回答により無効化(invalidated_by 必須)
+    rules:
+      - "遷移規則の詳細は state-machine.md を参照"
+      - "answered / invalidated は終端状態。逆遷移は禁止(必要なら新IDで再起票し
+         derived_from で紐づける)"
+
+  # --- 終端・棚上げ情報(status に応じて必須) ----------------------------------
+  resolution:
+    type: object | null      # status = answered のとき必須
+    fields:
+      outcome:               # enum: spec_revision | out_of_scope
+      decision_log_ref:      # string。DECISION_LOG.md 内のエントリID(例: "D-014")
+      batch_id:              # string。回答が確定したバッチID
+      answered_at:           # ISO8601
+  deferrals:
+    type: list               # 棚上げの履歴。エントリは追加のみで削除・上書きしない
+    item:
+      backlog_ref:           # string。VERIFICATION_BACKLOG.md 内のエントリID(例: "V-005")
+      reason:                # string。なぜ対話では確定できないか
+      verification_hint:     # string。何を検証すれば確定するか(例: サンドボックスで
+                             # 勤怠タグAPIのレスポンス構造を確認)
+      deferred_at:           # ISO8601
+      reopened_at:           # ISO8601 | null。null = この棚上げが現在有効
+    rules:
+      - "status = deferred のとき、reopened_at = null のエントリがちょうど1件存在する"
+      - "status ≠ deferred のとき、reopened_at = null のエントリが存在してはならない"
+      - "deferrals が非空であること自体がテスト設計上のシグナルとなる
+         (外部依存で確定に検証を要した箇所 = 統合テストの重点対象)"
+  invalidation:
+    type: object | null      # status = invalidated のとき必須
+    fields:
+      invalidated_by:        # string。無効化の原因となった質問ID
+      reason:                # string。例: "Q-008の回答により定期区間控除がスコープ外化"
+      invalidated_at:        # ISO8601
+
+# -----------------------------------------------------------------------------
+# 最小例(説明用。実運用の雛形は templates/questions.yaml を使用)
+# -----------------------------------------------------------------------------
+example:
+  - id: "Q-007"
+    created_at: "2026-07-06T10:30:00+09:00"
+    derived_from: null
+    spec_refs:
+      - section: "4.2 実費計算"
+        excerpt: "勤怠タグに紐づく経路情報から実費を算出する"
+    classification: undefined_behavior
+    question: >
+      当社の規程では、月の途中で定期区間が変更された場合、
+      変更前後の申請に対する定期区間控除はどのように按分されますか?
+    authority: human_only
+    depends_on: []
+    priority:
+      likelihood: medium
+      impact: high
+      rank: high
+      human_override: null
+      override_reason: null
+    research:
+      sources:
+        - kind: general_knowledge
+          ref: "一般的な通勤手当実務(日割按分/変更日基準/月単位切替)"
+          summary: "実務上は変更日基準の切替が多数派だが、規程依存で確定不能"
+      confidence: low
+      conflicts: null
+      surrendered: false
+      recommendation: null   # human_only のため禁止
+      alternatives: []
+      options:
+        - option: "変更日を境に前後それぞれの定期区間で控除する"
+          implications: "計算ロジックに区間有効期間テーブルが必要。実装コスト中"
+        - option: "申請月の月初時点の定期区間で月内を統一する"
+          implications: "実装は単純だが、月中変更者の控除額が実態と乖離する"
+    impact_scope: ["4.2 実費計算", "5.1 定期区間マスタ"]
+    status: open
+    resolution: null
+    deferrals: []
+    invalidation: null
