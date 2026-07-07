@@ -40,6 +40,12 @@ class TestValidator(unittest.TestCase):
         self.assertEqual(out.get("permissionDecision"), "deny")
         return out
 
+    def assertAsk(self, payload):
+        out = self.run_validator(payload)
+        self.assertIsNotNone(out, "expected ask")
+        self.assertEqual(out.get("permissionDecision"), "ask")
+        return out
+
     def test_legal_forward_transition_allow(self):
         path = _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
         self.assertAllow(edit_payload(path, "status: design_done",
@@ -81,11 +87,18 @@ class TestValidator(unittest.TestCase):
             'project: "demo"\n', "")
         self.assertDeny(write_payload(path, broken))
 
-    def test_counter_decrease_deny(self):
+    def test_counter_decrease_ask(self):
+        # 減少 = リトライ予算のリセット。deny ではなく人間確認（ask）に回す
         path = _util.write_ticket(self.cwd, "APP-001.md", status="design_done", tti=1)
-        out = self.assertDeny(edit_payload(path, "tester_to_implementer: 1",
-                                           "tester_to_implementer: 0"))
-        self.assertIn("減少", out.get("permissionDecisionReason", ""))
+        out = self.assertAsk(edit_payload(path, "tester_to_implementer: 1",
+                                          "tester_to_implementer: 0"))
+        self.assertIn("リセット", out.get("permissionDecisionReason", ""))
+
+    def test_counter_decrease_with_illegal_transition_deny(self):
+        # 他の不変条件違反を伴う減少は ask ではなく deny（deny優先）
+        path = _util.write_ticket(self.cwd, "APP-001.md", status="design_done", tti=1)
+        content = _util.ticket(status="done", tti=0)  # design_done→done は不正遷移
+        self.assertDeny(write_payload(path, content))
 
     def test_counter_increase_allow(self):
         path = _util.write_ticket(self.cwd, "APP-001.md", status="design_done", tti=1)
@@ -137,15 +150,15 @@ class TestValidator(unittest.TestCase):
         self.assertAllow(edit_payload(path, "status: design_done",
                                       "status: implementation_done"))
 
-    def test_counter_floor_from_state_deny(self):
+    def test_counter_floor_from_state_ask(self):
         # Bashドリフトで file の tti が観測値 2 より低い 0 に。観測値を下限として
-        # 0→1 への Edit も減少扱いで deny される（cap回避の洗浄防止）
+        # 0→1 への Edit も減少扱いになり、人間確認（ask）に回る
         path = _util.write_ticket(self.cwd, "APP-001.md",
                                   status="design_done", tti=0)
         _util.write_state(
             self.cwd, {"APP-001": _util.state_record("design_done", tti=2)})
-        out = self.assertDeny(edit_payload(path, "tester_to_implementer: 0",
-                                           "tester_to_implementer: 1"))
+        out = self.assertAsk(edit_payload(path, "tester_to_implementer: 0",
+                                          "tester_to_implementer: 1"))
         self.assertIn("減少", out.get("permissionDecisionReason", ""))
 
     def test_counter_restore_to_state_floor_allow(self):
@@ -163,6 +176,43 @@ class TestValidator(unittest.TestCase):
         path = os.path.join(self.cwd, "tickets", "active", "APP-005.md")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.assertAllow(write_payload(path, _util.ticket(status="todo", tid="APP-005")))
+
+    # --- in_progress 上限（着手時の人間確認ゲート） ---
+
+    def _fill_in_progress(self, n):
+        statuses = ["investigation_done", "design_done", "implementation_done"]
+        for i in range(n):
+            _util.write_ticket(self.cwd, "APP-90%d.md" % i,
+                               status=statuses[i % 3], tid="APP-90%d" % i)
+
+    def test_start_ticket_at_limit_ask(self):
+        # 他に3件進行中 → todo→investigation_done の着手は人間確認
+        self._fill_in_progress(3)
+        path = _util.write_ticket(self.cwd, "APP-001.md", status="todo")
+        out = self.assertAsk(edit_payload(path, "status: todo",
+                                          "status: investigation_done"))
+        self.assertIn("in_progress", out.get("permissionDecisionReason", ""))
+
+    def test_start_ticket_under_limit_allow(self):
+        self._fill_in_progress(2)
+        path = _util.write_ticket(self.cwd, "APP-001.md", status="todo")
+        self.assertAllow(edit_payload(path, "status: todo",
+                                      "status: investigation_done"))
+
+    def test_create_todo_at_limit_allow(self):
+        # 起票（todoの新規作成）は着手ではないので上限に達していても許可
+        self._fill_in_progress(3)
+        path = os.path.join(self.cwd, "tickets", "active", "APP-001.md")
+        self.assertAllow(write_payload(path, _util.ticket(status="todo")))
+
+    def test_blocked_tickets_not_counted(self):
+        # blocked は in_progress に数えない
+        self._fill_in_progress(2)
+        _util.write_ticket(self.cwd, "APP-910.md", status="blocked",
+                           tid="APP-910", blocker="対応待ち")
+        path = _util.write_ticket(self.cwd, "APP-001.md", status="todo")
+        self.assertAllow(edit_payload(path, "status: todo",
+                                      "status: investigation_done"))
 
 
 if __name__ == "__main__":

@@ -5,9 +5,9 @@
 
 | ファイル | イベント | 役割 |
 |---|---|---|
-| `validate_ticket_state.py` | PreToolUse（Write\|Edit） | 書き込み前に不変条件を検証し違反を `permissionDecision: deny` でブロック。スキーマ・状態遷移・retry上限に加え **L2: カウンタ単調性（減少禁止）**。遷移元は `.metrics_state.json` の最終観測値を正とする（ドリフト後も「最後に検証された状態」から検証） |
-| `check_loop_integrity.py` | Stop | 応答終了時に tickets/active/*.md を一括検査し `decision: block` で継続強制。schema・blocker・本文同期に加え **ドリフト検知（`.metrics_state.json` の最終観測値と status / retry_counts を突き合わせ、Write/Edit を経ない書き換えを検出）** と **L3: 差し戻し履歴（.metrics.jsonl）とカウンタの整合照合** |
-| `record_metrics.py` | PostToolUse（Write\|Edit） | ステータス遷移を `tickets/.metrics.jsonl` に追記する（観測性）。最終観測値（status・retry_counts）は `tickets/.metrics_state.json` で保持し、上記2 hookのドリフト検知の基準を提供する |
+| `validate_ticket_state.py` | PreToolUse（Write\|Edit） | 書き込み前に不変条件を検証し違反を `permissionDecision: deny` でブロック（スキーマ・状態遷移・retry上限）。遷移元は `.metrics_state.json` の最終観測値を正とする（ドリフト後も「最後に検証された状態」から検証）。人間の判断に委ねる操作は `ask` に回す — **L2: カウンタ減少（=リトライ予算のリセット。人間承認で正規化）** と **in_progress上限（todo→investigation_done 着手時に他チケットが3件進行中なら確認）** |
+| `check_loop_integrity.py` | Stop | 応答終了時に tickets/active/*.md を一括検査し `decision: block` で継続強制。schema・blocker・本文同期に加え **ドリフト検知（`.metrics_state.json` の最終観測値と status / retry_counts を突き合わせ、Write/Edit を経ない書き換えを検出。tickets/done/ もドリフト検知のみ実施）** と **L3: 差し戻し履歴（.metrics.jsonl）とカウンタの整合照合（retry_reset イベントをエポックとして「リセット時の値+以降の差し戻し回数」で照合）** |
+| `record_metrics.py` | PostToolUse（Write\|Edit） | ステータス遷移を `tickets/.metrics.jsonl` に追記する（観測性）。人間承認済みのカウンタ減少は `retry_reset` イベントとして記録する（L3のエポック）。最終観測値（status・retry_counts）は `tickets/.metrics_state.json` で保持し、validator の prior と Stop のドリフト検知の基準を提供する |
 | `guard_spec_writes.py` | PreToolUse（Write\|Edit） | SPEC.md（basename一致・.claude/配下を除く）への書き込みを `permissionDecision: ask` で人間確認に回す。autoモードでも SPEC 改訂の diff 承認を機械的に担保する（`--dangerously-skip-permissions` は貫通） |
 | `guard_bash_writes.py` | PreToolUse（Bash） | tickets/active\|done/・SPEC.md に言及するコマンドのうち、読み取り・移動系ホワイトリスト（cat/grep/ls/mv/git add 等）以外を `permissionDecision: deny` でブロック。リダイレクト・sed -i・tee・インタプリタワンライナー・find -exec による検証迂回をベストエフォートで遮断する（パス非リテラルの迂回は Stop のドリフト検知が捕捉） |
 | `_ticket_lib.py` | -（共有） | frontmatterパーサと検証ルール（status enum・必須キー・遷移表・retry上限）・サイドカー読み取りを集約 |

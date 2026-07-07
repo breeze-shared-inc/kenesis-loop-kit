@@ -37,6 +37,16 @@ RETRY_CAPS = {
     "reviewer_to_investigator": 1,
 }
 
+# in_progress（着手済み）とみなす status と同時進行の上限
+# （orchestrator.md「in_progress上限」と一致させること。blocked / todo は数えない）
+IN_PROGRESS_STATUSES = {
+    "investigation_done",
+    "design_done",
+    "implementation_done",
+    "test_passed",
+}
+IN_PROGRESS_LIMIT = 3
+
 # 本文「リトライカウンタ」表のラベル -> frontmatterキー
 RETRY_LABELS = {
     "tester → implementer": "tester_to_implementer",
@@ -181,7 +191,8 @@ def validate_retry_counts(fm):
         elif n > cap:
             errors.append(
                 "retry_counts.%s=%d が上限 %d を超えています。"
-                "上限超過時は status を blocked にしてください"
+                "上限到達後の差し戻しではカウンタを増やさず、"
+                "status を blocked にして人間へ報告してください"
                 "（リトライ上限規約）" % (key, n, cap)
             )
     return errors
@@ -231,9 +242,11 @@ def parse_body_retry_table(body):
 
 
 def validate_retry_monotonic(prior_fm, new_fm):
-    """L2: リトライカウンタが減少していないか検証（単調非減少）。
-    cap回避のためのリセット・巻き戻しを防ぐ。エラー文字列のリストを返す。
-    prior が無い（新規作成）場合は検証不要。"""
+    """L2: リトライカウンタの減少を検出する（単調非減少）。
+    エラー文字列のリストを返す。prior が無い（新規作成）場合は検証不要。
+    呼び出し側（validate_ticket_state.py）は減少を deny ではなく ask に変換する
+    — 減少＝リトライ予算のリセットは人間の承認があれば正規の操作
+    （承認後は record_metrics.py が retry_reset イベントを記録する）。"""
     errors = []
     if not prior_fm:
         return errors
@@ -277,6 +290,18 @@ def _retry_ints(rc):
         return None
 
 
+def _last_reset_epoch(events):
+    """最後の retry_reset イベントを探し (基準カウンタdict, それ以降のイベント列) を
+    返す。リセットが無ければ ({}, events)。リセット記録が壊れていれば None（照合不能）。"""
+    for i in range(len(events) - 1, -1, -1):
+        if events[i].get("type") == "retry_reset":
+            to_counts = events[i].get("to_counts")
+            if not isinstance(to_counts, dict):
+                return None
+            return to_counts, events[i + 1:]
+    return {}, events
+
+
 def reconcile_rollbacks(retry_counts, events):
     """L3: 差し戻し履歴（events）と現在の retry_counts の整合を照合する。
 
@@ -285,6 +310,10 @@ def reconcile_rollbacks(retry_counts, events):
         implementation_done→design_done の回数 == tester_to_implementer
         test_passed→design_done         の回数 == reviewer_to_implementer
         test_passed→todo                の回数 == reviewer_to_investigator
+
+    人間承認によるリトライ予算のリセット（retry_reset イベント）があれば、
+    最後のリセットをエポックとし「リセット時の値 + それ以降の差し戻し回数」と
+    照合する。
 
     履歴が created（from=None）で始まっていなければ全履歴が無いとみなし、
     照合不能として [] を返す（fail-open）。型不正も照合せず [] を返す
@@ -295,6 +324,10 @@ def reconcile_rollbacks(retry_counts, events):
     vals = _retry_ints(retry_counts)
     if vals is None:
         return []
+    epoch = _last_reset_epoch(events)
+    if epoch is None:
+        return []  # リセット記録が壊れている → 照合不能（fail-open）
+    baseline, window = epoch
 
     tti, rti, rtv = vals
     checks = [
@@ -304,10 +337,16 @@ def reconcile_rollbacks(retry_counts, events):
     ]
     errors = []
     for frm, to, counter, key in checks:
-        n = _count_transitions(events, frm, to)
-        if counter != n:
+        try:
+            base = int(baseline.get(key, 0))
+        except (TypeError, ValueError):
+            continue  # このカテゴリのみ照合不能
+        n = _count_transitions(window, frm, to)
+        if counter != base + n:
+            suffix = "（最終リセット時 %d + 以降の差し戻し %d回）" % (base, n) \
+                if baseline else "（増やし忘れ/誤計上の疑い）"
             errors.append(
-                "%s→%s の差し戻し %d回 に対し %s=%d が不一致"
-                "（増やし忘れ/誤計上の疑い）" % (frm, to, n, key, counter)
+                "%s→%s の差し戻しに対し %s=%d が不一致・期待値 %d %s"
+                % (frm, to, key, counter, base + n, suffix)
             )
     return errors

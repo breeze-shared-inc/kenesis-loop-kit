@@ -3,6 +3,9 @@
 
 orchestrator（メインエージェント）が応答を終えるたびに発火し、
 tickets/active/ の各チケットが不変条件を満たしているか検査する。
+tickets/done/ はドリフト検知のみ実施する（アーカイブ済み・hook導入前の
+旧チケットを誤検知しないため。done/ のチケットは正規フローでは
+状態が変化しない — 改善ループ/ロールバックは active/ へ移動してから編集する）。
 不整合があれば decision=block で継続を強制し、終了前の修正を促す。
 
 PreToolUse が Write/Edit を防いでも、Bash の mv や手編集で混入したドリフトは
@@ -123,8 +126,8 @@ def check_state_drift(fm, record):
                 errors.append(
                     "Write/Edit を経ない retry_counts.%s の減少を検出: "
                     "最後に検証された値は %d（現在 %d）。Edit ツールで %d 以上へ"
-                    "戻してください（カウンタは減らせません）"
-                    % (key, before, after, before)
+                    "戻してください（正規のリトライ予算リセットは Edit + "
+                    "人間承認で行う）" % (key, before, after, before)
                 )
     return errors
 
@@ -159,6 +162,19 @@ def check_ticket(path, events_by_ticket, state):
     return ["%s: %s" % (base, e) for e in errors]
 
 
+def check_done_ticket_drift(path, state):
+    """done/ のチケットはドリフト検知のみ（全量検査は active/ 限定）。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            fm = lib.parse_frontmatter(f.read())
+    except Exception:
+        return []
+    if not fm:
+        return []
+    errors = check_state_drift(fm, state.get(fm.get("id")))
+    return ["%s: %s" % (os.path.basename(path), e) for e in errors]
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -170,6 +186,7 @@ def main():
 
     cwd = data.get("cwd") or os.getcwd()
     active_dir = os.path.join(cwd, "tickets", "active")
+    done_dir = os.path.join(cwd, "tickets", "done")
     if not os.path.isdir(active_dir):
         sys.exit(0)
 
@@ -182,6 +199,8 @@ def main():
         if os.path.basename(path) == "_index.md":
             continue
         problems.extend(check_ticket(path, events_by_ticket, state))
+    for path in sorted(glob.glob(os.path.join(done_dir, "*.md"))):
+        problems.extend(check_done_ticket_drift(path, state))
 
     if problems:
         reason = (
