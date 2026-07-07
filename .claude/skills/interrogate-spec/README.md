@@ -17,7 +17,8 @@ SPEC改訂またはスコープ外記録として必ず着地する。
 │   │       ├── scan-axes.md         # 尋問スキャンの探索軸(Phase 1)
 │   │       ├── authority-tests.md   # 回答権限の判定手順
 │   │       ├── triage-rules.md      # 優先度分類規則
-│   │       └── templates/           # 状態ファイルの雛形
+│   │       └── templates/           # エントリ雛形(*-entry.md)と状態ファイル雛形
+│   │           └── init/            # 状態ファイルの初期状態(Phase 0 でコピー)
 │   └── research-conventions/
 │       └── SKILL.md                 # 調査規約(investigatorへプリロード)
 └── agents/
@@ -71,8 +72,9 @@ skills:
 
 ### 3. 状態ディレクトリ
 
-手動作成は不要。初回起動時に `docs/spec-qa/<spec名>/` が templates/ から
-自動初期化される。状態ファイルは git 管理に含めること(尋問の履歴・決定ログは
+手動作成は不要。初回起動時に `docs/spec-qa/<spec名>/` が自動初期化される
+(QUESTIONS.yaml は `templates/questions.yaml`、他3ファイルは `templates/init/` の
+同名ファイルのコピー)。状態ファイルは git 管理に含めること(尋問の履歴・決定ログは
 SPEC と同じライフサイクルでレビュー対象とする)。
 
 ## 使い方

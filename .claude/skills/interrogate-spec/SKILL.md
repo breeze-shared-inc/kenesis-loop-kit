@@ -17,7 +17,8 @@ allowed-tools: Read, Grep, Glob, Task
 ## 設定(プロジェクト側CLAUDE.mdで上書き可能)
 
 - 状態ディレクトリ: `docs/spec-qa/<spec名>/`(spec名 = spec-pathのファイル名から拡張子を除いたもの)
-- 状態ファイル: `QUESTIONS.yaml` / `DECISION_LOG.md` / `VERIFICATION_BACKLOG.md`
+- 状態ファイル: `QUESTIONS.yaml` / `DECISION_LOG.md` / `VERIFICATION_BACKLOG.md` /
+  `ESCAPES.md`(記録は尋問セッション外で行う)
 - 調査委譲先: `investigator` サブエージェント(research-conventions プリロード済み)
 
 ## 参照規則(必要な局面でのみ読むこと)
@@ -46,8 +47,10 @@ allowed-tools: Read, Grep, Glob, Task
 ### Phase 0: 起動時ガード(全モード共通)
 
 state-machine.md §6 に従い、SPEC改訂検知 → 中断バッチ再開確認 → deferred棚卸し通知
-の順で実行する。状態ディレクトリが存在しない場合は templates/ から初期化し、
-Phase 1 へ進む。
+の順で実行する。状態ディレクトリが存在しない場合は初期化する: `QUESTIONS.yaml` は
+`templates/questions.yaml` を、`DECISION_LOG.md` / `VERIFICATION_BACKLOG.md` /
+`ESCAPES.md` は `templates/init/` の同名ファイルをコピーする(内容の改変・省略は
+しない)。初期化後 Phase 1 へ進む。
 
 ### Phase 1: 尋問スキャン(初回、またはSPEC改訂検知後の再スキャン時のみ)
 
