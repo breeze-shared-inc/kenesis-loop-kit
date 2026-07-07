@@ -18,6 +18,7 @@ python3 -m unittest discover -s tests -v
 | `test_validator.py` | `validate_ticket_state.py`（PreToolUse）をサブプロセス起動して allow/deny を検証 |
 | `test_loop_integrity.py` | `check_loop_integrity.py`（Stop）の整合性チェック |
 | `test_metrics.py` | `record_metrics.py`（PostToolUse）の記録と `aggregate.py` の集計 |
+| `test_guard_spec_writes.py` | `guard_spec_writes.py`（PreToolUse）の ask/allow 判定（SPEC.md書き込みゲート） |
 | `_util.py` | 共有ヘルパ（hook起動・チケット生成テンプレート） |
 
 ## ルールを変更したら

@@ -1,6 +1,6 @@
 # /start-loop
 
-agents/orchestrator.md を読み込み、orchestratorとして以下を実行してください。
+.claude/agents/orchestrator.md を読み込み、orchestratorとして以下を実行してください。
 
 ## 起動時チェックリスト（必須・スキップ禁止）
 
@@ -20,7 +20,7 @@ agents/orchestrator.md を読み込み、orchestratorとして以下を実行し
 1. tickets/active/ を全件読み取り、statusとpriorityを確認する
 2. 処理対象チケットをpriority順に一覧表示する（cancelled / blocked を除く）
 3. 最優先チケットのstatusに応じて、次に委譲すべきエージェントを判断する
-4. 対応するエージェント定義ファイル（agents/*.md）を読み込み、作業を開始する
+4. 対応するエージェント定義ファイル（.claude/agents/*.md）を読み込み、作業を開始する
 
 引数が指定された場合（例: /start-loop APP-001）は、指定されたチケットIDを優先して処理する。
 

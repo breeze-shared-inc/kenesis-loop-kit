@@ -75,7 +75,9 @@
       "Bash(gh auth *)",
       "Bash(git config *)",
       "Bash(git rm *)",
-      "Bash(sed -n *)"
+      "Bash(sed -n *)",
+      "Edit(docs/spec-qa/**)",
+      "Write(docs/spec-qa/**)"
     ],
     "deny": [
       "Bash(git push*)",
@@ -103,6 +105,10 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/validate_ticket_state.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/guard_spec_writes.py\""
           }
         ]
       }
