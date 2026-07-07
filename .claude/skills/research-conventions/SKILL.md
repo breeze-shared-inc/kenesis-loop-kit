@@ -4,7 +4,6 @@ description: >
   調査タスクにおける根拠・確信度・矛盾処理・降参の規律を定める調査規約。
   investigator等のサブエージェントにプリロードして使用する(単体起動は想定しない)。
 user-invocable: false
-disable-model-invocation: true
 ---
 
 # research-conventions — 調査規約
