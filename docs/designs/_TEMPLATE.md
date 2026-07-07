@@ -1,6 +1,7 @@
 ---
 ticket: "{{TICKET_ID}}"
 title: "{{TITLE}}"
+spec_version: "{{SPEC_VERSION}}"
 created: "{{DATE}}"
 updated: "{{DATE}}"
 ---
@@ -11,6 +12,8 @@ updated: "{{DATE}}"
 > チケット {{TICKET_ID}} に対応します。implementer・tester・reviewerが参照します。
 > 1チケット = 1ファイル（`docs/designs/{{TICKET_ID}}.md` が常に現行）。改訂時は本ファイルを上書きし、
 > チケットのログに改訂理由を残す。過去の設計はGitヒストリで追える（status等の状態は持たない）。
+> spec_version には設計時に準拠した docs/SPEC.md の版数（セクション0の最新版。例: "v1.1"）を記録する。
+> SPEC改訂を受けて設計を見直した場合は spec_version もあわせて更新する。
 
 ## 1. 目的
 
