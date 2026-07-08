@@ -20,7 +20,11 @@ fail-open: 内部エラー（パース不能など）では allow。
       観測サイドカーが存在しないため）。
 """
 import json
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _ticket_lib as lib  # noqa: E402
 
 
 def allow():
@@ -28,14 +32,7 @@ def allow():
 
 
 def ask(reason):
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "ask",
-            "permissionDecisionReason": reason,
-        }
-    }))
-    sys.exit(0)
+    lib.emit_pretooluse_decision("ask", reason)
 
 
 def is_spec(path):

@@ -22,8 +22,12 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
 fail-open: 内部エラーでは allow。検知した違反のみ deny。
 """
 import json
+import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _ticket_lib as lib  # noqa: E402
 
 # 保護対象に言及するコマンドで許可する先頭コマンド（読み取り・移動系）
 ALLOWED_HEADS = {
@@ -53,14 +57,7 @@ def allow():
 
 
 def deny(reason):
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }
-    }))
-    sys.exit(0)
+    lib.emit_pretooluse_decision("deny", reason)
 
 
 def is_guarded_token(token):

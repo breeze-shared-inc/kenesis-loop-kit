@@ -71,29 +71,6 @@ def check_body_table_sync(fm, text):
     return errors
 
 
-def load_metrics_by_ticket(metrics_path):
-    """.metrics.jsonl を {ticket_id: [events...(ts昇順)]} に読み込む。"""
-    by_ticket = {}
-    if not os.path.exists(metrics_path):
-        return by_ticket
-    try:
-        with open(metrics_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    ev = json.loads(line)
-                except Exception:
-                    continue
-                by_ticket.setdefault(ev.get("ticket"), []).append(ev)
-    except Exception:
-        return {}
-    for evs in by_ticket.values():
-        evs.sort(key=lambda e: e.get("ts", ""))
-    return by_ticket
-
-
 def check_state_drift(fm, record):
     """サイドカーの最終観測値との突き合わせ。Write/Edit を経ない
     書き換え（Bash・手編集）の痕跡を文字列リストで返す。
@@ -190,8 +167,8 @@ def main():
     if not os.path.isdir(active_dir):
         sys.exit(0)
 
-    events_by_ticket = load_metrics_by_ticket(
-        os.path.join(cwd, "tickets", ".metrics.jsonl"))
+    events_by_ticket = lib.group_events_by_ticket(
+        lib.load_events(os.path.join(cwd, "tickets", ".metrics.jsonl")))
     state = lib.load_state(os.path.join(cwd, "tickets"))
 
     problems = []
