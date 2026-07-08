@@ -30,7 +30,7 @@ class TestLoopIntegrity(unittest.TestCase):
                    "stop_hook_active": stop_hook_active}
         rc, out, _ = _util.run_script(_util.INTEGRITY, payload, cwd=self.cwd)
         self.assertEqual(rc, 0)
-        return _util.hook_output(out)
+        return _util.top_level_output(out)
 
     def assertBlock(self, must_contain=None):
         out = self.run_stop()
@@ -47,6 +47,18 @@ class TestLoopIntegrity(unittest.TestCase):
     def test_invalid_status_blocks(self):
         _util.write_ticket(self.cwd, "APP-001.md", status="bogus")
         self.assertBlock()
+
+    def test_block_uses_top_level_decision(self):
+        # Stop hook の契約: decision/reason はトップレベル。hookSpecificOutput に
+        # ネストすると Claude Code が block を無視するため、形式退行を防ぐ。
+        _util.write_ticket(self.cwd, "APP-001.md", status="bogus")
+        payload = {"hook_event_name": "Stop", "cwd": self.cwd,
+                   "stop_hook_active": False}
+        _, out, _ = _util.run_script(_util.INTEGRITY, payload, cwd=self.cwd)
+        obj = json.loads(out)
+        self.assertEqual(obj.get("decision"), "block")
+        self.assertIn("reason", obj)
+        self.assertNotIn("hookSpecificOutput", obj)
 
     def test_blocked_without_blocker_blocks(self):
         _util.write_ticket(self.cwd, "APP-001.md", status="blocked", blocker="")

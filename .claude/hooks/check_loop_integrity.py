@@ -207,12 +207,11 @@ def main():
             "ループ整合性チェックで不整合を検出しました。"
             "終了前に以下を修正してください:\n- " + "\n- ".join(problems)
         )
+        # Stop hook は decision/reason をトップレベルで返す（Claude Code の契約）。
+        # hookSpecificOutput にネストすると block が無視されるため注意。
         print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "Stop",
-                "decision": "block",
-                "reason": reason,
-            }
+            "decision": "block",
+            "reason": reason,
         }))
     sys.exit(0)
 
