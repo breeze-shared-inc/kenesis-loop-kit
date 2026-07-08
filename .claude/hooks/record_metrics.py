@@ -65,13 +65,9 @@ def main():
         if not ticket_id or not status:
             sys.exit(0)
 
-        state = {}
-        if os.path.exists(state_path):
-            try:
-                with open(state_path, encoding="utf-8") as f:
-                    state = json.load(f)
-            except Exception:
-                state = {}
+        # 最終観測サイドカーの読み込みは lib.load_state に集約
+        # （非dictを {} に正規化 → 壊れたサイドカーは次の書き込みで自己修復）
+        state = lib.load_state(tickets_dir)
 
         rc = retry_ints(fm.get("retry_counts"))
         now = datetime.datetime.now().isoformat(timespec="seconds")

@@ -91,12 +91,8 @@ def main():
         print("対象イベントがありません（フィルタ: %s）" % (filter_str or "なし"))
         return
 
-    # チケットごとに時系列で整理
-    by_ticket = {}
-    for ev in events:
-        by_ticket.setdefault(ev.get("ticket"), []).append(ev)
-    for evs in by_ticket.values():
-        evs.sort(key=lambda e: e.get("ts", ""))
+    # チケットごとに時系列で整理（読み込み・グルーピングは _ticket_lib と共有）
+    by_ticket = lib.group_events_by_ticket(events)
 
     now = datetime.datetime.now()
     cycle_times = []          # (ticket, seconds)
