@@ -99,6 +99,8 @@ git clone https://github.com/your-org/kenesis-loop-kit.git my-project
 cd my-project
 ```
 
+> **cloneで導入した場合、`origin` はKit本体（`kenesis-loop-kit`）を指したまま**になり、そのまま `git push` するとKit本体へ向かいます。Claude Code起動後に `/setup` を実行すると、これを検出して `.git` の再初期化（`rm -rf .git && git init`。**明示承認後のみ**）を案内し、クリーンな履歴で新プロジェクトを開始できます。以後は自分のリポジトリを `git remote add origin <URL>` で接続してください。（GitHubの「Use this template」で導入した場合は最初から切り離されているため不要です。）
+
 ### 2. .gitignoreの設定
 
 デフォルトの`.gitignore`はパブリックリポジトリ用（`tickets/active/`・`tickets/done/`の実チケットのみ除外する安全側）に設定されています。`tickets/Templates/`と`tickets/_index.md`はフレームワーク配布物としてどちらのプリセットでも追跡されます。
