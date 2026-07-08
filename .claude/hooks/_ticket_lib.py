@@ -6,6 +6,7 @@ stdlib のみ。外部依存なし。
 """
 import json
 import os
+import sys
 
 VALID_STATUS = {
     "todo",
@@ -93,6 +94,33 @@ def tickets_dir_for(ticket_path):
     return None
 
 
+def is_ticket(path):
+    """path が状態検証対象の実チケット（tickets/active|done/*.md）か。
+    テンプレート（/Templates/）とダッシュボード（_index.md）は対象外。"""
+    n = path.replace("\\", "/")
+    if "/Templates/" in n:
+        return False
+    if os.path.basename(n) == "_index.md":
+        return False
+    if not n.endswith(".md"):
+        return False
+    return ("/tickets/active/" in n) or ("/tickets/done/" in n)
+
+
+def emit_pretooluse_decision(decision, reason):
+    """PreToolUse hook の permissionDecision（deny / ask）を出力して exit 0。
+    出力フォーマットは Claude Code の PreToolUse 契約（hookSpecificOutput に
+    ネスト）。allow は出力せず素通りさせる（呼び出し側で sys.exit(0)）。"""
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": decision,
+            "permissionDecisionReason": reason,
+        }
+    }))
+    sys.exit(0)
+
+
 def load_state(tickets_dir):
     """hook管理のサイドカー tickets/.metrics_state.json を読む。
     読めない・無い場合は {}（fail-open）。"""
@@ -105,6 +133,39 @@ def load_state(tickets_dir):
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def load_events(path):
+    """`.metrics.jsonl`（record_metrics.py が1行1イベントで追記）を読み、
+    イベント dict のリストを返す。空行・不正行はスキップ。ファイルが無い・
+    読めない場合は [] （fail-open）。並び順は記録順（ts昇順とは限らない）。"""
+    events = []
+    if not os.path.exists(path):
+        return events
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    return events
+
+
+def group_events_by_ticket(events):
+    """イベント列を {ticket_id: [events...]} にまとめ、各リストを ts 昇順に
+    ソートして返す。"""
+    by_ticket = {}
+    for ev in events:
+        by_ticket.setdefault(ev.get("ticket"), []).append(ev)
+    for evs in by_ticket.values():
+        evs.sort(key=lambda e: e.get("ts", ""))
+    return by_ticket
 
 
 def _unquote(value):

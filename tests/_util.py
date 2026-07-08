@@ -35,12 +35,25 @@ def run_script(script, payload, cwd=None):
 
 
 def hook_output(stdout):
-    """stdoutから hookSpecificOutput を取り出す。空（=allow）なら None。"""
+    """stdoutから hookSpecificOutput を取り出す（PreToolUse 系）。空（=allow）なら None。"""
     stdout = stdout.strip()
     if not stdout:
         return None
     try:
         return json.loads(stdout)["hookSpecificOutput"]
+    except Exception:
+        return None
+
+
+def top_level_output(stdout):
+    """stdoutをトップレベルJSONとして返す（Stop 系: decision/reason はトップレベル）。
+    空（=allow / ブロックなし）なら None。"""
+    stdout = stdout.strip()
+    if not stdout:
+        return None
+    try:
+        obj = json.loads(stdout)
+        return obj if isinstance(obj, dict) else None
     except Exception:
         return None
 

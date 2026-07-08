@@ -30,17 +30,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ticket_lib as lib  # noqa: E402
 
 
-def is_ticket(path):
-    n = path.replace("\\", "/")
-    if "/Templates/" in n:
-        return False
-    if os.path.basename(n) == "_index.md":
-        return False
-    if not n.endswith(".md"):
-        return False
-    return ("/tickets/active/" in n) or ("/tickets/done/" in n)
-
-
 def main():
     try:
         data = json.load(sys.stdin)
@@ -52,7 +41,7 @@ def main():
 
     tool_input = data.get("tool_input") or {}
     path = tool_input.get("file_path", "")
-    if not path or not is_ticket(path):
+    if not path or not lib.is_ticket(path):
         sys.exit(0)
 
     # tickets/ ディレクトリはチケットパスから導出する（cwd はフォールバック）
@@ -76,13 +65,9 @@ def main():
         if not ticket_id or not status:
             sys.exit(0)
 
-        state = {}
-        if os.path.exists(state_path):
-            try:
-                with open(state_path, encoding="utf-8") as f:
-                    state = json.load(f)
-            except Exception:
-                state = {}
+        # 最終観測サイドカーの読み込みは lib.load_state に集約
+        # （非dictを {} に正規化 → 壊れたサイドカーは次の書き込みで自己修復）
+        state = lib.load_state(tickets_dir)
 
         rc = retry_ints(fm.get("retry_counts"))
         now = datetime.datetime.now().isoformat(timespec="seconds")

@@ -43,34 +43,12 @@ def allow():
     sys.exit(0)
 
 
-def _decision(decision, reason):
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": decision,
-            "permissionDecisionReason": reason,
-        }
-    }))
-    sys.exit(0)
-
-
 def deny(reason):
-    _decision("deny", reason)
+    lib.emit_pretooluse_decision("deny", reason)
 
 
 def ask(reason):
-    _decision("ask", reason)
-
-
-def is_ticket(path):
-    n = path.replace("\\", "/")
-    if "/Templates/" in n:
-        return False
-    if os.path.basename(n) == "_index.md":
-        return False
-    if not n.endswith(".md"):
-        return False
-    return ("/tickets/active/" in n) or ("/tickets/done/" in n)
+    lib.emit_pretooluse_decision("ask", reason)
 
 
 def read_file(path):
@@ -215,7 +193,7 @@ def main():
     tool = data.get("tool_name", "")
     tool_input = data.get("tool_input") or {}
     path = tool_input.get("file_path", "")
-    if not path or not is_ticket(path):
+    if not path or not lib.is_ticket(path):
         allow()
 
     try:
