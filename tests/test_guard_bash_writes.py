@@ -114,6 +114,28 @@ class TestGuardBashWrites(unittest.TestCase):
     def test_metrics_aggregate_allow(self):
         self.assertAllow("python3 .claude/metrics/aggregate.py APP-001")
 
+    # --- 読み取り専用スクリプト（READONLY_SCRIPTS）の例外 ---
+
+    def test_spec_structure_checker_allow(self):
+        self.assertAllow(
+            "python3 .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_other_python_script_with_spec_deny(self):
+        # 許可はREADONLY_SCRIPTSのパス一致に限る
+        self.assertDeny("python3 evil.py docs/SPEC.md")
+
+    def test_python_flag_before_checker_deny(self):
+        # -c/-m 等の別実行経路はスクリプトパスがあっても不許可
+        self.assertDeny(
+            "python3 -c \"x\" .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_checker_redirect_to_spec_still_deny(self):
+        self.assertDeny(
+            "python3 .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md > docs/SPEC.md")
+
     # --- fail-open ---
 
     def test_non_bash_tool_allow(self):

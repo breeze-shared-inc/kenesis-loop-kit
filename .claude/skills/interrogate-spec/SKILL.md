@@ -47,7 +47,19 @@ allowed-tools: Read, Grep, Glob, Agent
 ### Phase 0: 起動時ガード(全モード共通)
 
 state-machine.md §6 に従い、SPEC改訂検知 → 中断バッチ再開確認 → deferred棚卸し通知
-の順で実行する。状態ディレクトリが存在しない場合は初期化する: `QUESTIONS.yaml` は
+の順で実行する。
+
+状態ディレクトリが存在しない場合(=初回起動)、およびSPEC改訂検知で(a)再スキャン
+を選んだ場合は、先へ進む前に**構造受付**を行う: SPECがテンプレート準拠かを
+確認する(基準の正は `.claude/skills/spec-interview/scripts/check_spec_structure.py`。
+Bashを実行できる状況ではスクリプトで、できない状況ではSPECを読み同スクリプトの
+FAIL基準を目視で当てる)。非準拠(FAIL相当あり)の場合は尋問・再スキャンを開始せず、
+`/spec-interview` 改訂モードでの構造化を先に行うことを推奨して人間の判断を仰ぐ。
+人間が強行を選んだ場合のみ続行し、その際は「尋問後にSPECを全面構造化すると、
+state-machine.md §6 のSPEC改訂検知による再スキャンと質問アンカー(spec_refs)切れを
+招く」ことを告知する。
+
+受付通過後、状態ディレクトリを初期化する: `QUESTIONS.yaml` は
 `references/templates/questions.yaml` を、`DECISION_LOG.md` / `VERIFICATION_BACKLOG.md` /
 `ESCAPES.md` は `references/templates/init/` の同名ファイルをコピーする(内容の改変・省略は
 しない)。初期化後 Phase 1 へ進む。
