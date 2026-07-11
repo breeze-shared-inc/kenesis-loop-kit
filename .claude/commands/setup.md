@@ -60,12 +60,15 @@ python3 .claude/skills/spec-interview/scripts/check_spec_structure.py docs/SPEC.
 
 FAILが1件以上あれば「構造チェックNG（テンプレート非準拠）」と判定する（WARNのみは準拠として扱い、内容を結果報告に含める）。外部で作成されたSPECを持ち込んだ場合はテンプレート非準拠のことが多く、非準拠のまま先へ進むと `/wireframe-gen` の受付やチケット起票のトレーサビリティ（REQ/SCR/IF-ID）で差し戻されるため、先に構造化する。構造チェックNGかつ `docs/spec-qa/<spec名>/` が既に存在する（＝尋問開始済み）場合は、構造化によりSPEC改訂検知の再スキャンと質問アンカー（spec_refs）切れが発生する旨を併せて伝える。
 
+尋問開始済み（`docs/spec-qa/<spec名>/` 有り）の場合は `QUESTIONS.yaml` を読み、open / presented / deferred の件数を判定材料にする。deferred はセッション外の検証待ちであり前進を妨げない（件数のみ結果報告に含め、先へ進むかの判断は人間に委ねる）。
+
 | 状態 | 次の一手 |
 |---|---|
 | `docs/SPEC.md` が無い | `/spec-interview` で要件定義を作成する |
 | SPEC有り・構造チェックNG（テンプレート非準拠） | `/spec-interview` の改訂モードでテンプレート準拠に構造化する（成果物=SPEC_TEMPLATE完全準拠・完成チェックリスト充足を明示して依頼する） |
 | SPEC有り・`docs/spec-qa/<spec名>/` が無い | `/interrogate-spec docs/SPEC.md` でSPECを敵対的レビューする |
-| 尋問済み・SPEC §6画面一覧に「(未作成)」がある、または `docs/wireframes/` に対応HTMLが無い | `/wireframe-gen` でワイヤーフレームを生成する |
+| SPEC有り・`docs/spec-qa/<spec名>/` 有り・`QUESTIONS.yaml` に open または presented の質問が残る | `/interrogate-spec` で尋問を続行する |
+| 尋問済み（open/presented 0件）・SPEC §6画面一覧に「(未作成)」がある、または `docs/wireframes/` に対応HTMLが無い | `/wireframe-gen` でワイヤーフレームを生成する |
 | `tickets/active/` が0件（.gitkeepを除く） | `/plan-tickets` でSPECからチケットを一括起票し、`/start-loop`（連続実行は `/batch-loop`）でループを開始する。単発の起票は `/new-ticket` |
 | activeチケットあり | `/start-loop` でループを再開する |
 
