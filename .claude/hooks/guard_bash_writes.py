@@ -48,6 +48,13 @@ ALLOWED_GIT_SUBCOMMANDS = {
 FIND_WRITE_FLAGS = {"-exec", "-execdir", "-ok", "-okdir", "-delete",
                     "-fprint", "-fprintf", "-fls"}
 
+# 保護対象(SPEC.md等)を引数に取っても許可する読み取り専用スクリプト。
+# いずれも読み取りのみで書き込み経路を持たないことを確認済み
+# (スクリプト側のdocstringにも「書き込み処理を追加してはならない」と明記)
+READONLY_SCRIPTS = (
+    ".claude/skills/spec-interview/scripts/check_spec_structure.py",
+)
+
 STATEMENT_RE = re.compile(r"&&|\|\||;|\n")
 REDIRECT_RE = re.compile(r"\d?>>?\s*([^\s;|&]+)")
 
@@ -84,14 +91,32 @@ def head_of(segment):
     return ""
 
 
+def is_readonly_script_call(tokens):
+    """`python3 <READONLY_SCRIPTS> <args>` の形か。
+    スクリプトパスの前にフラグがある形(-c/-m 等の別実行経路)は不許可。"""
+    seen_interp = False
+    for token in tokens:
+        if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*=.*", token):
+            continue  # FOO=bar 形式の前置き
+        if not seen_interp:
+            seen_interp = True  # インタプリタ本体
+            continue
+        if token.startswith("-"):
+            return False
+        return token.strip("'\"`").endswith(READONLY_SCRIPTS)
+    return False
+
+
 def segment_violation(segment):
     """セグメント単位の違反理由を返す。問題なければ None。"""
     head = head_of(segment)
     if not head:
         return None
+    tokens = segment.split()
+    if head in ("python3", "python") and is_readonly_script_call(tokens):
+        return None
     if head not in ALLOWED_HEADS:
         return "'%s' は許可されていません" % head
-    tokens = segment.split()
     if head == "sed" and any(t == "-i" or t.startswith("-i.") or
                              t == "--in-place" for t in tokens):
         return "sed -i（in-place編集）は許可されていません"
