@@ -71,6 +71,7 @@ release/{バージョン番号}
 
 ### 運用ルール
 - 作業開始時にdevelopから `feature/{チケットID}-{タイトルのkebab-case}`（バグ修正は `fix/`）ブランチを作成する。差し戻し再実装では既存の作業ブランチを継続使用する
+- 複数チケットの並行作業でworktreeが分離されている場合、worktree内で行ってよいのはコード作業とコミットまで。`tickets/`・`docs/SPEC.md` には触れず、レポートでorchestratorへ報告する。配置・ライフサイクル・上限は `docs/worktree-policy.md` を正とする
 - コミットメッセージは `[{チケットID}] {変更内容の要約}`。作業途中は `[{チケットID}][WIP] {内容}`
 - 1コミット = 1チケットの作業を原則とする
 - 設計書（docs/designs/{ID}.md）にPhase分割がある場合はPhase順に実装し、コミットは原則Phase単位で `[{チケットID}] Phase {N}: {内容}` とする

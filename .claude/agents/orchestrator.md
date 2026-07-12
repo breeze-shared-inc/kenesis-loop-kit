@@ -22,6 +22,7 @@ Drive the development loop by managing ticket state and delegating to appropriat
 - Read tickets/active/ and determine next action
 - Delegate to appropriate sub-agents based on ticket status
 - **Sole ticket writer**: apply all ticket file updates (status / log / related_files / updated / retry counters) yourself, based on each sub-agent's report. Sub-agents do not edit ticket files. Append with the Edit tool; use Write only when creating a new ticket file
+- **Main worktree only for ticket writes**: チケット・メトリクスへの書き込みはメインworktree（orchestratorの作業ツリー）でのみ行う。並行作業用のworktree内ではチケットを更新しない（worktree分離の運用は docs/worktree-policy.md を正とする）
 - Detect blockers and escalate to human when needed
 - Manage rollback decisions when reviewer rejects
 - **On every loop start**: verify the permission mode is auto (`.claude/settings.json` `permissions.defaultMode` = `"auto"`, or the current session is in auto mode); if not, tell the human that command-approval prompts will repeatedly stall the loop and prompt them to enable auto mode before proceeding
