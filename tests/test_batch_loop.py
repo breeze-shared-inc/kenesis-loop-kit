@@ -884,6 +884,22 @@ finish_ok'''
         self.assertEqual(rc, 0, out)
         self.assertIn("バッチ完了", out)
 
+    def test_stream_json_unknown_type_lines_do_not_affect_boundary(self):
+        # AC1は「未知のtype・JSON解析不能」の両方を明示している。上のテストは
+        # JSON解析不能側のみを確認するため、こちらは構文的に正しいJSONだが
+        # 未知のtype/subtypeを持つ行が混じっても、表示をスキップするだけで
+        # run_session→judge_boundaryの境界判定・終了コードに影響しないことを
+        # E2E経路で確認する（render_event単体でNoneを返すことの確認だけでは
+        # 境界判定側への非影響までは実証できないため）
+        self.add_ticket("KLK-101")
+        scenario = '''echo '{"type": "totally_unknown", "foo": "bar"}'
+echo '{"type": "system", "subtype": "unheard_of_subtype", "x": 1}'
+finish_ok'''
+        rc, out = self.batch("KLK-101", scenario=scenario)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("バッチ完了", out)
+        self.assertNotIn("totally_unknown", out)
+
     def test_stream_json_large_output_does_not_deadlock(self):
         # 大量出力時にOSパイプバッファが詰まっても読み取りスレッドが
         # 継続的に排出するためデッドロックしないこと
