@@ -196,5 +196,33 @@ class TestModelAssignment(unittest.TestCase):
                     )
 
 
+class TestIsAllowedModelValueFunction(unittest.TestCase):
+    """`is_allowed_model_value` 自体の直接検証（合成値）。
+
+    実ファイルは現時点で全て許容値のみを持つため、
+    `test_model_value_within_allowed_set_when_present` は実ファイル経由では
+    「許容値集合外の値が来たときに実際にFalseを返すか」を検証できない
+    （常にTrueなfixtureしか通らないため、検証ロジック自体の回帰を検知できない）。
+    このクラスは合成値（valid/invalid双方）で判定関数を直接検証し、将来
+    許容値外のmodel値が混入した場合の検知を保証する（設計書9節エッジケース）。
+    """
+
+    def test_known_aliases_are_allowed(self):
+        for alias in ("sonnet", "opus", "haiku", "fable", "inherit"):
+            with self.subTest(alias=alias):
+                self.assertTrue(is_allowed_model_value(alias))
+
+    def test_full_model_id_like_string_is_allowed(self):
+        self.assertTrue(is_allowed_model_value("claude-opus-4-1-20250805"))
+        self.assertTrue(is_allowed_model_value("claude-sonnet-4-5-20250929"))
+
+    def test_disallowed_value_with_invalid_characters_is_rejected(self):
+        # 空白・記号を含む値は許容値集合にもフルモデルIDパターンにも
+        # 一致しないため、将来の設定ミス（タイプミス・不正な値）を検知できる
+        for bad_value in ("sonnet turbo!", "model/with/slash", "model:with:colon", ""):
+            with self.subTest(bad_value=bad_value):
+                self.assertFalse(is_allowed_model_value(bad_value))
+
+
 if __name__ == "__main__":
     unittest.main()
