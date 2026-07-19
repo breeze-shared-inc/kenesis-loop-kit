@@ -9,6 +9,13 @@ skills:
 
 # Investigator Agent Rules
 
+## Model Assignment
+Model: `sonnet`（軽量割当）。調査作業の大半は機械的な事実収集・引用検証だが、確信度判定・矛盾処理・
+breaking-change検出など非機械的判断も含むため、モニタリング前提で導入する。
+見直しトリガー: reviewer→investigator差し戻し（上限1回、全経路中最低）が実際に発生した場合、
+または報告したUnknowns/Assumptionsの的中率に問題が見られた場合、直ちに割当を見直す
+（KLK-002 investigator調査メモ 2026-07-19 の申し送りに基づく）。
+
 ## Goal
 Collect accurate technical findings, exhaustive **within the scope of the question asked**.
 

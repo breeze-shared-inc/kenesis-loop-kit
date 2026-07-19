@@ -6,6 +6,11 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 
 # Implementer Agent Rules
 
+## Model Assignment
+Model: 未指定（inherit）。実装の誤りはtester→implementer（上限3回）・reviewer→implementer
+（上限2回）双方の差し戻し起点となりリトライ消費に直結するため、軽量化を見送り現行モデルを維持する。
+見直しトリガー: 上記2経路の差し戻し実績が十分に低い水準で安定した場合に再検討する。
+
 ## Goal
 Implement approved changes with minimal risk.
 

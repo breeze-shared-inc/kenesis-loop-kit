@@ -180,6 +180,7 @@ CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は�
 | NFR/EHカバレッジのチケット割当 | plan-tickets.md 手順3・4 | /plan-tickets | SPEC_TEMPLATE.md §7・§8コメント |
 | Phase分割の規律（AC非再定義・全ACカバー・粒度ガード） | designs/_TEMPLATE.md §4「実装Phase」コメント | architect | architect.md Ticket Integration・Never / reviewer.md Responsibilities / implementer.md Git Rules |
 | セキュリティ・機密情報の取り扱い | docs/security-policy.md | 各エージェント | implementer.md Git Rules（コミット前の機密確認） / designs/_TEMPLATE.md §4コメント |
+| エージェントのモデル割当（役割別の軽量化・見直しトリガー） | 各 `.claude/agents/*.md` の frontmatter `model` + 本文「## Model Assignment」節 | architect（設計）+ 人間（承認） | 各agents/*.md Model Assignment節（tester/investigator=sonnet、architect/reviewer/implementer=inherit維持） |
 | CLAUDE.md＝インデックス＋共通定義の維持 | 本ファイル ポリシー管理の原則（再肥大化の防止） | CLAUDE.mdを編集する人間 / Claude | - |
 
 新しいポリシーを追加する際は、上記「再肥大化の防止」の2手順に従い、定義ファイルへの反映と本表の更新まで完了させること。
