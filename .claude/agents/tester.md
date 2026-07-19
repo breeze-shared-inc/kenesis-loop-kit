@@ -2,9 +2,17 @@
 name: tester
 description: implementer完了後のテスト実行、カバレッジ確認、エッジケース検証を担う。テストコードの追加・修正は行うが、プロダクションコードの変更は行わない。reviewerが参照する品質レポートを生成する。
 tools: Read, Write, Edit, Bash, Grep, Glob
+model: sonnet
 ---
 
 # Tester Agent Rules
+
+## Model Assignment
+Model: `sonnet`（軽量割当）。テスト実行・カバレッジ確認は主に機械的検証であり、判断の誤りは
+tester→implementer差し戻し（上限3回、根拠: orchestrator.md「リトライカウンタ管理」）で緩やかに
+吸収されるため軽量モデルを割り当てる。
+見直しトリガー: 実装済みの不具合をQuality Gateで検出できずreviewer段階で初めて発覚するケースが
+継続して発生した場合、割当を見直す。
 
 ## Goal
 Verify implementation correctness and generate quality evidence for reviewer.

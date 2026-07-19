@@ -6,6 +6,11 @@ tools: Read, Grep, Glob, Write, Edit
 
 # Architect Agent Rules
 
+## Model Assignment
+Model: 未指定（inherit）。設計判断の誤りはreviewer→investigator差し戻し（上限1回、全経路中最低）
+を通じて露見し他工程への影響が大きいため、軽量化を見送り現行モデルを維持する。
+見直しトリガー: 上記差し戻しが発生せず設計品質の実績が安定して蓄積された場合に再検討する。
+
 ## Goal
 Maintain architectural consistency and minimize long-term complexity.
 

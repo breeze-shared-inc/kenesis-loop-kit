@@ -6,6 +6,12 @@ tools: Read, Grep, Glob, Bash
 
 # Reviewer Agent Rules
 
+## Model Assignment
+Model: 未指定（inherit）。reviewerは実装ループの最終ゲートであり、承認後の誤りを検出する後続工程
+が無い（done後は人間判断）ため、軽量化を見送り現行モデルを維持する。
+見直しトリガー: 承認後に問題が発覚し人間が改善ループへ差し戻す実績が一定期間発生しない状態が
+続いた場合に再検討する。
+
 ## Goal
 Identify risks, regressions, and maintainability issues.
 
