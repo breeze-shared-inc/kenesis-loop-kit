@@ -364,6 +364,12 @@ class TestPromptAndCommand(unittest.TestCase):
                          str(Path("/repo/kit.wt")))
         self.assertNotIn("--max-budget-usd", cmd)
         self.assertNotIn("--bare", cmd)
+        # stream-json化（設計書KLK-007 §4-1）: 4フラグが無条件で付加される
+        self.assertIn("--output-format", cmd)
+        self.assertEqual(cmd[cmd.index("--output-format") + 1], "stream-json")
+        self.assertIn("--verbose", cmd)
+        self.assertIn("--include-partial-messages", cmd)
+        self.assertIn("--forward-subagent-text", cmd)
 
     def test_command_with_flags(self):
         args = batch_loop.parse_args(
@@ -374,6 +380,10 @@ class TestPromptAndCommand(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--max-turns") + 1], "50")
         self.assertEqual(cmd[cmd.index("--max-budget-usd") + 1], "2.5")
         self.assertEqual(cmd[cmd.index("--permission-mode") + 1], "plan")
+        self.assertIn("--output-format", cmd)
+        self.assertIn("--verbose", cmd)
+        self.assertIn("--include-partial-messages", cmd)
+        self.assertIn("--forward-subagent-text", cmd)
 
     def test_max_turns_zero_disables(self):
         args = batch_loop.parse_args(["--max-turns", "0", "KLK-101"])
@@ -411,6 +421,199 @@ class TestPromptAndCommand(unittest.TestCase):
         self.assertIn("--continue-on-rework", line)
         self.assertIn("--allow-missing-spec", line)
         self.assertTrue(line.endswith("KLK-101"))
+
+
+# ---------------------------------------------------------------------------
+# stream-json レンダリング（render_event / _brief / handle_stream_line）
+# 設計書 docs/designs/KLK-007.md §4-1・§9「テスト観点」に対応する
+# ---------------------------------------------------------------------------
+
+class TestBrief(unittest.TestCase):
+    def test_short_text_unchanged(self):
+        self.assertEqual(batch_loop._brief("short"), "short")
+
+    def test_long_text_truncated_with_ellipsis(self):
+        text = "x" * 250
+        out = batch_loop._brief(text, limit=200)
+        self.assertEqual(len(out), 201)
+        self.assertTrue(out.endswith("…"))
+        self.assertTrue(out.startswith("x" * 200))
+
+    def test_non_str_uses_repr(self):
+        out = batch_loop._brief({"file_path": "a.py"})
+        self.assertIn("file_path", out)
+
+    def test_newlines_are_stripped(self):
+        out = batch_loop._brief("a\nb\nc")
+        self.assertNotIn("\n", out)
+        self.assertEqual(out, "a b c")
+
+
+class TestRenderEvent(unittest.TestCase):
+    def test_system_init(self):
+        rendered = batch_loop.render_event(
+            {"type": "system", "subtype": "init", "model": "claude-x"})
+        self.assertEqual(rendered, "[session] 開始 (model=claude-x)")
+
+    def test_system_init_missing_model_shows_placeholder(self):
+        rendered = batch_loop.render_event({"type": "system", "subtype": "init"})
+        self.assertEqual(rendered, "[session] 開始 (model=?)")
+
+    def test_system_non_init_subtype_ignored(self):
+        self.assertIsNone(batch_loop.render_event(
+            {"type": "system", "subtype": "other"}))
+
+    def test_stream_event_text_delta(self):
+        rendered = batch_loop.render_event({
+            "type": "stream_event",
+            "event": {"delta": {"type": "text_delta", "text": "hello"}},
+        })
+        self.assertEqual(rendered, ("TEXT", "hello"))
+
+    def test_stream_event_non_text_delta_ignored(self):
+        self.assertIsNone(batch_loop.render_event({
+            "type": "stream_event",
+            "event": {"delta": {"type": "input_json_delta"}},
+        }))
+
+    def test_stream_event_missing_event_ignored(self):
+        self.assertIsNone(batch_loop.render_event({"type": "stream_event"}))
+
+    def test_stream_event_empty_text_ignored(self):
+        self.assertIsNone(batch_loop.render_event({
+            "type": "stream_event",
+            "event": {"delta": {"type": "text_delta", "text": ""}},
+        }))
+
+    def test_assistant_tool_use(self):
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read",
+                 "input": {"file_path": "a.py"}},
+            ]},
+        })
+        self.assertIn("[tool] Read(", rendered)
+        self.assertIn("file_path", rendered)
+
+    def test_user_tool_result(self):
+        rendered = batch_loop.render_event({
+            "type": "user",
+            "message": {"content": [
+                {"type": "tool_result", "content": "ok"},
+            ]},
+        })
+        self.assertEqual(rendered, "[result] ok")
+
+    def test_assistant_multiple_blocks_joined_by_newline(self):
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {}},
+                {"type": "tool_use", "name": "Write", "input": {}},
+            ]},
+        })
+        self.assertEqual(len(rendered.splitlines()), 2)
+
+    def test_assistant_unrecognized_block_type_returns_none(self):
+        # "text" ブロックのみ（tool_use/tool_result 以外）は表示対象外
+        self.assertIsNone(batch_loop.render_event({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "hi"}]},
+        }))
+
+    def test_assistant_content_not_list_returns_none(self):
+        self.assertIsNone(batch_loop.render_event({
+            "type": "assistant", "message": {"content": "not-a-list"},
+        }))
+
+    def test_assistant_missing_message_returns_none(self):
+        self.assertIsNone(batch_loop.render_event({"type": "assistant"}))
+
+    def test_assistant_content_block_not_dict_is_skipped(self):
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "message": {"content": [
+                "not-a-dict",
+                {"type": "tool_use", "name": "Read", "input": {}},
+            ]},
+        })
+        self.assertIn("[tool] Read(", rendered)
+
+    def test_subagent_task_started_with_text(self):
+        rendered = batch_loop.render_event({
+            "type": "task_started", "subagent_type": "investigator",
+            "text": "調査開始",
+        })
+        self.assertEqual(rendered, "[subagent:investigator] 調査開始")
+
+    def test_subagent_task_notification_without_text_uses_etype(self):
+        rendered = batch_loop.render_event({"type": "task_notification"})
+        self.assertEqual(rendered, "[subagent:subagent] task_notification")
+
+    def test_subagent_parent_tool_use_id_marks_as_subagent(self):
+        rendered = batch_loop.render_event({
+            "parent_tool_use_id": "abc123", "name": "reviewer",
+            "message": "レビュー中",
+        })
+        self.assertEqual(rendered, "[subagent:reviewer] レビュー中")
+
+    def test_unknown_type_returns_none(self):
+        self.assertIsNone(batch_loop.render_event({"type": "totally_unknown"}))
+
+    def test_missing_type_returns_none(self):
+        self.assertIsNone(batch_loop.render_event({"foo": "bar"}))
+
+
+class TestHandleStreamLine(unittest.TestCase):
+    def capture(self, raw_line, state=None):
+        state = state if state is not None else {"mid_line": False}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            batch_loop.handle_stream_line(raw_line, state)
+        return buf.getvalue(), state
+
+    def test_blank_line_ignored(self):
+        out, _state = self.capture("   \n")
+        self.assertEqual(out, "")
+
+    def test_invalid_json_ignored(self):
+        out, _state = self.capture("not json at all\n")
+        self.assertEqual(out, "")
+
+    def test_json_non_dict_ignored(self):
+        out, _state = self.capture("[1, 2, 3]\n")
+        self.assertEqual(out, "")
+
+    def test_renders_normal_line(self):
+        out, state = self.capture(
+            '{"type": "system", "subtype": "init", "model": "x"}\n')
+        self.assertIn("[session] 開始 (model=x)", out)
+        self.assertFalse(state["mid_line"])
+
+    def test_text_delta_written_without_trailing_newline(self):
+        out, state = self.capture(
+            '{"type": "stream_event", "event": {"delta": '
+            '{"type": "text_delta", "text": "hi"}}}\n')
+        self.assertEqual(out, "hi")
+        self.assertTrue(state["mid_line"])
+
+    def test_normal_line_after_mid_line_inserts_newline_first(self):
+        out, state = self.capture(
+            '{"type": "system", "subtype": "init", "model": "x"}\n',
+            state={"mid_line": True})
+        self.assertTrue(out.startswith("\n"))
+        self.assertFalse(state["mid_line"])
+
+    def test_render_event_exception_is_swallowed(self):
+        with mock.patch.object(batch_loop, "render_event",
+                               side_effect=RuntimeError("boom")):
+            out, _state = self.capture('{"type": "whatever"}\n')
+        self.assertEqual(out, "")
+
+    def test_none_result_produces_no_output(self):
+        out, _state = self.capture('{"type": "totally_unknown"}\n')
+        self.assertEqual(out, "")
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +774,62 @@ class TestBatchEndToEnd(BatchLoopBase):
         self.assertIn("--max-turns 50", call)
         self.assertIn("--max-budget-usd 2.5", call)
         self.assertIn("--permission-mode plan", call)
+
+    def test_stream_json_lines_rendered_realtime(self):
+        # フェイクclaudeがstream-json JSONLをechoし、run_sessionが
+        # 標準出力へレンダリングすること・既存の境界判定（done到達）が
+        # 引き続き正しく動作することを確認する（設計書§9統合テスト観点）
+        self.add_ticket("KLK-101")
+        scenario = '''echo '{"type": "system", "subtype": "init", "model": "claude-x"}'
+echo '{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "a.py"}}]}}'
+finish_ok'''
+        rc, out = self.batch("KLK-101", scenario=scenario)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("[session] 開始 (model=claude-x)", out)
+        self.assertIn("[tool] Read(", out)
+        self.assertIn("バッチ完了", out)
+
+    def test_stream_json_subagent_event_rendered(self):
+        self.add_ticket("KLK-101")
+        scenario = '''echo '{"type": "task_started", "subagent_type": "investigator", "text": "調査開始"}'
+finish_ok'''
+        rc, out = self.batch("KLK-101", scenario=scenario)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("[subagent:investigator] 調査開始", out)
+
+    def test_stream_json_mid_line_flushed_before_next_output(self):
+        # text_delta（改行なし）の連続後にプロセスが終了した場合、
+        # 次の表示行の前に改行が補われること（mid_line状態の解消）
+        self.add_ticket("KLK-101")
+        scenario = '''echo '{"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": "hello "}}}'
+echo '{"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": "world"}}}'
+finish_ok'''
+        rc, out = self.batch("KLK-101", scenario=scenario)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("hello world\n", out)
+
+    def test_stream_json_malformed_lines_do_not_affect_boundary(self):
+        # JSONデコード失敗行が混じっても表示をスキップするだけで
+        # 境界判定・終了コードには影響しない（AC1）
+        self.add_ticket("KLK-101")
+        scenario = '''echo 'not valid json'
+echo '{"incomplete": '
+finish_ok'''
+        rc, out = self.batch("KLK-101", scenario=scenario)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("バッチ完了", out)
+
+    def test_stream_json_large_output_does_not_deadlock(self):
+        # 大量出力時にOSパイプバッファが詰まっても読み取りスレッドが
+        # 継続的に排出するためデッドロックしないこと
+        self.add_ticket("KLK-101")
+        scenario = ('for i in $(seq 1 4000); do echo "line-$i-not-json"; done\n'
+                   'finish_ok')
+        start = time.monotonic()
+        rc, out = self.batch("KLK-101", scenario=scenario)
+        elapsed = time.monotonic() - start
+        self.assertEqual(rc, 0, out)
+        self.assertLess(elapsed, 20)
 
     def test_stop_on_nonzero_exit(self):
         self.add_ticket("KLK-101")
