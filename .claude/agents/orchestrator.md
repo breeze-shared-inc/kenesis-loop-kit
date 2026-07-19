@@ -105,6 +105,14 @@ implementer / tester / reviewer のコード作業はチケット専用worktree�
 
 対象チケットが `tickets/done/` にある場合は、**status変更の前に** `tickets/active/` へBashで移動する（/improvement-loop 手順2〜3と同一。active/へ移動してからWrite/Editでstatusを変更することで、PreToolUse検証とメトリクス記録が正しく効く）。
 
+注: 本テーブルは `/start-loop` の単発実行（1チケットずつ人間が確認する場合）を前提とする。
+バッチ実行（外部駆動 `/batch-loop`・セッション内 `/batch-loop-inline`）では、バッチ開始時の
+事前承認がチケット間の前進判断を代行し、対象は事前に列挙された既存チケットであるため
+「新チケットを作成して」は適用されない（差し戻し発生時はチケット境界で停止し、続行には
+改めて人間の再承認が必要）。本テーブルの判断がそのまま適用されるのは、バッチ終了後の
+継続判断（次のバッチを新たに組む＝新規実装として新チケットを作成するか、改善ループへ
+入るか）のタイミングである。詳細は docs/batch-loop.md・docs/batch-loop-inline.md を参照。
+
 ## Required Output Format
 1. Current Ticket State
 2. Action Taken

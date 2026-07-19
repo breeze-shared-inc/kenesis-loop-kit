@@ -18,6 +18,7 @@
 | `/plan-tickets` | SPECを基に開発をチケットへ分割し、承認を経て一括起票する | spec-path（省略可） |
 | `/start-loop` | ループを開始・再開する | チケットID（省略可） |
 | `/batch-loop` | 外部駆動バッチ（scripts/batch_loop.py・1チケット1セッション）のプリフライト検証と実行コマンドライン案内 | チケットID列（2件以上・実行順） |
+| `/batch-loop-inline` | セッション内バッチ（旧方式復旧・1セッションで複数チケットを連続実行）の事前承認と連続実行 | チケットID列（2件以上・実行順） |
 | `/new-ticket` | チケットを新規作成する | タイトル（必須） |
 | `/improvement-loop` | 改善ループを起動する | チケットID 差し戻し先（省略可） |
 | `/rollback` | 承認後に問題が発覚したチケットをロールバックする | チケットID（必須） コミットハッシュ（省略可） |
@@ -172,7 +173,7 @@ CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は�
 | Git運用規約（ブランチ・コミット・機密確認） | implementer.md / tester.md Git Rules | implementer / tester | - |
 | worktree分離（implementer以降のコード作業・done時にdevelopへマージし削除・チケットはメインツリー一本化） | docs/worktree-policy.md | orchestrator + implementer / tester / reviewer | orchestrator.md worktreeライフサイクル管理 / implementer.md Git Rules 運用ルール / tester.md・reviewer.md / start-loop.md 起動時チェックリスト / batch_loop.py（--add-dir） / 本ファイル Git運用規約（ポインタ） |
 | ロールバック手順 | rollback.md | /rollback | _ticket_lib.py LEGAL_TRANSITIONS（done→implementation_done） |
-| バッチ連続実行の事前承認 | docs/batch-loop.md | 人間 + scripts/batch_loop.py（/batch-loopは検証・案内） | batch-loop.md 手順・Never / スクリプト承認プロンプト・停止条件 |
+| バッチ連続実行の事前承認 | docs/batch-loop.md（外部駆動）/ docs/batch-loop-inline.md（セッション内） | 人間 + scripts/batch_loop.py（外部駆動・/batch-loopは検証・案内）／ orchestrator（セッション内・/batch-loop-inline） | batch-loop.md 手順・Never・停止条件 / batch-loop-inline.md 手順・Never・停止条件 / orchestrator.md 改善ループテーブル直下の注記（バッチ実行時の代行範囲の明記） |
 | Kitからの切り離し（clone導入時の.git再初期化） | setup.md 手順1 | /setup | setup.md Never（.git削除の明示承認・Kit本体除外） |
 | リポジトリ可視性の.gitignoreプリセット | .gitignore.public / .private + setup.md 手順2 | /setup | - |
 | プロジェクト略称の確定 | 本ファイル チケットID採番 | /setup / new-ticket | setup.md 手順4 / new-ticket.md 手順1 |
