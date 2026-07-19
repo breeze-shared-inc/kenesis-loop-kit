@@ -422,7 +422,7 @@ def format_guard(value, suffix=""):
     return ("%s%s" % (value, suffix)) if value else "なし"
 
 
-def print_approval_summary(args, snapshot):
+def print_approval_summary(args, snapshot, root):
     say("")
     say("=== バッチ実行の承認サマリ ===")
     say("対象チケット（実行順）:")
@@ -430,6 +430,7 @@ def print_approval_summary(args, snapshot):
         entry = snapshot[tid]
         say("  %d. %s [%s] %s" % (i, tid, entry["status"], entry["title"]))
     say("権限モード: %s" % args.permission_mode)
+    say("コード作業worktree: %s（--add-dir で書き込み許可）" % worktree_base(root))
     say("ガード: max-turns=%s / max-budget-usd=%s / timeout-min=%s" % (
         args.max_turns if args.max_turns else "無効",
         format_guard(args.max_budget_usd, " USD"),
@@ -485,12 +486,21 @@ def build_prompt(tid, mode, allow_missing_spec):
     return prompt
 
 
-def build_claude_command(args, prompt):
+def worktree_base(root):
+    """コード作業用worktreeの配置先: リポジトリの兄弟 ../{リポジトリ名}.wt/
+    （docs/worktree-policy.md「配置と命名」）。"""
+    return root.parent / (root.name + ".wt")
+
+
+def build_claude_command(args, prompt, root):
     cmd = [args.claude_cmd, "-p", prompt, "--permission-mode", args.permission_mode]
     if args.max_turns:
         cmd += ["--max-turns", str(args.max_turns)]
     if args.max_budget_usd is not None:
         cmd += ["--max-budget-usd", str(args.max_budget_usd)]
+    # orchestratorが作成するチケット専用worktree（リポジトリ外の兄弟ディレクトリ）
+    # への書き込みを許可する（docs/worktree-policy.md「権限設定」）
+    cmd += ["--add-dir", str(worktree_base(root))]
     return cmd
 
 
@@ -656,6 +666,9 @@ def run_batch(args, root, snapshot):
     batch_start = time.monotonic()
     total = len(args.ids)
 
+    # --add-dir は実在するディレクトリを指す必要があるため、配置先を先に作る
+    worktree_base(root).mkdir(exist_ok=True)
+
     for index, tid in enumerate(args.ids):
         remaining = args.ids[index + 1:]
 
@@ -684,7 +697,7 @@ def run_batch(args, root, snapshot):
         say("")
         say("=== [%d/%d] %s のセッションを開始します ===" % (index + 1, total, tid))
         prompt = build_prompt(tid, args.permission_mode, args.allow_missing_spec)
-        cmd = build_claude_command(args, prompt)
+        cmd = build_claude_command(args, prompt, root)
         exit_status, elapsed = run_session(cmd, root, args.timeout_min)
 
         # 境界判定（毎回チケットファイルを再読取。状態の外部化が正）
@@ -733,10 +746,10 @@ def _run(args, root):
         say("--dry-run: プリフライトのみ実行しました（セッションは起動していません）")
         say("実行コマンドライン: %s" % suggest_command_line(args))
         say("各チケットの起動コマンド: %s" %
-            " ".join(build_claude_command(args, "<駆動プロンプト>")))
+            " ".join(build_claude_command(args, "<駆動プロンプト>", root)))
         return 0
 
-    print_approval_summary(args, snapshot)
+    print_approval_summary(args, snapshot, root)
     if not args.yes and not confirm():
         say("承認が得られなかったため開始しません（何も実行していません）")
         return 2

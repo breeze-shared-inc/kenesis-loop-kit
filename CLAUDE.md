@@ -89,7 +89,7 @@ investigator → architect → implementer → tester → reviewer
 
 ## Git運用規約
 
-git-flow（main / develop / feature / fix / release / hotfix）を採用する。ブランチ戦略の全体図・命名規則・コミットメッセージ規約 `[{チケットID}] {変更内容の要約}`・コミット前の機密確認は `.claude/agents/implementer.md`「Git Rules」を、testerのテストコミット規約は `tester.md`「Git Rules」を正とする。`git push` は人間のみが行う。緊急時のhotfix運用は `.claude/commands/rollback.md`「緊急ロールバック」を参照。並行作業時のworktree分離（コードのみworktreeへ・チケット書き込みはメインworktreeに一本化）は `docs/worktree-policy.md` を正とする。
+git-flow（main / develop / feature / fix / release / hotfix）を採用する。ブランチ戦略の全体図・命名規則・コミットメッセージ規約 `[{チケットID}] {変更内容の要約}`・コミット前の機密確認は `.claude/agents/implementer.md`「Git Rules」を、testerのテストコミット規約は `tester.md`「Git Rules」を正とする。`git push` は人間のみが行う。緊急時のhotfix運用は `.claude/commands/rollback.md`「緊急ロールバック」を参照。チケット単位のworktree分離（implementer以降のコード作業はチケット専用worktreeで行い、reviewer承認後にorchestratorがdevelopへマージしてworktreeを削除する。チケット書き込みはメインworktreeに一本化）は `docs/worktree-policy.md` を正とする。
 
 ---
 
@@ -170,7 +170,7 @@ CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は�
 | done/20件超のアーカイブ提案 | 本ファイル チケット管理ルール / start-loop.md | orchestrator / start-loop | start-loop.md 起動時チェックリスト |
 | チケット書き込みのorchestrator専任 | 本ファイル チケット管理ルール | orchestrator / 各エージェント | orchestrator.md Responsibilities / 各agents/*.md Ticket Integration・Never |
 | Git運用規約（ブランチ・コミット・機密確認） | implementer.md / tester.md Git Rules | implementer / tester | - |
-| worktree並行作業（コードのみ分離・チケットはメインツリー一本化） | docs/worktree-policy.md | 人間 + implementer / orchestrator | implementer.md Git Rules 運用ルール / orchestrator.md Responsibilities / 本ファイル Git運用規約（ポインタ） |
+| worktree分離（implementer以降のコード作業・done時にdevelopへマージし削除・チケットはメインツリー一本化） | docs/worktree-policy.md | orchestrator + implementer / tester / reviewer | orchestrator.md worktreeライフサイクル管理 / implementer.md Git Rules 運用ルール / tester.md・reviewer.md / start-loop.md 起動時チェックリスト / batch_loop.py（--add-dir） / 本ファイル Git運用規約（ポインタ） |
 | ロールバック手順 | rollback.md | /rollback | _ticket_lib.py LEGAL_TRANSITIONS（done→implementation_done） |
 | バッチ連続実行の事前承認 | docs/batch-loop.md | 人間 + scripts/batch_loop.py（/batch-loopは検証・案内） | batch-loop.md 手順・Never / スクリプト承認プロンプト・停止条件 |
 | Kitからの切り離し（clone導入時の.git再初期化） | setup.md 手順1 | /setup | setup.md Never（.git削除の明示承認・Kit本体除外） |

@@ -1,6 +1,5 @@
 {
   "permissions": {
-    "defaultMode": "auto",
     "allow": [
       "Bash(npm *)",
       "Bash(yarn *)",
@@ -76,7 +75,9 @@
       "Bash(git config *)",
       "Bash(git rm *)",
       "Bash(sed -n *)",
-      "Edit(docs/spec-qa/**)"
+      "Edit(docs/spec-qa/**)",
+      "Bash(git worktree *)",
+      "Bash(cd *)"
     ],
     "deny": [
       "Bash(git push*)",
@@ -94,6 +95,10 @@
       "Bash(dd *)",
       "Bash(fdisk*)",
       "Bash(parted*)"
+    ],
+    "defaultMode": "auto",
+    "additionalDirectories": [
+      "../kenesis-loop-kit.wt/"
     ]
   },
   "hooks": {

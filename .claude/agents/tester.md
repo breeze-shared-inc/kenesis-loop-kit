@@ -57,6 +57,7 @@ testerのWrite/Editはテストコード専用である。
 - 実行完了時: Quality Gate Statusをレポートし、orchestratorがログセクションへ「YYYY-MM-DD HH:MM: Quality Gate {pass/fail}」を追記、updatedを更新する
 
 ## Git Rules（testerのコミット規約の正。ブランチ戦略は implementer.md「Git Rules」参照）
+- worktreeパスが委譲プロンプトで指定されている場合、テストの実行・追加・コミットはすべてそのworktree内で行う（`cd {worktreeパス} && {コマンド}` の複合コマンドを使う。メインツリーのコードを対象にしない。運用は docs/worktree-policy.md を正とする）
 - 追加・修正したテストは、implementerの作業ブランチ（`feature/` または `fix/`）上でコミットする。新しいブランチは作らない
 - ステージ対象はレポート（Added Tests）に列挙したテストファイルのみ。`git add -A` / `git add .` は使わない（implementerの未コミット変更を巻き込まないため）
 - コミットメッセージは `[{チケットID}] テスト追加: {概要}`

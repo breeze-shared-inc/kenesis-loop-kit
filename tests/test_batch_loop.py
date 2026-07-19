@@ -16,6 +16,7 @@ import tempfile
 import time
 import unittest
 from datetime import date, timedelta
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -354,11 +355,13 @@ class TestPromptAndCommand(unittest.TestCase):
 
     def test_command_defaults(self):
         args = batch_loop.parse_args(["KLK-101"])
-        cmd = batch_loop.build_claude_command(args, "PROMPT")
+        cmd = batch_loop.build_claude_command(args, "PROMPT", Path("/repo/kit"))
         self.assertEqual(cmd[:3], ["claude", "-p", "PROMPT"])
         self.assertIn("--permission-mode", cmd)
         self.assertEqual(cmd[cmd.index("--permission-mode") + 1], "acceptEdits")
         self.assertEqual(cmd[cmd.index("--max-turns") + 1], "200")
+        self.assertEqual(cmd[cmd.index("--add-dir") + 1],
+                         str(Path("/repo/kit.wt")))
         self.assertNotIn("--max-budget-usd", cmd)
         self.assertNotIn("--bare", cmd)
 
@@ -366,7 +369,7 @@ class TestPromptAndCommand(unittest.TestCase):
         args = batch_loop.parse_args(
             ["--claude-cmd", "/x/claude", "--max-turns", "50",
              "--max-budget-usd", "2.5", "--permission-mode", "plan", "KLK-101"])
-        cmd = batch_loop.build_claude_command(args, "PROMPT")
+        cmd = batch_loop.build_claude_command(args, "PROMPT", Path("/repo/kit"))
         self.assertEqual(cmd[0], "/x/claude")
         self.assertEqual(cmd[cmd.index("--max-turns") + 1], "50")
         self.assertEqual(cmd[cmd.index("--max-budget-usd") + 1], "2.5")
@@ -374,8 +377,12 @@ class TestPromptAndCommand(unittest.TestCase):
 
     def test_max_turns_zero_disables(self):
         args = batch_loop.parse_args(["--max-turns", "0", "KLK-101"])
-        cmd = batch_loop.build_claude_command(args, "PROMPT")
+        cmd = batch_loop.build_claude_command(args, "PROMPT", Path("/repo/kit"))
         self.assertNotIn("--max-turns", cmd)
+
+    def test_worktree_base_is_sibling_dir(self):
+        self.assertEqual(batch_loop.worktree_base(Path("/repo/kit")),
+                         Path("/repo/kit.wt"))
 
     def test_negative_max_turns_rejected(self):
         with self.assertRaises(SystemExit):
