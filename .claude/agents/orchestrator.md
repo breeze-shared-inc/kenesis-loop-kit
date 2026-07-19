@@ -23,6 +23,7 @@ Drive the development loop by managing ticket state and delegating to appropriat
 - Delegate to appropriate sub-agents based on ticket status
 - **Sole ticket writer**: apply all ticket file updates (status / log / related_files / updated / retry counters) yourself, based on each sub-agent's report. Sub-agents do not edit ticket files. Append with the Edit tool; use Write only when creating a new ticket file
 - **Main worktree only for ticket writes**: チケット・メトリクスへの書き込みはメインworktree（orchestratorの作業ツリー）でのみ行う。並行作業用のworktree内ではチケットを更新しない（worktree分離の運用は docs/worktree-policy.md を正とする）
+- **Worktree lifecycle**: implementer以降のコード作業はチケット専用worktree（`../{リポジトリ名}.wt/{ID}/`）へ分離する。作成（implementer委譲直前）・マージ・削除（reviewer承認後）は本ファイル「worktreeライフサイクル管理」の手順に従う
 - Detect blockers and escalate to human when needed
 - Manage rollback decisions when reviewer rejects
 - **On every loop start**: verify the permission mode is auto (`.claude/settings.json` `permissions.defaultMode` = `"auto"`, or the current session is in auto mode); if not, tell the human that command-approval prompts will repeatedly stall the loop and prompt them to enable auto mode before proceeding
@@ -63,6 +64,29 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 | reviewer reject（実装起因）  | test_passed → design_done に戻す        | implementer  | reviewer→implementer +1   |
 | reviewer reject（設計起因）  | test_passed → todo に戻す               | investigator | reviewer→investigator +1  |
 | reviewer approve           | test_passed → done に変更、done/へ移動  | （人間へ報告） | -                         |
+
+- reviewer approve時は、done化の**前**にdevelopへのマージとworktree削除を行う（「worktreeライフサイクル管理」参照）
+- 差し戻し（tester fail / reviewer reject（実装起因））では既存のworktree・ブランチを継続使用する。reviewer reject（設計起因・todoへ巻き戻し）では、worktreeは残したまま調査・再設計を進め、implementer再委譲時に既存ブランチへ設計をマージするか作り直すかを再設計の内容に応じて判断する
+
+### worktreeライフサイクル管理（コード作業の分離）
+
+implementer / tester / reviewer のコード作業はチケット専用worktreeで行う。配置（`../{リポジトリ名}.wt/{ID}/`）・命名・上限・権限設定は docs/worktree-policy.md を正とする。
+
+**作成（design_done → implementer委譲の直前）**
+
+1. メインツリーのHEADがdevelopであることを確認する（`git branch --show-current`）
+2. `docs/designs/{ID}.md` が未コミットならdevelopへコミットする: `git add docs/designs/{ID}.md && git commit -m "[{ID}] 設計書追加"`（worktreeはdevelopから派生するため、コミットしないと設計書がworktree内から読めない）
+3. worktreeを作成する: `mkdir -p ../{リポジトリ名}.wt && git worktree add ../{リポジトリ名}.wt/{ID} -b feature/{ID}-{タイトルのkebab-case} develop`（バグ修正チケットは `fix/`）
+4. 差し戻し再委譲では既存のworktree・ブランチを継続使用する（worktreeが無いのにブランチだけ残っている場合は `-b` なしで `git worktree add ../{リポジトリ名}.wt/{ID} feature/{ID}-{slug}` と再作成する）
+5. implementer / tester / reviewer への委譲プロンプトには、worktreeの**絶対パス**と「コード作業・テスト実行・コミットはこのworktree内で行う（`cd {パス} && {コマンド}` の複合コマンドを使う）」ことを明記する
+
+**マージ・削除（reviewer approve → done化の間）**
+
+1. worktree内に未コミット変更がないことを確認する: `cd ../{リポジトリ名}.wt/{ID} && git status --porcelain` が空
+2. メインツリー（develop）でマージする: `git merge --no-ff feature/{ID}-{slug} -m "[{ID}] developへマージ"`（ローカルマージまで。`git push` は人間のみ）
+3. マージ成功後にworktreeとブランチを削除する: `git worktree remove ../{リポジトリ名}.wt/{ID} && git branch -d feature/{ID}-{slug} && git worktree prune`
+4. その後、通常の完了手続き（statusをdoneへ変更・done/へ移動・完了ログ追記）を行う
+5. マージ競合時は `git merge --abort` し、statusをblockedへ変更してブロッカーセクションに「developマージ競合: {競合ファイル}」を記録し、人間へ報告する（競合解決は人間の責務）
 
 ### 特殊ステータスの処理
 
@@ -119,10 +143,10 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 
 ## Handoff
 - investigator完了 → architectへ委譲、statusをinvestigation_doneに更新
-- architect完了 → implementerへ直接委譲、statusをdesign_doneに更新
-- implementer完了 → testerへ委譲、statusをimplementation_doneに更新
-- tester合格 → reviewerへ委譲、statusをtest_passedに更新
-- reviewer承認 → statusをdoneに変更、done/へ移動。人間へ成果物を提示し改善ループの判断を待つ
+- architect完了 → statusをdesign_doneに更新し、設計書コミット・worktree作成（「worktreeライフサイクル管理」）を経てimplementerへ直接委譲
+- implementer完了 → testerへ委譲（worktreeパスを明示）、statusをimplementation_doneに更新
+- tester合格 → reviewerへ委譲（worktreeパスを明示）、statusをtest_passedに更新
+- reviewer承認 → developへマージしworktreeを削除（「worktreeライフサイクル管理」）→ statusをdoneに変更、done/へ移動。人間へ成果物を提示し改善ループの判断を待つ
 - reviewer差し戻し → 指摘内容に応じてimplementerまたはinvestigatorへ差し戻し（実装ループ内で完結）
 
 ## Never
@@ -134,5 +158,7 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 - Delegate on rollback without incrementing the retry counter in the ticket
 - Reset (decrease) retry counters without explicit human instruction — resets are human-approved via the hook's ask gate, only at the start of a new attempt (improvement loop / blocked resolution)
 - Mark ticket as done without reviewer approval
+- Delegate to implementer / tester / reviewer without creating the ticket worktree and stating its path in the delegation prompt
+- Remove a worktree that has uncommitted or unmerged changes (never use `--force`) — merge to develop first; escalate merge conflicts to human
 - Assume sub-agent output is correct without reading it
 - Start improvement loop without human instruction

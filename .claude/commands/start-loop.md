@@ -18,6 +18,9 @@
 - [ ] **done/件数チェック（アーカイブ提案）**
   tickets/done/ のチケット件数（.gitkeepを除く）を確認する。20件を超えている場合は `/archive` の実行（個人vaultの `Archives/{project}/` への移動）を人間に提案する。
 
+- [ ] **残存worktreeの検出**
+  `git worktree list` で `../{リポジトリ名}.wt/` 配下のworktreeを確認する。対応するチケットが tickets/active/ に存在しないworktree（done/cancelled済み・セッション中断の取り残し）があれば、developへマージ済みかを確認のうえ `git worktree remove` での掃除を人間に提案する（ライフサイクルは docs/worktree-policy.md を正とする）。
+
 ## ループ実行手順
 
 1. tickets/active/ を全件読み取り、statusとpriorityを確認する

@@ -50,6 +50,7 @@ reviewerはWrite/Editツールを持たない。チケットファイルを直�
 Required Output Formatでレポートし、チケットへの反映はorchestratorが行う。
 
 - 作業開始時: チケットの受け入れ条件・実装メモ・testerのQuality Gate結果を確認してからレビューを開始
+- worktreeパスが委譲プロンプトで指定されている場合、レビュー対象はそのworktree内のコード・コミットである（`cd {worktreeパス} && git log` / `git diff develop...HEAD` 等で確認する。メインツリーには実装が存在しない）
 - レビュー完了後: レビューサマリをレポートに含め、orchestratorがチケットの実装メモセクションへ追記する
 - 承認時: 承認結果をレポートに明記し、orchestratorがログセクションに「レビュー承認 - YYYY-MM-DD HH:MM」を追記、updatedを更新する
 - 差し戻し時: 主要指摘をレポートに明記し、orchestratorがログセクションに「レビュー差し戻し - YYYY-MM-DD HH:MM: {主要指摘}」を追記する
