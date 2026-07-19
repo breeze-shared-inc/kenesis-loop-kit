@@ -463,6 +463,55 @@ class TestRenderEvent(unittest.TestCase):
         self.assertIsNone(batch_loop.render_event(
             {"type": "system", "subtype": "other"}))
 
+    def test_system_task_started_with_description(self):
+        # 実イベント形状（VS-2実測 2026-07-20）: type=system, subtype=task_started
+        rendered = batch_loop.render_event({
+            "type": "system", "subtype": "task_started",
+            "subagent_type": "investigator", "description": "既存コード調査",
+            "prompt": "詳細プロンプト",
+        })
+        self.assertEqual(rendered, "[subagent:investigator] 開始: 既存コード調査")
+
+    def test_system_task_started_falls_back_to_prompt(self):
+        rendered = batch_loop.render_event({
+            "type": "system", "subtype": "task_started",
+            "subagent_type": "investigator", "prompt": "詳細プロンプト",
+        })
+        self.assertEqual(rendered, "[subagent:investigator] 開始: 詳細プロンプト")
+
+    def test_system_task_started_missing_description_and_prompt(self):
+        rendered = batch_loop.render_event({
+            "type": "system", "subtype": "task_started",
+            "subagent_type": "investigator",
+        })
+        self.assertEqual(rendered, "[subagent:investigator] 開始")
+
+    def test_system_task_started_missing_subagent_type_uses_placeholder(self):
+        rendered = batch_loop.render_event({
+            "type": "system", "subtype": "task_started",
+        })
+        self.assertEqual(rendered, "[subagent:subagent] 開始")
+
+    def test_system_task_notification_with_summary(self):
+        rendered = batch_loop.render_event({
+            "type": "system", "subtype": "task_notification",
+            "status": "completed", "summary": "調査完了",
+        })
+        self.assertEqual(rendered, "[subagent] 完了(completed): 調査完了")
+
+    def test_system_task_notification_without_summary_ignored(self):
+        self.assertIsNone(batch_loop.render_event({
+            "type": "system", "subtype": "task_notification",
+            "status": "completed",
+        }))
+
+    def test_system_task_updated_ignored(self):
+        # task_updated（進行中パッチ）は表示価値が低いため未対応のまま無視する
+        self.assertIsNone(batch_loop.render_event({
+            "type": "system", "subtype": "task_updated",
+            "task_id": "abc", "patch": {"status": "completed"},
+        }))
+
     def test_stream_event_text_delta(self):
         rendered = batch_loop.render_event({
             "type": "stream_event",
@@ -790,12 +839,28 @@ finish_ok'''
         self.assertIn("バッチ完了", out)
 
     def test_stream_json_subagent_event_rendered(self):
+        # フォールバック分岐（トップレベルtype一致）。設計書§4-1確定diffの想定
+        # スキーマ。実APIでは到達しない（下記の実スキーマ版テストを参照）が、
+        # 将来のスキーマ変化に備えた防御として引き続き検証する
         self.add_ticket("KLK-101")
         scenario = '''echo '{"type": "task_started", "subagent_type": "investigator", "text": "調査開始"}'
 finish_ok'''
         rc, out = self.batch("KLK-101", scenario=scenario)
         self.assertEqual(rc, 0, out)
         self.assertIn("[subagent:investigator] 調査開始", out)
+
+    def test_stream_json_subagent_lifecycle_real_schema_rendered(self):
+        # 実スキーマ（VS-2実測 2026-07-20）: type=system, subtype=task_started/
+        # task_notification。設計書§4-2 VS-2の実測結果に基づきrender_eventを
+        # 校正済み（境界判定・合否には無関係。表示品質の確認のみ）
+        self.add_ticket("KLK-101")
+        scenario = '''echo '{"type": "system", "subtype": "task_started", "subagent_type": "investigator", "description": "既存コード調査"}'
+echo '{"type": "system", "subtype": "task_notification", "status": "completed", "summary": "調査完了"}'
+finish_ok'''
+        rc, out = self.batch("KLK-101", scenario=scenario)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("[subagent:investigator] 開始: 既存コード調査", out)
+        self.assertIn("[subagent] 完了(completed): 調査完了", out)
 
     def test_stream_json_mid_line_flushed_before_next_output(self):
         # text_delta（改行なし）の連続後にプロセスが終了した場合、

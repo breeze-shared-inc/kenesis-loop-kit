@@ -105,6 +105,16 @@ python3 scripts/batch_loop.py --dry-run APP-001 APP-002
 - **1セッション1チケット限定（V-4実測・縮約版）**: 駆動プロンプトの1件限定指示は縮約スケールで遵守を確認済み。本物のフルループ（investigator〜reviewer）での確認は未実施のため、**初回の実運用バッチは人間監視下のパイロット実行**と位置づけること
 - **`--max-turns` は隠しオプション**: v2.1.215の `--help` に掲載されていないが機能する（既定200で使用）。将来のCLIで削除された場合、未知オプションはAPI呼び出し前に exit 1 となるため、バッチは初回セッションの境界判定1で**API消費なしに即停止**する（fail-closed）。その場合は `--max-turns 0`（無効化）で回避し、`--max-budget-usd`・`--timeout-min` を代替ガードにする
 
+### stream-json下の追加実測（VS-1・VS-2・KLK-007 2026-07-20・claude CLI v2.1.215）
+
+KLK-007で `--output-format stream-json --verbose --include-partial-messages --forward-subagent-text` を常時付加する変更を入れたため、上記V-1・V-3（text出力下の実測）がstream-json下でも同一かをダミープロジェクトで再検証した（VS-1）。あわせて `--forward-subagent-text` の実イベント列を単発Task委譲で実測した（VS-2）。
+
+- **askの自動deny・stream-json下でも同一（VS-1）**: PreToolUse hookの `ask` はstream-json下でも従来どおり**ツール実行拒否に自動変換**される。deny時は `user` イベント内 `tool_result`（`is_error: true`）としてhookの拒否理由がそのままcontentに現れる。ハングせず、セッションは正常終了（exit 0）した
+- **Stop hookのblockもstream-json下で発火（VS-1）**: `decision: "block"` を返すStop hookにより、モデルへ `Stop hook feedback: {reason}` という合成 `user` イベントが差し込まれ、継続を強制できることを確認した（`num_turns` が1→3へ増加）。あわせて `system` イベント（`subtype: "notification"`, `key: "stop-hook-error"`）が1件追加で流れることを観測したが、block自体は機能しており（合成フィードバックの配信・継続実行を実測で確認）、セッションは最終的に正常終了（exit 0）した。この通知イベントの正確な意味論はCLI内部実装に依存し未確認だが、`render_event()` は未知のsubtypeとして無視するだけなので表示・境界判定への影響はない
+- **`render_event()` の防御的パースを実データで検証**: VS-1（上記deny・block誘発シナリオ）とVS-2（下記）で得た生JSONL（計131行）を `render_event()` に通し、例外が一件も発生しないことを確認した（AC1「表示ロジックの失敗は境界判定・終了コードに影響しない」の裏付け）
+- **`--forward-subagent-text` の実イベント列（VS-2）**: 単発のTask委譲（`general-purpose` サブエージェントへの最小プロンプト）で実測したところ、サブエージェントのライフサイクルは `type: "task_started"` のようなトップレベルtypeではなく、**`type: "system"`, `subtype: "task_started"` / `"task_updated"` / `"task_notification"`** として届くことを確認した（設計書§4-1確定diffの想定と異なる）。サブエージェント自身の発言は `type: "assistant"`/`"user"` に `parent_tool_use_id`・`subagent_type` を伴って流れ、既存の assistant/user 分岐でそのまま拾える。この差異を踏まえ `render_event()` の `system` 分岐へ `task_started`（開始・description/prompt表示）・`task_notification`（完了・summary表示）の校正を実施した（コミット済み。`task_updated` は進行中パッチのみで表示価値が低いため未対応のまま無視）
+- **測定方法の注記**: VS-1・VS-2とも、実運用の `/start-loop` 全体を回すコストは避け、最小限のダミーhook・単発Task委譲による軽量プローブで代替した。境界判定はいずれの実測でもファイル状態にのみ基づくため、この軽量化は安全側構成の前提（設計書§4-2）を損なわない
+
 ## 制約・注意点
 
 - **実行中は同じリポジトリで対話セッションや別バッチを開かない** — 二重ライター防止。駆動スクリプト自体は `tickets/` へ一切書き込まない読み取り専用（単一ライター原則の維持）だが、並行セッションがチケットへ書き込むと範囲外変更・スナップショット差分として停止する

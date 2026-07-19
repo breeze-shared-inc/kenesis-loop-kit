@@ -530,13 +530,30 @@ def _brief(value, limit=200):
 def render_event(evt):
     """stream-jsonの1行(dict)を人間可読な進捗表現へ変換する。
     戻り値: 通常行(str) / 継続出力用("TEXT", text)タプル / 表示不要(None)。
-    未知のtype・構造は例外を出さずNoneを返す（防御的パース。境界判定はここに依存しない。
-    実イベント列は投機的判断（VS-2で実測）であり、本関数はその結果で校正する）。"""
+    未知のtype・構造は例外を出さずNoneを返す（防御的パース。境界判定はここに依存しない）。
+    サブエージェント（Task）系の分岐はVS-2実測（2026-07-20、単発Task委譲プローブ）に基づき
+    校正済み: 実際のイベントは type="task_started"等ではなく type="system",
+    subtype="task_started"/"task_notification" で届く（設計書§4-1確定diffの想定と異なり、
+    トップレベルtype一致・parent_tool_use_id保持のフォールバック分岐は現行APIでは
+    到達しないが、将来のスキーマ変化に備えた防御として残す）。"""
     etype = evt.get("type")
 
     if etype == "system":
-        if evt.get("subtype") == "init":
+        subtype = evt.get("subtype")
+        if subtype == "init":
             return "[session] 開始 (model=%s)" % evt.get("model", "?")
+        if subtype == "task_started":
+            label = evt.get("subagent_type") or "subagent"
+            desc = evt.get("description") or evt.get("prompt") or ""
+            if desc:
+                return "[subagent:%s] 開始: %s" % (label, _brief(desc))
+            return "[subagent:%s] 開始" % label
+        if subtype == "task_notification":
+            summary = evt.get("summary")
+            if not summary:
+                return None
+            return "[subagent] 完了(%s): %s" % (
+                evt.get("status", "?"), _brief(summary))
         return None
 
     if etype == "stream_event":
