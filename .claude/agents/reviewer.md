@@ -26,7 +26,7 @@ Identify risks, regressions, and maintainability issues.
 - Review implementation against plan
 - Detect hidden side effects
 - Verify acceptance criteria
-- Verify every acceptance criterion is covered by the design's Phase table (docs/designs/{ID}.md 実装Phase)
+- Verify every acceptance criterion is covered by the design's Phase table (docs/designs/{ID}.md 実装Phase), except ACs explicitly marked exempt under the §4 exception (completion condition = reviewer's own confirmation act, no implementer work) — verify those directly by confirming the AC itself instead
 - Review test sufficiency
 - Identify rollback concerns
 
