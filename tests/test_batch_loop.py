@@ -232,6 +232,29 @@ class TestPreflight(BatchLoopBase):
         self.assertEqual(rc, 2)
         self.assertIn("P4", out)
 
+    def test_p4_over_limit_stops(self):
+        # 境界値3件目: 上限(3)超過（4件）でも停止する
+        self.add_ticket("KLK-101", status="todo")
+        for i, st in enumerate(("investigation_done", "design_done",
+                                "implementation_done", "test_passed")):
+            self.add_ticket("KLK-%03d" % (201 + i), status=st)
+        rc, out = self.dry("KLK-101")
+        self.assertEqual(rc, 2)
+        self.assertIn("P4", out)
+        self.assertIn("4 件", out)
+
+    def test_p3_unparseable_retry_counts(self):
+        # retry_counts が数値でないチケットは fail-closed で開始しない
+        path = self.add_ticket("KLK-101")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text.replace("tester_to_implementer: 0",
+                                 "tester_to_implementer: x", 1))
+        rc, out = self.dry("KLK-101")
+        self.assertEqual(rc, 2)
+        self.assertIn("retry_counts を解析できません", out)
+
     def test_p5_blocked_over_14_days_stops(self):
         self.add_ticket("KLK-101", status="todo")
         path = self.add_ticket("KLK-201", status="blocked")
@@ -248,6 +271,23 @@ class TestPreflight(BatchLoopBase):
         self.set_updated(path, (date.today() - timedelta(days=14)).isoformat())
         rc, out = self.dry("KLK-101")
         self.assertEqual(rc, 0, out)
+
+    def test_p5_blocked_unparseable_updated_stops(self):
+        # blocked チケットの updated が日付として解釈できなければ fail-closed
+        self.add_ticket("KLK-101", status="todo")
+        path = self.add_ticket("KLK-201", status="blocked")
+        self.set_updated(path, "unknown-date")
+        rc, out = self.dry("KLK-101")
+        self.assertEqual(rc, 2)
+        self.assertIn("P5", out)
+        self.assertIn("updated を解析できません", out)
+
+    def test_p6_spec_present_with_flag_warns_but_ok(self):
+        # SPEC.md が存在するのに --allow-missing-spec 指定 → 警告のみで開始可
+        self.add_ticket("KLK-101")
+        rc, out = self.dry("KLK-101", extra=("--allow-missing-spec",))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("警告 P6", out)
 
     def test_p6_missing_spec_stops(self):
         os.remove(os.path.join(self.root, "docs", "SPEC.md"))
@@ -341,6 +381,30 @@ class TestPromptAndCommand(unittest.TestCase):
         with self.assertRaises(SystemExit):
             batch_loop.parse_args(["--max-turns", "-1", "KLK-101"])
 
+    def test_nonpositive_budget_rejected(self):
+        with self.assertRaises(SystemExit):
+            batch_loop.parse_args(["--max-budget-usd", "0", "KLK-101"])
+
+    def test_nonpositive_timeout_rejected(self):
+        with self.assertRaises(SystemExit):
+            batch_loop.parse_args(["--timeout-min", "-5", "KLK-101"])
+
+    def test_suggest_command_line_defaults_omitted(self):
+        args = batch_loop.parse_args(["KLK-101", "KLK-102"])
+        line = batch_loop.suggest_command_line(args)
+        self.assertEqual(line, "python3 scripts/batch_loop.py KLK-101 KLK-102")
+
+    def test_suggest_command_line_includes_non_defaults(self):
+        args = batch_loop.parse_args(
+            ["--permission-mode", "plan", "--max-turns", "50",
+             "--continue-on-rework", "--allow-missing-spec", "KLK-101"])
+        line = batch_loop.suggest_command_line(args)
+        self.assertIn("--permission-mode plan", line)
+        self.assertIn("--max-turns 50", line)
+        self.assertIn("--continue-on-rework", line)
+        self.assertIn("--allow-missing-spec", line)
+        self.assertTrue(line.endswith("KLK-101"))
+
 
 # ---------------------------------------------------------------------------
 # 境界判定 1〜7（純粋関数として分岐・優先順位を網羅）
@@ -374,6 +438,25 @@ class TestJudgeBoundary(unittest.TestCase):
         j = self.judge(err="frontmatter を解析できません")
         self.assertTrue(j.stop)
         self.assertEqual(j.label, "状態判定不能")
+
+    def test_1_wins_over_unreadable_state(self):
+        # exit≠0 かつ状態判定不能 → 判定1（異常終了）が先に評価される
+        j = self.judge(exit_status=1, cur=None, err="読み取り失敗")
+        self.assertTrue(j.stop)
+        self.assertEqual(j.label, "異常終了")
+
+    def test_3_wins_over_5_and_6(self):
+        j = self.judge(cur=make_entry(loc="active", status="blocked", tti=1),
+                       body="# t\n\n## ブロッカー\nx\n\n## ログ\n",
+                       out=["KLK-102: active/todo → active/design_done"])
+        self.assertTrue(j.stop)
+        self.assertEqual(j.label, "blocked")
+
+    def test_4_wins_over_5_and_6(self):
+        j = self.judge(cur=make_entry(loc="active", status="design_done", rti=1),
+                       out=["KLK-102: active/todo → active/design_done"])
+        self.assertTrue(j.stop)
+        self.assertEqual(j.label, "未完了")
 
     def test_2_active_done_remains(self):
         j = self.judge(cur=make_entry(loc="active", status="done"))
@@ -418,6 +501,27 @@ class TestJudgeBoundary(unittest.TestCase):
         j = self.judge(cur=make_entry())
         self.assertFalse(j.stop)
         self.assertEqual(j.label, "done")
+
+
+# ---------------------------------------------------------------------------
+# 承認プロンプト confirm()（入力異常は fail-closed で不成立）
+# ---------------------------------------------------------------------------
+
+class TestConfirm(unittest.TestCase):
+    def test_accepts_y_variants(self):
+        for answer in ("y", "Y", "yes", "YES", " y "):
+            with mock.patch("builtins.input", return_value=answer):
+                self.assertTrue(batch_loop.confirm(), answer)
+
+    def test_declines_other_input(self):
+        for answer in ("", "n", "N", "no", "q", "yes!", "はい"):
+            with mock.patch("builtins.input", return_value=answer):
+                self.assertFalse(batch_loop.confirm(), answer)
+
+    def test_declines_on_eof(self):
+        # 非対話環境（stdin閉鎖）での EOF は承認不成立（fail-closed）
+        with mock.patch("builtins.input", side_effect=EOFError):
+            self.assertFalse(batch_loop.confirm())
 
 
 # ---------------------------------------------------------------------------
@@ -572,6 +676,47 @@ class TestBatchEndToEnd(BatchLoopBase):
             rc, out = self.run_main(["--claude-cmd", fake, "KLK-101"])
         self.assertEqual(rc, 0, out)
         self.assertEqual(len(self.calls()), 1)
+
+    def test_approval_eof_declines_fail_closed(self):
+        # stdin が閉じた非対話実行では承認不成立として何も起動しない
+        self.add_ticket("KLK-101")
+        fake = self.write_fake("finish_ok")
+        with mock.patch("builtins.input", side_effect=EOFError):
+            rc, out = self.run_main(["--claude-cmd", fake, "KLK-101"])
+        self.assertEqual(rc, 2)
+        self.assertIn("承認が得られなかった", out)
+        self.assertEqual(self.calls(), [])
+
+    def test_prestart_recheck_detects_external_retry_change(self):
+        # 境界判定5は (location, status) のみを見るため、他チケットの
+        # retry_counts だけが変わった場合は次チケット開始前の再確認
+        # （fail-closed）が受け皿となり停止する
+        self.add_ticket("KLK-101")
+        self.add_ticket("KLK-102")
+        scenario = (
+            'if [ "$TID" = "KLK-101" ]; then\n'
+            '  sed -i "s/tester_to_implementer: 0/tester_to_implementer: 1/" '
+            'tickets/active/KLK-102_t.md\n'
+            '  finish_ok\n'
+            'fi'
+        )
+        rc, out = self.batch("KLK-101", "KLK-102", scenario=scenario)
+        self.assertEqual(rc, 3)
+        self.assertIn("範囲外変更の検知", out)
+        self.assertIn("別セッションがチケットへ書き込んだ疑い", out)
+        self.assertEqual(len(self.calls()), 1)  # KLK-102 のセッションは起動しない
+
+    def test_timeout_terminates_child_and_stops(self):
+        # --timeout-min 超過で子プロセスを terminate し「異常終了」で停止する
+        self.add_ticket("KLK-101")
+        start = time.monotonic()
+        rc, out = self.batch("KLK-101", scenario="exec sleep 30",
+                             extra=("--timeout-min", "0.02"))
+        elapsed = time.monotonic() - start
+        self.assertEqual(rc, 3)
+        self.assertIn("異常終了", out)
+        self.assertIn("timeout-min", out)
+        self.assertLess(elapsed, 20)  # sleep 30 を待たずに終了していること
 
     def test_approval_summary_content(self):
         self.add_ticket("KLK-101")
