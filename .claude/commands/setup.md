@@ -69,7 +69,7 @@ FAILが1件以上あれば「構造チェックNG（テンプレート非準拠�
 | SPEC有り・`docs/spec-qa/<spec名>/` が無い | `/interrogate-spec docs/SPEC.md` でSPECを敵対的レビューする |
 | SPEC有り・`docs/spec-qa/<spec名>/` 有り・`QUESTIONS.yaml` に open または presented の質問が残る | `/interrogate-spec` で尋問を続行する |
 | 尋問済み（open/presented 0件）・SPEC §6画面一覧に「(未作成)」がある、または `docs/wireframes/` に対応HTMLが無い | `/wireframe-gen` でワイヤーフレームを生成する |
-| `tickets/active/` が0件（.gitkeepを除く） | `/plan-tickets` でSPECからチケットを一括起票し、`/start-loop` でループを開始する（連続実行は `/batch-loop` が外部駆動バッチを検証・案内）。単発の起票は `/new-ticket` |
+| `tickets/active/` が0件（.gitkeepを除く） | `/plan-tickets` でSPECからチケットを一括起票し、`/start-loop` でループを開始する（連続実行は `/batch-loop` が外部駆動バッチを検証・案内。対話セッション内の少数件連続実行は `/batch-loop-inline`）。単発の起票は `/new-ticket` |
 | activeチケットあり | `/start-loop` でループを再開する |
 
 ### 6. 結果報告
