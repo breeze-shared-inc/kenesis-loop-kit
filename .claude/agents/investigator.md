@@ -2,6 +2,7 @@
 name: investigator
 description: 既存コードの調査、依存関係のトレース、設定ファイルやAPI仕様の確認、影響範囲の特定、SPEC尋問(interrogate-spec)からの委譲調査に使用。コードや設定の変更は行わず、事実と推測を分離した根拠付き調査レポートのみを出力する。
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
+model: sonnet
 skills:
   - research-conventions
 ---

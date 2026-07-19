@@ -2,6 +2,7 @@
 name: tester
 description: implementer完了後のテスト実行、カバレッジ確認、エッジケース検証を担う。テストコードの追加・修正は行うが、プロダクションコードの変更は行わない。reviewerが参照する品質レポートを生成する。
 tools: Read, Write, Edit, Bash, Grep, Glob
+model: sonnet
 ---
 
 # Tester Agent Rules
