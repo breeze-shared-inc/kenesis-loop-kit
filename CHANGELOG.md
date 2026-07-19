@@ -6,6 +6,18 @@ Kenesis Loop Kitのすべての変更はこのファイルに記録されます�
 
 ---
 
+## [Unreleased]
+
+### Added
+- バッチ外部駆動スクリプト `scripts/batch_loop.py`（1チケット=1セッション）: チケットごとに `claude -p "/start-loop {ID}"` を新規ヘッドレスセッションで逐次起動し、セッション境界でチケットファイルの状態を検査して前進・停止を判定する（完了判定はファイル状態が正: done/に `status: done`。終了コードは異常検出の補助）。プリフライトP1〜P9（linked worktree検出・ID一意存在・status検証・in_progress上限・14日blocked排除・SPEC存在または `--allow-missing-spec`・claude CLI実行可能性・status/retry_countsスナップショット・done/件数警告）を機械化し、違反は開始前に一括表示して停止。実行前の承認サマリへのy/N応答が旧バッチ事前承認の実体（`--yes` でスキップ可）。停止条件（境界判定）は異常終了（exit≠0/timeout）・active/残存done・blocked（リトライ上限超過を包含・ブロッカー本文表示）・未完了status・範囲外チケット変化・差し戻し増分（既定停止・`--continue-on-rework` で人間が明示緩和可）で、正常完了時のみ次チケットへ進み最終チケット後は必ず停止する。暴走ガードは `--max-turns 200` 既定・`--max-budget-usd`・`--timeout-min`。stdlibのみ・fail-closed（hooksのfail-open規約とは逆・人間実行の監督ツール）・tickets/読み取り専用（単一ライター原則の維持）。終了コード 0/1/2/3/130。設計は `docs/designs/KLK-001.md`
+- `tests/test_batch_loop.py`（59テスト）: プリフライトP1〜P9・境界判定1〜7の分岐と優先順位・駆動プロンプト組立・フラグ伝播・fail-closed（`_ticket_lib` import失敗・frontmatter解析不能）・SIGINT時の子プロセスterminateを検証。claude起動は `--claude-cmd` へのフェイク実行ファイル注入で代替し、CI・テストで実claudeを起動しない
+- ヘッドレスCLI挙動の実測記録（2026-07-19・claude CLI v2.1.215）: PreToolUse `ask` はヘッドレスで自動deny（ハングなし）／正常完了・deny多発は exit 0・`--max-turns` 到達は exit 1／Stop hookの `decision: "block"` は `-p` でも機能（境界判定2〜4は代替ではなく防御の重複）／`--max-turns` は `--help` 非掲載の隠しオプションだが機能する（将来削除時は初回セッションでAPI消費なしに即停止・回避は `--max-turns 0`）。docs/designs/KLK-001.md §4 と docs/batch-loop.md に記録
+
+### Changed
+- **`/batch-loop` の役割を「セッション内での連続ループ実行」から「プリフライト検証（`--dry-run`）と実行コマンドラインの案内」へ変更（後方非互換）**: バッチ本体は人間がターミナルで `python3 scripts/batch_loop.py {ID列}` を実行する外部駆動方式（1チケット=1セッション）となり、単一セッションへのサブエージェントレポート蓄積によるトークン累積を解消。コマンドはNeverで「セッション内で `claude -p` を起動しない」「`--dry-run` 以外を実行しない（`--yes` での承認代行も禁止）」を明示
+- `docs/batch-loop.md` をバッチ外部駆動ガイドへ全面改訂: 旧→新セマンティクスの写像表（差し戻し即停止→セッション境界停止を含む）・プリフライト・停止条件・フラグ・終了コード・ヘッドレス実測記録・「実行中は同リポジトリで対話セッションを開かない」（二重ライター防止）を掲載。旧・セッション内手動テンプレート方式は非推奨（トークン累積）として1段落の言及に縮小（テンプレートはGitヒストリ参照）
+- CLAUDE.md スラッシュコマンド一覧の `/batch-loop` 行と、ポリシー表「バッチ連続実行の事前承認」行を新方式へ更新（定義の正は docs/batch-loop.md のまま・実行責任者=人間 + scripts/batch_loop.py・本文セクションの追加なし）。`start-loop.md`・`plan-tickets.md`・`setup.md` の `/batch-loop` 誘導文、README（ディレクトリツリーへ scripts/ 追加・コマンド表・使用例）も追随
+
 ## [1.7.0] - 2026-07-12
 
 ### Added

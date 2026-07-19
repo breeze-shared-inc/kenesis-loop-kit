@@ -17,7 +17,7 @@
 | `/wireframe-gen` | SPECの画面一覧からワイヤーフレーム(docs/wireframes/)を生成する | SCR-ID/モード（省略可） |
 | `/plan-tickets` | SPECを基に開発をチケットへ分割し、承認を経て一括起票する | spec-path（省略可） |
 | `/start-loop` | ループを開始・再開する | チケットID（省略可） |
-| `/batch-loop` | 複数チケットを承認ゲートで止めずに連続ループさせる | チケットID列（2件以上・実行順） |
+| `/batch-loop` | 外部駆動バッチ（scripts/batch_loop.py・1チケット1セッション）のプリフライト検証と実行コマンドライン案内 | チケットID列（2件以上・実行順） |
 | `/new-ticket` | チケットを新規作成する | タイトル（必須） |
 | `/improvement-loop` | 改善ループを起動する | チケットID 差し戻し先（省略可） |
 | `/rollback` | 承認後に問題が発覚したチケットをロールバックする | チケットID（必須） コミットハッシュ（省略可） |
@@ -172,7 +172,7 @@ CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は�
 | Git運用規約（ブランチ・コミット・機密確認） | implementer.md / tester.md Git Rules | implementer / tester | - |
 | worktree並行作業（コードのみ分離・チケットはメインツリー一本化） | docs/worktree-policy.md | 人間 + implementer / orchestrator | implementer.md Git Rules 運用ルール / orchestrator.md Responsibilities / 本ファイル Git運用規約（ポインタ） |
 | ロールバック手順 | rollback.md | /rollback | _ticket_lib.py LEGAL_TRANSITIONS（done→implementation_done） |
-| バッチ連続実行の事前承認 | docs/batch-loop.md | /batch-loop | batch-loop.md 手順・制約 |
+| バッチ連続実行の事前承認 | docs/batch-loop.md | 人間 + scripts/batch_loop.py（/batch-loopは検証・案内） | batch-loop.md 手順・Never / スクリプト承認プロンプト・停止条件 |
 | Kitからの切り離し（clone導入時の.git再初期化） | setup.md 手順1 | /setup | setup.md Never（.git削除の明示承認・Kit本体除外） |
 | リポジトリ可視性の.gitignoreプリセット | .gitignore.public / .private + setup.md 手順2 | /setup | - |
 | プロジェクト略称の確定 | 本ファイル チケットID採番 | /setup / new-ticket | setup.md 手順4 / new-ticket.md 手順1 |
