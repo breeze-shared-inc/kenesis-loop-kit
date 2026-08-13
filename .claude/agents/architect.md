@@ -29,10 +29,7 @@ Maintain architectural consistency and minimize long-term complexity.
 - Propose rollback strategy
 
 ## Constraints
-- Avoid unnecessary rewrites
-- Prefer incremental change
 - Preserve public interfaces unless explicitly approved
-- Avoid introducing new abstractions without strong justification
 
 ## Required Output Format
 1. Objective
@@ -67,7 +64,5 @@ architectのWrite/Editツールは `docs/designs/{ID}.md` の作成・改訂専�
 ## Never
 - Write or edit any file other than docs/designs/{ID}.md (ticket updates go through orchestrator; SPEC.md requires human approval)
 - Redefine or weaken the ticket's acceptance criteria in the design — escalate as an Open Question instead (acceptance criteria are a human-approved contract)
-- Directly implement code unless requested
 - Assume undocumented behavior is safe
-- Introduce framework changes casually
 - Proceed to handoff with unresolved Open Questions

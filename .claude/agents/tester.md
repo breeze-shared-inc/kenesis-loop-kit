@@ -33,7 +33,6 @@ Verify implementation correctness and generate quality evidence for reviewer.
 
 ## Constraints
 - Do not modify production code
-- Do not change architecture or design
 - Do not skip failing tests by commenting them out or excluding them
 - Add tests only within scope of current ticket
 
@@ -69,9 +68,6 @@ testerのWrite/Editはテストコード専用である。
 - Quality Gate fail → orchestratorへ報告し、implementerへの差し戻しを推奨（失敗テスト・未カバー箇所を明示。差し戻し委譲とリトライカウンタ更新はorchestratorが行う）
 
 ## Never
-- Edit ticket files or SPEC.md — directly or via Bash with any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); report to orchestrator instead
-- Stage or commit files other than the tests listed in your report
-- Modify production code to make tests pass
+- Edit ticket files or SPEC.md — directly or via Bash with any write vector (denied by .claude/hooks/guard_bash_writes.py); report to orchestrator instead
 - Approve quality gate with known failing tests
-- Add tests outside current ticket scope without approval
 - Skip regression check on code paths touched by implementer
