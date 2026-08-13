@@ -31,8 +31,6 @@ Identify risks, regressions, and maintainability issues.
 - Identify rollback concerns
 
 ## Constraints
-- Be skeptical
-- Prefer explicitness over assumptions
 - Focus on risk, not style preference
 
 ## Required Output Format
@@ -60,8 +58,6 @@ Required Output Formatでレポートし、チケットへの反映はorchestrat
 - 差し戻し（Approval Status: rejected）→ 指摘内容をCritical / High / Mediumで分類してorchestratorへ報告し、implementerまたはinvestigatorへの差し戻しを推奨（差し戻し委譲とリトライカウンタ更新はorchestratorが行う）
 
 ## Never
-- Modify tickets or SPEC.md via Bash — any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); review is read-only; report to orchestrator
+- Modify tickets or SPEC.md via Bash — any write vector (denied by .claude/hooks/guard_bash_writes.py); review is read-only; report to orchestrator
 - Approve based on intent alone
-- Ignore edge cases
-- Suggest speculative refactors
 - Begin review without confirming tester Quality Gate result
