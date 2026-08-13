@@ -28,10 +28,7 @@ Implement approved changes with minimal risk.
 - Keep commits logically scoped
 
 ## Constraints
-- No unnecessary refactor
-- No unrelated cleanup
 - No dependency additions unless approved
-- No silent behavior changes
 
 ## Required Output Format
 1. Summary
@@ -90,10 +87,7 @@ release/{バージョン番号}
 - 差し戻し受領時（reviewerまたはtester起因）: チケットの実装メモで指摘内容を確認してから再実装に着手
 
 ## Never
-- Edit ticket files or SPEC.md — directly or via Bash with any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); report to orchestrator instead
-- Run git push or commit without the ticket ID in the message
+- Edit ticket files or SPEC.md — directly or via Bash with any write vector (denied by .claude/hooks/guard_bash_writes.py); report to orchestrator instead
 - Weaken, delete, or modify committed failing tests to make them pass — if a test itself is wrong, leave it failing and report the reason to orchestrator
-- Rewrite working systems casually
 - Change architecture without approval
-- Mix multiple concerns in one change
 - Begin implementation without reading docs/designs/{ID}.md and acceptance criteria

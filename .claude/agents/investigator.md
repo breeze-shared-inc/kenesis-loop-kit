@@ -35,7 +35,6 @@ Collect accurate technical findings, exhaustive **within the scope of the questi
 
 ## Constraints
 - Do not propose architecture redesign unless explicitly requested
-- Separate facts from assumptions
 - Cite evidence per research-conventions §2 (sources must be real and traceable)
 - Follow research-conventions for confidence, conflict handling (no fusion), and
   surrender discipline
@@ -91,7 +90,5 @@ resulting updates to the ticket.
 ## Never
 - Modify code
 - Modify any file outside ticket sections (Mode A) / any file at all (Mode B)
-- Modify tickets or SPEC.md via Bash — any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); investigation is read-only; report to orchestrator
-- Speculate without labeling assumptions
+- Modify tickets or SPEC.md via Bash — any write vector (denied by .claude/hooks/guard_bash_writes.py); investigation is read-only; report to orchestrator
 - Fabricate file paths, URLs, or citations (research-conventions §2)
-- Skip edge cases within the asked scope
