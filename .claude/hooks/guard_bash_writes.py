@@ -64,12 +64,18 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ticket_lib as lib  # noqa: E402
 
-# 保護対象に言及するコマンドで許可する先頭コマンド（読み取り・移動系）
+# 保護対象に言及するコマンドで許可する先頭コマンド（読み取り・移動系）。
+# いずれも「引数だけでファイルを書き込む経路を持たない」ことが条件。
+# xargs（任意コマンド実行）・tee/cp/rm/touch（書き込み系）・
+# python3/perl/ruby/node（任意実行。READONLY_SCRIPTS の例外のみ）は載せない。
 ALLOWED_HEADS = {
     "ls", "cat", "head", "tail", "wc", "grep", "diff", "sort", "uniq",
     "stat", "file", "basename", "dirname", "test", "[",
+    "cd",    # ディレクトリ移動のみ。追加検査なしの無条件許可
+    "pwd", "echo", "cut", "tr", "nl", "rev", "realpath", "readlink",
     "mv",    # active/ ↔ done/ の移動・アーカイブは設計上 Bash mv が正規手段
-    "sed",   # -i（in-place）が無ければ読み取り
+    "sed",   # -i（in-place）・w コマンドが無ければ読み取り
+    "awk",   # プログラム内リダイレクト（print > file）が無ければ読み取り
     "find",  # -exec / -delete 等が無ければ読み取り
     "git",   # サブコマンドを別途判定
 }
@@ -95,10 +101,13 @@ OPERATORS = ("<<<", ">>", "<<", "&&", "||", ";;", "|&", "&>", ">&", "<&",
              "<>", ">|", ";", "&", "|", "<", ">")
 OPERATOR_CHARS = ";&|<>"
 SUBST_PLACEHOLDER = "__KLK_SUBST__"
+MAX_SUBST_DEPTH = 3
 
 PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/]+")
 ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9]*=")
 VAR_REF_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?")
+SED_INPLACE_SHORT_RE = re.compile(r"-[A-Za-z]*i")     # -i / -i.bak / -ni / -si.bak
+SED_WRITE_RE = re.compile(r"(?:^|[;{}\s/])[wW]\s+\S")  # s/a/b/w FILE ・ /re/w FILE
 # 字句解析に失敗した入力向けの簡易判定でのみ使う（degraded_violation）
 LEGACY_REDIRECT_RE = re.compile(r"\d?>>?\s*([^\s;|&]+)")
 
@@ -354,9 +363,17 @@ def segment_violation(words):
         return None
     if head not in ALLOWED_HEADS:
         return "'%s' は許可されていません" % head
-    if head == "sed" and any(t == "-i" or t.startswith("-i.") or
-                             t == "--in-place" for t in words):
-        return "sed -i（in-place編集）は許可されていません"
+    if head == "sed":
+        if any(SED_INPLACE_SHORT_RE.match(t) or t == "--in-place" or
+               t.startswith("--in-place=") for t in words):
+            return "sed -i（in-place編集）は許可されていません"
+        # スクリプト引数に埋め込まれた書き出し（s/a/b/w FILE ・ /re/w FILE）
+        if any(SED_WRITE_RE.search(t) for t in words if is_guarded_token(t)):
+            return "sed の w コマンド（ファイル書き出し）は許可されていません"
+    if head == "awk" and any(">" in t or "|" in t
+                             for t in words if is_guarded_token(t)):
+        # 正常な読み取りでは保護対象は素のパス引数として現れる（> も | も含まない）
+        return "awk のプログラム内リダイレクト（print > file 等）は許可されていません"
     if head == "find" and any(t in FIND_WRITE_FLAGS for t in words):
         return "find の書き込み系フラグ（-exec/-delete等）は許可されていません"
     if head == "git":
@@ -426,12 +443,21 @@ def degraded_violation(command):
     return segment_violation(words)
 
 
-def find_violation(command):
+def find_violation(command, depth=0):
     """コマンド全体の違反理由を返す。問題なければ None。"""
     try:
-        tokens, _ = lex(command)
+        tokens, substs = lex(command)
     except ValueError:
         return degraded_violation(command)
+    for inner in substs:
+        if depth >= MAX_SUBST_DEPTH:
+            # 深追いはせず保守側で打ち切る（$($($(rm ...))) を抜け道にしないため）
+            if is_guarded_token(inner):
+                return "深いコマンド置換の内側で保護対象パスに言及しています"
+            continue
+        reason = find_violation(inner, depth + 1)
+        if reason:
+            return reason
     guarded_vars = set()
     for statement in split_statements(tokens):
         record_assignments(statement, guarded_vars)

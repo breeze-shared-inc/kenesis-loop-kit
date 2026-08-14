@@ -209,6 +209,66 @@ class TestGuardBashWrites(unittest.TestCase):
         # T-D2: 未閉じクォートでも読み取りは誤denyしない
         self.assertAllow("cat tickets/active/APP-001.md #'")
 
+    # --- KLK-010: ホワイトリスト追加コマンド（AC3・AC2） ---
+
+    def test_cd_allow(self):
+        # T-A2: cd は書き込み経路を持たないため無条件許可
+        self.assertAllow("cd tickets/active && ls")
+
+    def test_awk_field_separator_allow(self):
+        # T-A3a: -F'|' は保護対象に言及しないため内蔵リダイレクトと区別できる
+        self.assertAllow(
+            "awk -F'|' '{print $1}' tickets/active/APP-001.md")
+
+    def test_added_readonly_heads_allow(self):
+        # T-A6: AC3 で追加した読み取り・変換系（入力リダイレクトを含む）
+        self.assertAllow("pwd && cut -d: -f2 tickets/active/APP-001.md")
+        self.assertAllow("tr -d '\\r' < tickets/active/APP-001.md")
+        self.assertAllow("echo tickets/active/APP-001.md")
+
+    # --- KLK-010: sed in-place の別表記・スクリプト内書き出し（AC4） ---
+
+    def test_sed_long_inplace_with_suffix_deny(self):
+        # T-B4a: --in-place=SUFFIX
+        self.assertDeny(
+            "sed --in-place=.bak 's/a/b/' tickets/active/APP-001.md")
+
+    def test_sed_combined_short_flags_deny(self):
+        # T-B4b: 短フラグ結合 -ni
+        self.assertDeny("sed -ni 's/a/b/p' tickets/active/APP-001.md")
+
+    def test_sed_write_command_deny(self):
+        # T-SEDW: sed の w コマンド（スクリプト引数に埋め込まれた書き出し）
+        self.assertDeny("sed 's/a/b/w tickets/active/APP-001.md' in.md")
+        self.assertDeny("sed '/x/w docs/SPEC.md' in.md")
+
+    # --- KLK-010: awk のプログラム内リダイレクト（D1） ---
+
+    def test_awk_internal_redirect_deny(self):
+        # T-AWK: whitelist 追加で新規の false negative を作らない
+        self.assertDeny(
+            "awk '{print > \"tickets/active/APP-001.md\"}' x.md")
+        self.assertDeny("awk '{print > \"docs/SPEC.md\"}' x.md")
+
+    # --- KLK-010: コマンド置換・プロセス置換の再帰評価（AC4） ---
+
+    def test_command_substitution_deny(self):
+        # T-B6a: $(...) とバッククォート
+        self.assertDeny("ls $(rm tickets/active/APP-001.md)")
+        self.assertDeny("ls `rm tickets/active/APP-001.md`")
+
+    def test_nested_command_substitution_deny(self):
+        # T-NEST: 深さ2の入れ子
+        self.assertDeny("ls $(echo $(rm tickets/active/APP-001.md))")
+
+    def test_process_substitution_deny(self):
+        # T-PROC: プロセス置換
+        self.assertDeny("cat <(rm tickets/active/APP-001.md)")
+
+    def test_readonly_command_substitution_allow(self):
+        # 置換の内側が読み取りだけなら誤denyしない
+        self.assertAllow("ls $(cat tickets/active/APP-001.md)")
+
 
 if __name__ == "__main__":
     unittest.main()
