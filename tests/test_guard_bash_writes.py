@@ -269,6 +269,55 @@ class TestGuardBashWrites(unittest.TestCase):
         # 置換の内側が読み取りだけなら誤denyしない
         self.assertAllow("ls $(cat tickets/active/APP-001.md)")
 
+    # --- KLK-010 (tester追加): 置換再帰の上限境界（AC4・設計§3-4 item5） ---
+
+    def test_deep_substitution_cutoff_denies_even_readonly(self):
+        # 深さ上限(3)に到達すると、内側が読み取り専用でも「言及があればdeny」の
+        # 保守側判定へ切り替わる（設計書§3-4「上限到達時は保守側で打ち切り」）。
+        # ネスト4段（$(echo $(echo $(echo $(cat ...))))）で上限に到達することを固定する。
+        self.assertDeny(
+            "ls $(echo $(echo $(echo $(cat tickets/active/APP-001.md))))")
+
+    def test_nested_substitution_within_cutoff_readonly_allow(self):
+        # ネスト3段（上限未到達）では通常どおり再帰評価され、読み取りのみなら allow。
+        self.assertAllow(
+            "ls $(echo $(echo $(cat tickets/active/APP-001.md)))")
+
+    def test_mixed_process_and_command_substitution_deny(self):
+        # $(...) の内側にプロセス置換が入れ子になった場合も再帰評価される
+        self.assertDeny("ls $(cat <(rm tickets/active/APP-001.md))")
+
+    # --- KLK-010 (tester追加): ANSI-Cクォート $'...' は保守側に倒れる（設計書 R4） ---
+
+    def test_ansi_c_quoted_path_with_write_head_deny(self):
+        # $'...' は shlex が bash と同一には解釈しないが、書き込み系headの判定
+        # (head not in ALLOWED_HEADS) は変わらず deny される
+        self.assertDeny("rm $'tickets/active/APP-001.md'")
+
+    # --- KLK-010 (tester追加): 未クォートの#はコメントとして特別扱いしない（設計書§3-5） ---
+
+    def test_unquoted_comment_with_write_after_semicolon_deny(self):
+        # bashでは `#` 以降は行末までコメントとして無視されるが、本hookは
+        # クォート外の `#` を特別扱いしないため、コメント中の `;` を実際の
+        # ステートメント区切りとして処理し、コメント内の書き込みコマンドを
+        # 保守的にdenyする（設計書§3-5で明示的に許容された副作用）
+        self.assertDeny("echo hi # ; rm tickets/active/APP-001.md")
+
+    # --- KLK-010 (tester追加): git の他の非許可サブコマンド（AC6回帰・checkout以外） ---
+
+    def test_git_rm_ticket_deny(self):
+        self.assertDeny("git rm tickets/active/APP-001.md")
+
+    def test_git_restore_ticket_deny(self):
+        self.assertDeny("git restore tickets/active/APP-001.md")
+
+    # --- KLK-010 (tester追加): printf は意図的に ALLOWED_HEADS 未追加（README注記と対） ---
+
+    def test_printf_not_whitelisted_deny(self):
+        # §4-1: printf はREADMEのローカル動作確認の注記と対であるため意図的に
+        # ALLOWED_HEADS へ追加しない。将来誤って追加されないことを固定する。
+        self.assertDeny("printf '%s' tickets/active/APP-001.md")
+
 
 if __name__ == "__main__":
     unittest.main()
