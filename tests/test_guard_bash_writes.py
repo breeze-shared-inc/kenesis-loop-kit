@@ -68,6 +68,26 @@ LEGACY_DENY_COMMANDS = [
     "awk 'END{system(\"rm tickets/active/APP-001.md\")}' /dev/null",
     "awk 'BEGIN{system(\"rm docs/SPEC.md\")}'",
     "awk 'BEGIN{system(\"rm docs/SPEC.md\")}' #'",
+    # --- C4（続き）: awk の間接関数呼び出し @f(...) 経由の system() 実行 ---
+    # gawk 4.1.2 以降は関数名を文字列変数から供給できるため、system( という
+    # リテラルがコマンド文字列に現れない。旧版は awk を ALLOWED_HEADS に
+    # 持たず全 awk を deny していたため old=deny である
+    "awk 'BEGIN{f=\"system\"; @f(\"rm tickets/active/APP-001.md\")}'",
+    "awk 'BEGIN{cmd=\"system\"; @cmd(\"rm tickets/active/APP-001.md\")}'",
+    "awk 'BEGIN{f=\"system\"; @f(\"rm docs/SPEC.md\")}'",
+    "awk -v f=system 'BEGIN{@f(\"rm tickets/active/APP-001.md\")}'",
+    "awk 'BEGIN{f=\"system\"; @ f(\"rm tickets/active/APP-001.md\")}'",
+    "awk -e'BEGIN{f=\"system\"; @f(\"rm docs/SPEC.md\")}'",
+    "awk --source='BEGIN{f=\"system\"; @f(\"rm docs/SPEC.md\")}'",
+    "awk 'BEGIN{f=\"system\"; @f(\"rm docs/SPEC.md\")}' #'",
+    "cd tickets/active && awk 'BEGIN{f=\"system\"; @f(\"rm APP-001.md\")}'",
+    # degraded mode の空白分割で `@ f(` / `system (` が2語に割れる形
+    # （gawk は `@` の直後と関数名の直後の空白をどちらも受け付ける）
+    "awk -v f=system 'BEGIN{@ f(\"rm tickets/active/APP-001.md\")}' #'",
+    "awk -v f=system 'BEGIN{@ f(\"rm docs/SPEC.md\")}' #'",
+    "awk 'BEGIN{system (\"rm docs/SPEC.md\")}' #'",
+    "cd tickets/active; awk -v f=system "
+    "'BEGIN{@ f(\"rm APP-001.md\")}' #'",
     # --- H2: 保護対象を作業ディレクトリとする相対パス書き込み ---
     "cd tickets/active && awk '{print > \"APP-001.md\"}' in.txt",
     "cd tickets/active && awk '{printf \"x\" >> \"APP-001.md\"}' in.txt",
@@ -696,6 +716,77 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertDeny(
             "cd tickets/active && "
             "awk 'BEGIN{f=\"system\"; @f(\"rm APP-001.md\")}'")
+
+    # --- KLK-010 AW-6: 間接関数呼び出しの回避形（implementer 追加） ---
+    #
+    # AW-6 は `@\s*IDENT\s*\(` という**構文の存在**を証拠にする（値は追跡
+    # しない＝AW-2／AW-3 と同じ設計思想）。本ホストの GNU Awk 5.2.1 で実際に
+    # 間接呼び出しが成立するのは `@f(` と `@ f(`（`@` の直後の空白／タブのみ
+    # 許容）であり、`@f (`（識別子と `(` の間の空白）・`@"system"(`・
+    # `@(f g)(`（連結）・`@a[1](`・`@ENVIRON["X"](` はいずれも構文エラーに
+    # なることを実測で確認した。正規表現は成立形より広く取っている（保守側）。
+    def test_awk_indirect_call_evasion_forms_deny(self):
+        # `@` の直後の空白・タブ（どちらも gawk で実際に system() が走る）
+        self.assertDeny(
+            "awk 'BEGIN{f=\"system\"; @ f(\"rm docs/SPEC.md\")}'")
+        self.assertDeny(
+            "awk 'BEGIN{f=\"system\"; @\tf(\"rm docs/SPEC.md\")}'")
+        # 変数名は任意（`f` 決め打ちの検出になっていないこと）
+        self.assertDeny(
+            "awk 'BEGIN{_x9=\"system\"; @_x9(\"rm docs/SPEC.md\")}'")
+        # プログラムを -e / --source で与える形（オプションが安全でも同じ語に
+        # AW-5／AW-6 を当てるため素通りしない）
+        self.assertDeny(
+            "awk -e'BEGIN{f=\"system\"; @f(\"rm docs/SPEC.md\")}'")
+        self.assertDeny(
+            "awk --source='BEGIN{f=\"system\"; @f(\"rm docs/SPEC.md\")}'")
+        self.assertDeny(
+            "awk -e 'BEGIN{f=\"system\"; @f(\"rm docs/SPEC.md\")}'")
+        # degraded mode（字句解析できない入力）でも同じ規則が効く
+        self.assertDeny(
+            "awk 'BEGIN{f=\"system\"; @f(\"rm docs/SPEC.md\")}' #'")
+        # 保護対象 cwd 下（保護対象パスがリテラルに現れない）
+        self.assertDeny("cd tickets/done && "
+                        "awk 'BEGIN{f=\"system\"; "
+                        "@f(\"truncate -s 0 APP-001.md\")}'")
+        self.assertDeny("cd tickets/active; "
+                        "awk 'BEGIN{f=\"system\"; @f(\"rm APP-001.md\")}' #'")
+
+    def test_awk_exec_syntax_split_across_words_deny(self):
+        # degraded mode は空白分割のため `@ f(` が `@` と `f(` に、`system (` が
+        # `system` と `(` に割れて語単位では一致しない。プログラム内に `;` が
+        # 無ければステートメント分割にも掛からないため（束縛は `-v` で外から
+        # 与える）、外部コマンド実行の検出（AW-5・AW-6）は空白結合した
+        # テキストへも当てる。gawk は `@` の直後と関数名の直後の空白を
+        # どちらも受け付けるため、これらの形は実際に system() を実行する
+        self.assertDeny("awk -v f=system "
+                        "'BEGIN{@ f(\"rm tickets/active/APP-001.md\")}' #'")
+        self.assertDeny(
+            "awk -v f=system 'BEGIN{@ f(\"rm docs/SPEC.md\")}' #'")
+        self.assertDeny("awk 'BEGIN{system (\"rm docs/SPEC.md\")}' #'")
+        self.assertDeny("cd tickets/active; awk -v f=system "
+                        "'BEGIN{@ f(\"rm APP-001.md\")}' #'")
+
+    def test_awk_at_sign_without_indirect_call_allow(self):
+        # AW-6 が `@` を含むだけの読み取り awk を巻き添えにしないことを固定する。
+        # 一致には「`@` + 識別子 + `(`」の3点が揃う必要がある
+        self.assertAllow(
+            "awk '/user@example.com/ {print}' tickets/active/APP-001.md")
+        self.assertAllow(
+            "awk '/@(id|title)/ {print}' tickets/active/APP-001.md")
+        self.assertAllow(
+            "awk -v m=a@b.example '$1==m {print}' tickets/active/APP-001.md")
+        # 空白結合したテキストへの当て込みが語をまたいだ偶然の一致を
+        # 生まないこと（`@` の後がパス区切り・`$` なら一致しない）
+        self.assertAllow(
+            "awk '/@/ {print}' 'report (1).md' tickets/active/APP-001.md")
+        self.assertAllow(
+            "awk -v s=@ '$1==s {print}' tickets/active/APP-001.md")
+        self.assertAllow("awk '{print $1}' tickets/active/APP-001.md #'")
+        self.assertAllow(
+            "awk 'function p(x){print x} {p($1)}' tickets/active/APP-001.md")
+        self.assertAllow('awk \'BEGIN{PROCINFO["sorted_in"]="cmp"} {print}\' '
+                         "tickets/active/APP-001.md")
 
     def test_awk_safe_options_allow(self):
         # T-AWKOK: AW-4／AW-5 が読み取り awk を誤denyしないことを固定する。

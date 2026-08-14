@@ -50,8 +50,8 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
     ものには追加規則を持つ（sed の -i 全表記と w／W コマンド、awk の
     プログラム内リダイレクト・変数束縛・**オプション**〔既知の読み取り専用
     オプションのホワイトリスト。未知の `-` 始まりの語は deny〕・**system() /
-    @load / @include**、sort の -o／--output、uniq の第2位置引数、find の
-    書き込み系フラグ、git のサブコマンド）。
+    @load / @include**・**間接関数呼び出し `@f(...)`**、sort の -o／--output、
+    uniq の第2位置引数、find の書き込み系フラグ、git のサブコマンド）。
 
   書き込み先オペランドと cwd — 語のうち**構文的に書き込み先と確定している**もの
     （出力リダイレクトの直後の語・sort の -o の値・uniq の第2位置引数）だけを
@@ -100,7 +100,12 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
     現れる形（`sed 's/a w b/c/'`）／mawk・BWK awk 固有のオプション（`-W ...` 等）と
     gawk の未収載オプション（`-I`・`--trace`・`-O`・`-L`）は AWK_SAFE_FLAGS /
     AWK_SAFE_VALUE_FLAGS に無いため deny になる（安全性を確認してから収載する）／
-    awk の文字列リテラル内に `system(` と書いただけの形／degraded mode では
+    awk の文字列リテラル内に `system(` と書いただけの形／awk の**間接関数
+    呼び出し構文 `@f(...)`**（ユーザー定義関数を間接呼び出しする読み取り専用の
+    用途も deny になる。関数名が文字列変数から供給されるため呼び先が
+    組み込みの system() かユーザー定義関数かを静的に判別できない。なお
+    `PROCINFO["sorted_in"]="cmp"` のような関数名文字列の受け渡しは `@f(` 構文を
+    使わないため影響しない）／degraded mode では
     awk のプログラムが空白で分割されるため、`-` で始まる断片（`{print -$2}` の
     `-$2}`）がオプションと見なされて deny になる（旧版は degraded の awk を
     常に deny していたため回帰ではない。正常に字句解析できる同じコマンドは
@@ -269,6 +274,16 @@ AWK_SAFE_VALUE_FLAGS = ("-F", "-v", "-e",
 # awk の外部コマンド実行・拡張読み込み。文字列リテラル除去**前**の語に当てる
 # （除去後より必ず広く一致する＝保守側）。
 AWK_EXEC_RE = re.compile(r"\bsystem\s*\(|@(?:load|include)\b")
+
+# gawk（4.1.2 以降）の**間接関数呼び出し** `@varname(...)`。関数名を文字列変数から
+# 供給できるため、`system(` というリテラルがコマンド文字列に現れないまま
+# system() を呼び出せる（`awk 'BEGIN{f="system"; @f("rm ...")}'`）。値の中身は
+# 追跡せず**構文の存在**を証拠とする（AW-2 の変数束縛・AW-3 の出力構文と同じ
+# 設計思想。エイリアスや文字列連結で容易に迂回できるため値の追跡は防御にならない）。
+# 本ホストの GNU Awk 5.2.1 で成立するのは `@f(` と `@ f(`（`@` の直後の空白のみ許容）
+# であり、`@f (` / `@"system"(` / `@(f g)(` / `@a[1](` / `@ENVIRON["X"](` は
+# いずれも構文エラーになる（実測）。正規表現は成立形より広く取る（保守側）。
+AWK_INDIRECT_CALL_RE = re.compile(r"@\s*[A-Za-z_][A-Za-z_0-9]*\s*\(")
 
 # 字句解析に失敗した入力向けの簡易判定でのみ使う（degraded_violation）。
 # 旧版（KLK-010 以前）の find_violation と同じ分割を再現するためのもので、
@@ -685,11 +700,35 @@ def awk_violation(words, cwd=""):
         if AWK_EXEC_RE.search(word):
             return ("awk の system() / @load / @include（外部コマンド実行・"
                     "拡張読み込み）は許可されていません")
+        # AW-6: gawk の間接関数呼び出し `@f(...)`。関数名を文字列変数から供給
+        # できるため `system(` のリテラルが現れないまま system() を呼べる。
+        # AW-2／AW-3 と同じく「構文の存在」を証拠とする（値は追跡しない）
+        if AWK_INDIRECT_CALL_RE.search(word):
+            return ("awk の間接関数呼び出し（@f(...) 形式）は許可されていません"
+                    "（関数名を変数経由で供給して system() を呼び出せるため）")
         # AW-3: print/printf の出力リダイレクト。文字列リテラルを除去してから
         # 見るため printf "%s|%s" は一致しない
         if AWK_OUTPUT_RE.search(AWK_STRING_RE.sub('""', word)):
             return ("awk のプログラム内リダイレクト（print > file 等）は"
                     "許可されていません")
+    # AW-5／AW-6 を空白結合したテキストへも当てる。degraded mode は空白分割の
+    # ため `@ f(` が `@` と `f(` に、`system (` が `system` と `(` に割れて
+    # 語単位では一致しない（`awk -v f=system 'BEGIN{@ f("rm ...")}' #'` は
+    # プログラム内に `;` が無いためステートメント分割にも掛からない）。
+    # gawk は `@` の直後と関数名の直後の空白をどちらも受け付けるため、
+    # 語をまたぐ形も実際に system() を実行できる（実測）。結合は証拠テキストを
+    # 増やす操作であり判定を緩める方向には働かない。オプション判定（AW-4）と
+    # 出力構文（AW-3）は結合テキストへ当てない（結合により語の意味が変わり
+    # 誤denyになりうるため、外部コマンド実行の検出に限って適用する）
+    args = head_args(words)
+    if len(args) > 1:
+        joined = " ".join(args)
+        if AWK_EXEC_RE.search(joined):
+            return ("awk の system() / @load / @include（外部コマンド実行・"
+                    "拡張読み込み）は許可されていません")
+        if AWK_INDIRECT_CALL_RE.search(joined):
+            return ("awk の間接関数呼び出し（@f(...) 形式）は許可されていません"
+                    "（関数名を変数経由で供給して system() を呼び出せるため）")
     return None
 
 
