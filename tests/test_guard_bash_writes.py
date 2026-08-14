@@ -148,6 +148,67 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIsNone(_util.hook_output(out))
 
+    # --- KLK-010: クォート内の演算子で誤denyしない（AC1・AC2） ---
+
+    def test_regex_alternation_in_quotes_allow(self):
+        # T-A1: 正規表現の選択子 `|` をシェルパイプと誤認しない
+        self.assertAllow(
+            "grep -E '^(id|title):' tickets/active/APP-001.md")
+
+    def test_heredoc_pattern_in_quotes_allow(self):
+        # T-A3b: クォート内の `<<` をヒアドキュメントと誤認しない
+        self.assertAllow("grep -c '<<EOF' tickets/active/APP-001.md")
+
+    def test_unrelated_trailing_redirect_allow(self):
+        # T-A3c: 保護対象に触れない後段リダイレクトを巻き添えにしない
+        self.assertAllow(
+            'cat tickets/active/APP-001.md && echo x > "$TMP"')
+
+    def test_redirect_char_in_quotes_allow(self):
+        # T-A4: クォート内の `>` をリダイレクトと誤認しない
+        self.assertAllow("grep -c '>' tickets/active/APP-001.md")
+
+    def test_comment_char_in_quotes_allow(self):
+        # T-A5: クォート内の `#` をコメントと誤認しない
+        self.assertAllow("grep -n '#' tickets/active/APP-001.md")
+
+    def test_sed_read_only_flags_allow(self):
+        # T-SED-N: in-place 判定が -n を誤爆しない
+        self.assertAllow("sed -n '1,10p' tickets/active/APP-001.md")
+
+    # --- KLK-010: すり抜けを塞ぐ（AC4・AC5） ---
+
+    def test_sed_inplace_empty_suffix_deny(self):
+        # T-B4c: `-i''`（空サフィックス直結）
+        self.assertDeny("sed -i'' 's/a/b/' tickets/active/APP-001.md")
+
+    def test_interpreter_oneliner_spec_deny(self):
+        # T-B5: 1トークンへ埋め込まれたリテラルパス
+        self.assertDeny(
+            "python3 -c \"open('docs/SPEC.md','w').write('x')\"")
+
+    def test_path_traversal_via_claude_dir_deny(self):
+        # T-B6b: 正規化後に .claude 成分が消えるパストラバーサル
+        self.assertDeny(
+            "rm ./tickets/active/../../.claude/../tickets/active/APP-001.md")
+
+    # --- KLK-010: 非該当パスで誤denyしない（R3） ---
+
+    def test_similar_but_unguarded_paths_allow(self):
+        # T-FP: ホワイトリスト外の head で検証する（判定差が出る形）
+        self.assertAllow("python3 -c \"print('MYSPEC.md')\"")
+        self.assertAllow("cp docs/SPEC.md.bak /tmp/x")
+
+    # --- KLK-010: degraded mode（字句解析できない入力） ---
+
+    def test_unparsable_write_deny(self):
+        # T-D1: 未閉じクォートでも書き込みは素通りさせない
+        self.assertDeny("rm tickets/active/APP-001.md #'")
+
+    def test_unparsable_read_allow(self):
+        # T-D2: 未閉じクォートでも読み取りは誤denyしない
+        self.assertAllow("cat tickets/active/APP-001.md #'")
+
 
 if __name__ == "__main__":
     unittest.main()
