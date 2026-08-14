@@ -11,6 +11,52 @@ def payload(command):
     return {"tool_name": "Bash", "tool_input": {"command": command}}
 
 
+# 旧版（KLK-010 マージ前の develop）が deny していたコマンド集合。
+# 本 hook の改修でこれらが allow へ転じることは保護の後退に当たる。
+#
+# 維持規律:
+#   1. 本リストは削除禁止。項目を消す＝保護を弱めることであり、受け入れ条件
+#      「既存の deny 対象を回帰させない」の再定義に当たる。
+#   2. ALLOWED_HEADS を増やす／判定を緩める変更を行うときは、設計書
+#      docs/designs/KLK-010.md §3-9 の書き込みベクタ棚卸し表へ行を追加し、
+#      対応する回帰ケースを本リストへ追加すること。
+#   3. 「旧版が deny していた集合」に限らず、将来見つかった穴を塞いだ時点で
+#      本リストへ追加してよい。
+LEGACY_DENY_COMMANDS = [
+    # --- 既存の書き込みベクタ ---
+    "echo x > tickets/active/APP-001.md",
+    "cat note.md >> tickets/active/APP-001.md",
+    "sed -i 's/todo/done/' tickets/active/APP-001.md",
+    "echo x | tee tickets/active/APP-001.md",
+    "find tickets/active -name '*.md' -exec sed -i 's/a/b/' {} \\;",
+    "find tickets/active -name '*.md' | xargs rm",
+    "cat > tickets/active/APP-001.md <<EOF\nx\nEOF",
+    "git checkout -- tickets/active/APP-001.md",
+    "cat draft.md > docs/SPEC.md",
+    # --- コマンド置換（置換の結果が外側の書き込みへ供給される形） ---
+    "rm $(echo docs/SPEC.md)", "rm `echo docs/SPEC.md`",
+    "sed -i 's/a/b/' $(echo tickets/active/APP-001.md)",
+    "cp /tmp/e $(echo docs/SPEC.md)", "truncate -s 0 $(echo docs/SPEC.md)",
+    "cat a | tee $(echo docs/SPEC.md)",
+    "echo x > $(echo docs/SPEC.md)", 'echo x > "$(echo docs/SPEC.md)"',
+    "echo x > `echo docs/SPEC.md`",
+    "rm $(basename docs/SPEC.md)", "rm $(ls tickets/active/APP-001.md)",
+    # --- degraded mode（字句解析できない入力） ---
+    "ls ; rm docs/SPEC.md #'",
+    "cat README.md ; rm docs/SPEC.md # it's stale",
+    "cat x; sed -i 's/a/b/' tickets/active/APP-001.md #'",
+    "cat x && tee tickets/active/APP-001.md #'",
+    "cd .; rm docs/SPEC.md #'", "ls x; cp /tmp/e docs/SPEC.md #'",
+    # --- awk の変数代入形 ---
+    "awk '{print > f}' f=docs/SPEC.md in.txt",
+    "awk -v f=docs/SPEC.md '{print > f}' in.txt",
+    "awk '{print > f}' f=tickets/active/APP-001.md in.txt",
+    # --- cd + 相対パス ---
+    "cd tickets/active && rm APP-001.md",
+    "cd tickets/done && echo x > APP-001.md",
+]
+
+
 class TestGuardBashWrites(unittest.TestCase):
     def run_guard(self, data):
         rc, out, _ = _util.run_script(_util.GUARD_BASH, data)
@@ -459,6 +505,15 @@ class TestGuardBashWrites(unittest.TestCase):
     def test_spaced_subshell_read_allow(self):
         # T-M45b: 読み取りは allow のまま
         self.assertAllow("( cat tickets/active/APP-001.md )")
+
+    # --- KLK-010 Phase 5: 固定リスト回帰ガード（設計書§4-7・D5） ---
+
+    def test_legacy_deny_commands_all_still_deny(self):
+        # T-LEGACY: 旧版が deny していた集合が allow へ転じていないことを
+        # 一括で固定する。git・ネットワークに依存しない hermetic な回帰ガード
+        for command in LEGACY_DENY_COMMANDS:
+            with self.subTest(command=command):
+                self.assertDeny(command)
 
 
 if __name__ == "__main__":
