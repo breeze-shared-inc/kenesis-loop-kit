@@ -22,6 +22,15 @@ Kenesis Loop Kitのすべての変更はこのファイルに記録されます�
 - `docs/batch-loop.md`冒頭に外部駆動`/batch-loop`とセッション内`/batch-loop-inline`の使い分け指針（比較表）を追加し、末尾「旧方式（セッション内手動テンプレート）について」節を`/batch-loop-inline`への案内へ差し替え
 - `.claude/agents/orchestrator.md`「改善ループ（人間の判断後）」テーブル直下に、バッチ実行（`/batch-loop`・`/batch-loop-inline`）時はバッチ開始時の事前承認がチケット間の前進判断を代行し、テーブルの判断が適用されるのはバッチ終了後であることを明記する注記を追加（テーブル自体は再定義しない）
 - CLAUDE.md スラッシュコマンド一覧へ `/batch-loop-inline` 行を追加し、ポリシー表「バッチ連続実行の事前承認」行を外部駆動/セッション内の2コマンド体制に更新（本文セクションの追加なし）。`batch-loop.md`・`start-loop.md`・`plan-tickets.md`・`setup.md`・READMEに`/batch-loop-inline`への相互参照を追記
+- `guard_bash_writes.py` の判定粒度を3レイヤ（L1字句／L2パス／L3構文）へ再構成し、`.claude/hooks/README.md` の該当行を更新。ホワイトリスト `ALLOWED_HEADS` に書き込み経路を持たないコマンド（`cd`〔無条件許可〕・`pwd`・`echo`・`cut`・`tr`・`awk`・`nl`・`rev`・`realpath`・`readlink`）を追加した。`printf` は README「ローカルでの動作確認」の注記（printf はホワイトリスト外）と対であるため意図的に追加していない。`_ticket_lib.is_ticket`（厳密判定）との基準不統一は目的の違いによる意図的なものとしてモジュール docstring に明記した（統一の検討は別チケット）
+
+### Fixed
+- `guard_bash_writes.py` の誤deny（false positive）とすり抜け（false negative）を解消: 素朴な `command.split("|")`・空白トークン分割・部分文字列判定をやめ、シェルの字句解析を尊重する方式（クォート状態を追跡してクォート外の演算子だけを最長一致で切り出し、語チャンクは `shlex.split(posix=True)` でクォート解除）へ置き換えた。両者は同一根因の表裏であり一体で修正している。設計は `docs/designs/KLK-010.md`
+  - **誤denyの解消**: 正規表現の選択子（`grep -E '^(id|title):' tickets/...`）をシェルパイプと誤認しない／`cd`・`awk` 等がホワイトリスト不在で弾かれない／クォート内の `<<`（`grep -c '<<EOF' ...`）をヒアドキュメントと誤認しない／保護対象に触れない後段リダイレクト（`cat tickets/... && echo x > "$TMP"`）を巻き添えにしない（出力リダイレクトをステートメント単位で判定し、変数先は同一コマンド内で保護対象を代入された変数のときのみ deny）
+  - **すり抜けの解消**: sed in-place の全表記（`-i` / `-i.bak` / `-ni` / `-si.bak` / `--in-place` / `--in-place=SUFFIX` / `-i''`）／インタプリタワンライナー内のリテラルパス（`python3 -c "open('docs/SPEC.md','w')..."`。パス検出をトークン境界に依存しない候補抽出＋basename 完全一致へ変更し、`MYSPEC.md`・`SPEC.md.bak` では誤denyしない）／コマンド置換・プロセス置換の内側（`ls $(rm tickets/...)`・バッククォート・`<(...)`。深さ上限3で再帰し上限到達時は保守側で打ち切り）／パストラバーサルによる `.claude` 除外の悪用（`os.path.normpath` による正規化を除外判定より先に適用）
+  - **副作用の予防**: `awk` をホワイトリストへ加えたことで新たに素通りしうる awk のプログラム内リダイレクト（`awk '{print > "docs/SPEC.md"}'`）を同時に検出対象へ追加し、同型の sed の `w` コマンド（`s/a/b/w FILE`）へも一般化した
+  - 未閉じクォート等で字句解析できない入力は allow せず、素朴なトークン分割による簡易判定へ落とす（`rm tickets/... #'` を素通りさせないため）。内部エラーでの fail-open は従来どおり
+  - `tests/test_guard_bash_writes.py` に回帰テスト23件を追加（既存29件は無変更・スイート全体 293件 → 316件）
 
 ## [1.7.0] - 2026-07-12
 
