@@ -565,6 +565,151 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertDeny("X=1 ( cd tickets/active && rm APP-001.md )")
         self.assertDeny("( X=1 cd tickets/active && rm APP-001.md )")
 
+    # --- KLK-010 Phase 6: awk のオプション次元（C3・設計書§3-6 D1 AW-4） ---
+    #
+    # gawk の `-i inplace`（in-place 拡張）は `>` も `|` も変数束縛も使わずに
+    # ファイルを書き換える＝受け入れ条件が名指しする `sed -i` の awk 版。
+    # 同じ次元に外部コード読み込み（-f/-i/-l/-E/-D）とファイル書き出し
+    # （-o/-p/-d）が並ぶため、規則はブラックリストではなく
+    # **既知の読み取り専用オプションのホワイトリスト**（未知は deny）とする。
+
+    def test_awk_inplace_extension_deny(self):
+        # T-C3a: gawk の in-place 拡張（tickets / SPEC.md の双方）
+        self.assertDeny(
+            "awk -i inplace '{gsub(/a/,\"b\")}1' tickets/active/APP-001.md")
+        self.assertDeny("awk -i inplace '{gsub(/a/,\"b\")}1' docs/SPEC.md")
+
+    def test_awk_inplace_extension_all_spellings_deny(self):
+        # T-C3b: 結合形・長形式・長形式=VALUE
+        self.assertDeny("awk -iinplace '{print}' tickets/active/APP-001.md")
+        self.assertDeny(
+            "awk --include inplace '{print}' tickets/active/APP-001.md")
+        self.assertDeny(
+            "awk --include=inplace '{print}' tickets/active/APP-001.md")
+
+    def test_awk_inplace_extension_degraded_deny(self):
+        # T-C3c: degraded mode（空白分割でも -i は独立語として残る）
+        self.assertDeny(
+            "awk -i inplace '{print}' tickets/active/APP-001.md #'")
+
+    def test_awk_external_code_loading_options_deny(self):
+        # T-C3d: 外部コード読み込み次元（プログラム本体・ライブラリ・拡張）。
+        # -f は束縛が無くても deny になる（旧版は awk 自体が非ホワイトリスト
+        # だったため deny だった＝ホワイトリスト追加で開いた穴）
+        self.assertDeny("awk -f prog.awk tickets/active/APP-001.md")
+        self.assertDeny("awk -E prog.awk tickets/active/APP-001.md")
+        self.assertDeny("awk -l lib '{print}' tickets/active/APP-001.md")
+        self.assertDeny("awk -D tickets/active/APP-001.md")
+
+    def test_awk_file_writing_options_deny(self):
+        # T-C3e: ファイル書き出し次元（--pretty-print / --profile /
+        # --dump-variables の短形式）
+        self.assertDeny("awk -o prof.out '{print}' tickets/active/APP-001.md")
+        self.assertDeny("awk -d '{print}' tickets/active/APP-001.md")
+        self.assertDeny("awk -p '{print}' tickets/active/APP-001.md")
+
+    # --- KLK-010 Phase 6: awk の外部コマンド実行次元（C4・AW-5） ---
+
+    def test_awk_system_call_deny(self):
+        # T-C4a: system() は > も | も含まないため AW-1 に掛からない
+        self.assertDeny(
+            "awk 'BEGIN{system(\"rm tickets/active/APP-001.md\")}'")
+        self.assertDeny(
+            "awk '{system(\"rm tickets/active/APP-001.md\")}' /dev/null")
+        self.assertDeny(
+            "awk 'END{system(\"rm tickets/active/APP-001.md\")}' /dev/null")
+
+    def test_awk_system_call_other_commands_deny(self):
+        # T-C4b: rm 以外の外部コマンド・文字列連結でも deny
+        self.assertDeny("awk 'BEGIN{system(\"cp /tmp/e docs/SPEC.md\")}'")
+        self.assertDeny("awk 'BEGIN{system(\"truncate -s 0 docs/SPEC.md\")}'")
+        self.assertDeny("awk 'BEGIN{system(\"rm \" \"docs/SPEC.md\")}'")
+
+    def test_awk_system_call_degraded_deny(self):
+        # T-C4c: degraded mode（空白分割でも先頭語に system( が残る）
+        self.assertDeny("awk 'BEGIN{system(\"rm docs/SPEC.md\")}' #'")
+
+    def test_awk_load_directive_deny(self):
+        # T-C4d: gawk の @load / @include（拡張・ライブラリ読み込み指令）
+        self.assertDeny(
+            "awk '@load \"inplace\"; {print}' tickets/active/APP-001.md")
+
+    def test_awk_safe_options_allow(self):
+        # T-AWKOK: AW-4／AW-5 が読み取り awk を誤denyしないことを固定する。
+        # ホワイトリストの収載漏れは可視な誤denyとして現れるため、代表形を
+        # ここで固定しておく
+        self.assertAllow("awk --posix '{print $1}' tickets/active/APP-001.md")
+        self.assertAllow("awk -- '{print}' tickets/active/APP-001.md")
+        self.assertAllow("awk -v n=3 '{print $n}' tickets/active/APP-001.md")
+        self.assertAllow("awk --field-separator='|' '{print $1}' "
+                         "tickets/active/APP-001.md")
+        self.assertAllow(
+            "awk 'BEGIN{OFS=\"|\"} {print $1}' tickets/active/APP-001.md")
+
+    # --- KLK-010 Phase 6: 保護対象 cwd の相対パス書き込み（H2・設計書§3-8） ---
+    #
+    # 旧版は cd を ALLOWED_HEADS に持たなかったため、cd を含むコマンドは
+    # 後続に何が来ても deny されていた。cd を無条件許可にした結果、保護対象を
+    # 作業ディレクトリとする相対パス書き込みが新たに素通りするようになった。
+    # 書き込み先オペランドを取り出せる形（sort -o / uniq 第2引数 /
+    # リダイレクト）は cwd と結合して判定し、取り出せない形（awk の
+    # print > "REL" / sed の w REL）は構文の存在そのものを証拠とする。
+
+    def test_cwd_guarded_awk_internal_redirect_deny(self):
+        # T-H2a: awk 4形（リテラル・追記・-v 束縛・位置引数束縛）
+        self.assertDeny(
+            "cd tickets/active && awk '{print > \"APP-001.md\"}' in.txt")
+        self.assertDeny("cd tickets/active && "
+                        "awk '{printf \"x\" >> \"APP-001.md\"}' in.txt")
+        self.assertDeny("cd tickets/active && "
+                        "awk -v f=APP-001.md '{print > f}' in.txt")
+        self.assertDeny("cd tickets/active && "
+                        "awk '{print > f}' f=APP-001.md in.txt")
+
+    def test_cwd_guarded_sed_write_command_deny(self):
+        # T-H2b: sed の w コマンド（正常経路と degraded の2形）。
+        # degraded は空白分割で `w FILE` が2語に割れるため、保護対象 cwd 下では
+        # 空白結合したテキストも併せて評価する
+        self.assertDeny("cd tickets/active && sed 's/a/b/w APP-001.md' in.md")
+        self.assertDeny("cd tickets/active; sed 's/a/b/w APP-001.md' in.md #'")
+
+    def test_cwd_guarded_sort_and_uniq_output_deny(self):
+        # T-H2c: sort -o / uniq 第2位置引数（cwd 相対形）
+        self.assertDeny("cd tickets/active && sort -o APP-001.md in.md")
+        self.assertDeny("cd tickets/active && uniq in.md APP-001.md")
+
+    def test_cwd_guarded_substitution_inner_write_deny(self):
+        # T-H2d: 置換の内側方向へ cwd が伝播すること（$(...)・バッククォート・
+        # プロセス置換の3形）
+        self.assertDeny("cd tickets/active && ls $(rm APP-001.md)")
+        self.assertDeny("cd tickets/active && ls `rm APP-001.md`")
+        self.assertDeny("cd tickets/active && cat <(rm APP-001.md)")
+
+    def test_sort_and_uniq_output_absolute_path_deny(self):
+        # T-H2e: cwd 相対だけ deny・絶対パスは allow という非対称を残さない
+        self.assertDeny("sort -o tickets/active/APP-001.md in.md")
+        self.assertDeny("sort --output=docs/SPEC.md x.md")
+        self.assertDeny("sort -otickets/active/APP-001.md in.md")
+        self.assertDeny("uniq in.md tickets/active/APP-001.md")
+
+    def test_cwd_guarded_read_commands_allow(self):
+        # T-H2f: 保護対象 cwd 下の読み取りを新たに誤denyしないことを固定する
+        # （本改訂で最も重要な allow 固定。head レベルの一律 deny 案を却下した
+        # 根拠であり、日常の読み取り操作がここに集まる）
+        self.assertAllow("cd tickets/active && awk '{print $1}' APP-001.md")
+        self.assertAllow(
+            "cd tickets/active && awk -F'|' '{print $1}' APP-001.md")
+        self.assertAllow("cd tickets/active && sed -n '1,5p' APP-001.md")
+        self.assertAllow("cd tickets/active && sort APP-001.md")
+        self.assertAllow("cd tickets/active && uniq APP-001.md")
+        self.assertAllow("cd tickets/active && uniq -f 2 APP-001.md")
+        self.assertAllow("sort -o /tmp/out tickets/active/APP-001.md")
+
+    def test_find_fprint0_flag_deny(self):
+        # T-FIND0: FIND_WRITE_FLAGS の列挙漏れ（-fprint0）。フラグ名で判定する
+        # ためパスに依存しない
+        self.assertDeny("find tickets/active -name '*.md' -fprint0 /tmp/x")
+
     # --- KLK-010 Phase 5: 固定リスト回帰ガード（設計書§4-7・D5） ---
 
     def test_legacy_deny_commands_all_still_deny(self):

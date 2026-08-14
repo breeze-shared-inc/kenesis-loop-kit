@@ -122,8 +122,27 @@ ALLOWED_GIT_SUBCOMMANDS = {
     "mv", "add", "commit", "diff", "log", "show", "status", "blame",
 }
 
+# 保護対象ディレクトリを作業ディレクトリとする状況でも許可できる先頭コマンド。
+# 収載の条件は「書き込み経路が無い」「書き込み判定がパスに依存しない
+# （フラグ名・サブコマンド名で決まる）」「書き込み判定が cwd 対応済み」の
+# いずれかを満たすこと（設計書 docs/designs/KLK-010.md §3-9「cwd 安全性」列）。
+# ALLOWED_HEADS へ head を追加しても、ここへ収載しない限り保護対象 cwd 下では
+# deny になる。棚卸しの忘れが deny 側へ落ちるフォールセーフ既定であり、
+# 現行の ALLOWED_HEADS は全て収載済みのためこの規則は今は到達しない。
+CWD_SAFE_HEADS = {
+    "ls", "cat", "head", "tail", "wc", "grep", "diff", "sort", "uniq",
+    "stat", "file", "basename", "dirname", "test", "[", "cd", "pwd", "echo",
+    "cut", "tr", "nl", "rev", "realpath", "readlink", "mv", "sed", "awk",
+    "find", "git",
+}
+
 FIND_WRITE_FLAGS = {"-exec", "-execdir", "-ok", "-okdir", "-delete",
-                    "-fprint", "-fprintf", "-fls"}
+                    "-fprint", "-fprint0", "-fprintf", "-fls"}
+
+# sort / uniq の出力先オペランド抽出に使う（引数だけで書き込める経路）。
+SORT_OUTPUT_FLAGS = ("-o", "--output")
+UNIQ_VALUE_FLAGS = ("-f", "-s", "-w",
+                    "--skip-fields", "--skip-chars", "--check-chars")
 
 # 保護対象(SPEC.md等)を引数に取っても許可する読み取り専用スクリプト。
 # いずれも読み取りのみで書き込み経路を持たないことを確認済み
@@ -171,6 +190,29 @@ SED_WRITE_RE = re.compile(r"(?:^|[;{}\s/])[wW]\s+\S")  # s/a/b/w FILE ・ /re/w 
 AWK_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=(.*)$", re.S)
 AWK_STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')       # 文字列リテラル（除去用）
 AWK_OUTPUT_RE = re.compile(r"\b(?:print|printf)\b[^;}\n]*(?:>>?|\|)")
+
+# awk の「読み取りだけで完結する」オプション（値を取らない形）。**ホワイトリスト**
+# であり、ここに無い `-` 始まりの語は未知＝deny 側へ落ちる（is_safe_awk_flag）。
+# GNU Awk 5.2.1 の `awk --help` と突き合わせて収載した。意図的に載せていないのは
+# 外部コード（プログラム・ライブラリ・拡張）を読み込む -f / -i / -l / -E / -D と、
+# ファイルへ書き出す -o / -p / -d である（-i inplace は gawk の in-place 拡張＝
+# sed -i の awk 版）。
+AWK_SAFE_FLAGS = {
+    "-", "--",
+    "-b", "-c", "-C", "-g", "-h", "-n", "-M", "-N", "-P", "-r", "-s", "-S",
+    "-t", "-V",
+    "--characters-as-bytes", "--traditional", "--compat", "--copyright",
+    "--gen-pot", "--help", "--non-decimal-data", "--bignum",
+    "--use-lc-numeric", "--posix", "--re-interval", "--no-optimize",
+    "--sandbox", "--lint-old", "--version", "--lint",
+}
+# 値を取る安全なオプション（-FVALUE / -F VALUE / --long=VALUE / --long VALUE）。
+AWK_SAFE_VALUE_FLAGS = ("-F", "-v", "-e",
+                        "--field-separator", "--assign", "--source", "--lint")
+
+# awk の外部コマンド実行・拡張読み込み。文字列リテラル除去**前**の語に当てる
+# （除去後より必ず広く一致する＝保守側）。
+AWK_EXEC_RE = re.compile(r"\bsystem\s*\(|@(?:load|include)\b")
 
 # 字句解析に失敗した入力向けの簡易判定でのみ使う（degraded_violation）。
 # 旧版（KLK-010 以前）の find_violation と同じ分割を再現するためのもので、
@@ -471,6 +513,34 @@ def is_readonly_script_call(words):
     return False
 
 
+def cwd_is_guarded(cwd):
+    """作業ディレクトリ自体が保護対象配下か（相対パス書き込みの検出用）。"""
+    return bool(cwd) and _is_guarded_path(cwd)
+
+
+def guarded_write_target(target, cwd, substs=()):
+    """書き込み先オペランドが保護対象を指すか（cwd 相対も解決する）。
+
+    **構文的に書き込み先と確定しているオペランド**（出力リダイレクトの直後の語・
+    sort の -o の値・uniq の第2位置引数）にだけ適用する。任意の語へ適用すると
+    cwd と結合した結果が保護対象パターンに一致して誤denyになる
+    （_is_guarded_path("tickets/active/NR>1 {print}") は True になる）。
+    解決できない先（シェル変数・未解決プレースホルダ）は偽＝allow 方向。
+    絶対パスは os.path.join の性質で cwd を無視するため、cwd 外への書き込みは
+    allow のまま（`cd tickets/active && cat APP-001.md > /tmp/x.md`）。
+    """
+    if not target:
+        return False
+    target = expand_substs(target, substs).strip()
+    if not target or "$" in target or SUBST_PLACEHOLDER_RE.search(target):
+        return False
+    if is_guarded_token(target):
+        return True
+    if not cwd_is_guarded(cwd):
+        return False
+    return _is_guarded_path(os.path.normpath(os.path.join(cwd, target)))
+
+
 def awk_bindings(words):
     """awk の変数束縛の VALUE を列挙する（-v NAME=VALUE / -vNAME=VALUE /
     --assign NAME=VALUE / 位置引数 NAME=VALUE）。近似解析であり、オプションの
@@ -504,33 +574,114 @@ def awk_bindings(words):
     return values
 
 
-def awk_violation(words):
-    """awk セグメントの違反理由を返す（プログラム内リダイレクトと変数束縛）。"""
-    # 保護対象に言及する語そのものが > / | を含む（{print > "docs/SPEC.md"} 等）。
-    # 正常な読み取りでは保護対象は素のパス引数として現れる（> も | も含まない）
+def is_safe_awk_flag(word):
+    """awk のオプション語が「読み取りだけで完結する」既知の形か。
+
+    **未知のオプションは False（deny 方向）へ倒す。** gawk の -f / -i / -l / -E /
+    -D（外部プログラム・ライブラリ・拡張の読み込み）と -o / -p / -d（ファイルへの
+    書き出し）はここへ載せないことで自動的に deny になる。オプション次元は
+    man / --help で閉じた集合として列挙できるため、失敗方向は「安全な
+    オプションの収載漏れ＝可視な誤deny」であって「危険なオプションの
+    列挙漏れ＝黙ってすり抜け」ではない。
+    収載を増やすときは man / --help の説明にファイル書き込み・コード読み込みが
+    無いことを根拠として記録すること。迷うオプションは収載しない。
+    """
+    if word in AWK_SAFE_FLAGS:
+        return True
+    for flag in AWK_SAFE_VALUE_FLAGS:
+        if word == flag or word.startswith(flag + "="):
+            return True
+        if len(flag) == 2 and len(word) > 2 and word.startswith(flag):
+            return True  # -FVALUE / -vNAME=VALUE / -eTEXT の結合形
+    return False
+
+
+def awk_violation(words, cwd=""):
+    """awk セグメントの違反理由を返す（設計書 §3-6 D1 の AW-1〜AW-5）。
+
+    cwd が保護対象配下なら、プログラム内の出力リダイレクト・オプション・
+    外部コマンド実行の判定を「保護対象に言及していなくても」適用する
+    （相対パスで書き込む形は書き込み先オペランドを取り出せないため、
+    構文の存在そのものを証拠にする）。
+    """
+    # AW-1: 保護対象に言及する語そのものが > / | を含む（{print > "docs/SPEC.md"}
+    # 等）。正常な読み取りでは保護対象は素のパス引数として現れる
     if any(">" in t or "|" in t for t in words if is_guarded_token(t)):
         return "awk のプログラム内リダイレクト（print > file 等）は許可されていません"
-    # 保護対象パスを awk 変数へ束縛している（-v f=... / 位置引数 f=...）。
+    # AW-2: 保護対象パスを awk 変数へ束縛している（-v f=... / 位置引数 f=...）。
     # 参照側（print > f）まで追わないのは、エイリアス（g=f; print > g）で
     # 容易に迂回でき防御にならないため。束縛そのものを証拠とする
     if any(is_guarded_token(v) for v in awk_bindings(words)):
         return "awk の変数へ保護対象パスを束縛しています（-v / NAME=VALUE）"
-    # 保護対象に言及するセグメントで print/printf の出力リダイレクトを使う。
-    # 文字列リテラルを除去してから見るため printf "%s|%s" は一致しない
-    if mentions_guarded(words):
-        for word in head_args(words):
-            if AWK_OUTPUT_RE.search(AWK_STRING_RE.sub('""', word)):
-                return ("awk のプログラム内リダイレクト（print > file 等）は"
-                        "許可されていません")
+    # 以降は「保護対象に言及する awk」「保護対象を作業ディレクトリとする awk」
+    # に限って適用する（読み取り awk を誤denyしないためのゲート）
+    if not (mentions_guarded(words) or cwd_is_guarded(cwd)):
+        return None
+    for word in head_args(words):
+        # AW-4: 未知・危険なオプション（外部コード読み込み／ファイル書き出し）。
+        # gawk の `-i inplace` は sed -i と同じ in-place 書き込みになる
+        if word.startswith("-") and not is_safe_awk_flag(word):
+            return ("awk のオプション %s は許可されていません（外部プログラム・"
+                    "拡張の読み込みとファイル書き出しの経路になりうるため）"
+                    % display_text(word))
+        # AW-5: system() / @load / @include（外部コマンド実行・拡張読み込み）。
+        # 文字列リテラル除去**前**の語で判定する（保守側）
+        if AWK_EXEC_RE.search(word):
+            return ("awk の system() / @load / @include（外部コマンド実行・"
+                    "拡張読み込み）は許可されていません")
+        # AW-3: print/printf の出力リダイレクト。文字列リテラルを除去してから
+        # 見るため printf "%s|%s" は一致しない
+        if AWK_OUTPUT_RE.search(AWK_STRING_RE.sub('""', word)):
+            return ("awk のプログラム内リダイレクト（print > file 等）は"
+                    "許可されていません")
     return None
 
 
-def segment_violation(words, substs=()):
+def sort_output_operands(words):
+    """sort の出力先を列挙する（-o FILE / -oFILE / --output FILE / --output=FILE）。
+    """
+    operands, expect = [], False
+    for word in head_args(words):
+        if expect:
+            expect = False
+            operands.append(word)
+            continue
+        if word in SORT_OUTPUT_FLAGS:
+            expect = True
+        elif word.startswith("-o") and len(word) > 2:
+            operands.append(word[2:])
+        elif word.startswith("--output="):
+            operands.append(word[len("--output="):])
+    return operands
+
+
+def uniq_output_operand(words):
+    """uniq の第2位置引数（出力ファイル）を返す。無ければ空文字列。
+
+    -f/-s/-w とその長形式は値を取るため、位置引数の数え方を誤ると
+    `uniq -f 2 FILE` の `2` を第1位置引数と数えて FILE を出力先と誤認する。
+    """
+    positionals, expect = [], False
+    for word in head_args(words):
+        if expect:
+            expect = False
+        elif word in UNIQ_VALUE_FLAGS:
+            expect = True
+        elif word.startswith("-") and word != "-":
+            continue  # 結合形・その他のフラグ
+        else:
+            positionals.append(word)
+    return positionals[1] if len(positionals) > 1 else ""
+
+
+def segment_violation(words, substs=(), cwd=""):
     """パイプ区間（語リスト）単位の違反理由を返す。問題なければ None。
 
     words は未解決の語リスト。substs を与えると、sed / awk の追加規則を
     プレースホルダ解決後のテキストに対しても評価する（解決前の語も併せて
-    見るため、判定は deny 方向にのみ広がる）。
+    見るため、判定は deny 方向にのみ広がる）。cwd は「この区間を実行する時点の
+    作業ディレクトリ」（追跡不能なら None）。保護対象配下なら相対パスが
+    保護対象を指しうるため判定を強める。
     """
     head = head_of(words)
     if not head:
@@ -542,6 +693,12 @@ def segment_violation(words, substs=()):
         return None
     if head not in ALLOWED_HEADS:
         return "'%s' は許可されていません" % head
+    # フォールセーフ既定。現行の ALLOWED_HEADS は全て CWD_SAFE_HEADS へ
+    # 収載済みのため到達しないが、ALLOWED_HEADS へ追加したときに cwd 次元の
+    # 棚卸し忘れを deny 側へ倒すためにこの判定を置く
+    if cwd_is_guarded(cwd) and head not in CWD_SAFE_HEADS:
+        return ("保護対象ディレクトリを作業ディレクトリとする '%s' は"
+                "許可されていません" % head)
     words = list(words)
     expanded = expand_all(words, substs)
     variants = [words] if expanded == words else [words, expanded]
@@ -550,14 +707,31 @@ def segment_violation(words, substs=()):
         if any(SED_INPLACE_SHORT_RE.match(t) or t == "--in-place" or
                t.startswith("--in-place=") for t in flat):
             return "sed -i（in-place編集）は許可されていません"
-        # スクリプト引数に埋め込まれた書き出し（s/a/b/w FILE ・ /re/w FILE）
-        if any(SED_WRITE_RE.search(t) for t in flat if is_guarded_token(t)):
+        # スクリプト引数に埋め込まれた書き出し（s/a/b/w FILE ・ /re/w FILE）。
+        # 保護対象を作業ディレクトリとする場合は書き出し先が相対パスになり
+        # 保護対象パターンに一致しないため、語の言及フィルタを外して
+        # 「w コマンドの存在」そのものを証拠とする（保守側）
+        strict = cwd_is_guarded(cwd)
+        if strict:
+            # degraded は空白分割のため `w FILE` が2語に割れる。
+            # 保護対象 cwd 下に限り空白結合したテキストも併せて評価する
+            flat = flat + [" ".join(words)]
+        if any(SED_WRITE_RE.search(t) for t in flat
+               if strict or is_guarded_token(t)):
             return "sed の w コマンド（ファイル書き出し）は許可されていません"
     if head == "awk":
         for variant in variants:
-            reason = awk_violation(variant)
+            reason = awk_violation(variant, cwd)
             if reason:
                 return reason
+    if head == "sort":
+        for operand in sort_output_operands(words):
+            if guarded_write_target(operand, cwd, substs):
+                return "sort の -o / --output（出力先指定）は許可されていません"
+    if head == "uniq":
+        if guarded_write_target(uniq_output_operand(words), cwd, substs):
+            return ("uniq の第2引数（出力ファイル）への書き込みは"
+                    "許可されていません")
     if head == "find" and any(t in FIND_WRITE_FLAGS for t in words):
         return "find の書き込み系フラグ（-exec/-delete等）は許可されていません"
     if head == "git":
@@ -582,27 +756,6 @@ def next_cwd(words, cwd):
             SUBST_PLACEHOLDER_RE.search(operand)):
         return None  # cd / cd - / cd "$D" / cd $(...) は追跡不能
     return os.path.normpath(os.path.join(cwd or ".", operand))
-
-
-def cwd_is_guarded(cwd):
-    """作業ディレクトリ自体が保護対象配下か（相対パス書き込みの検出用）。"""
-    return bool(cwd) and _is_guarded_path(cwd)
-
-
-def cwd_redirect_violation(target, cwd):
-    """保護対象配下を作業ディレクトリとする相対パスへの出力リダイレクトか。
-
-    `cd tickets/active && echo x > APP-001.md` のように、cd で作業ディレクトリを
-    移すとリダイレクト先が保護対象パターンに一致しなくなる経路を塞ぐ。
-    解決できない先（変数・コマンド置換）は allow 方向へ倒す。
-    """
-    if not cwd_is_guarded(cwd):
-        return None
-    if "$" in target or SUBST_PLACEHOLDER_RE.search(target):
-        return None
-    if not _is_guarded_path(os.path.normpath(os.path.join(cwd, target))):
-        return None  # 絶対パス・cwd の外へ抜ける相対パスは対象外
-    return "リダイレクト（> %s）による書き込み" % display_text(target)
 
 
 def record_assignments(statement, guarded_vars, substs=()):
@@ -630,15 +783,14 @@ def redirect_violation(statement, guarded_vars, substs=(), cwd=""):
         if "&" in value and (target.isdigit() or target == "-"):
             continue  # 2>&1 等の fd 複製
         # リダイレクト先はコマンドではないためパイプ区間の検査から外れる。
-        # 置換の結果が書き込み先になる形（> $(echo docs/SPEC.md)）はここで解決する
+        # 置換の結果が書き込み先になる形（> $(echo docs/SPEC.md)）はここで解決する。
+        # guarded_write_target は cwd 相対のリダイレクト先も解決する
+        # （`cd tickets/active && echo x > APP-001.md`）
         resolved = expand_substs(target, substs)
-        if is_guarded_token(resolved):
+        if (is_guarded_token(resolved) or
+                any(n in guarded_vars for n in VAR_REF_RE.findall(resolved)) or
+                guarded_write_target(target, cwd, substs)):
             return "リダイレクト（> %s）による書き込み" % display_text(target)
-        if any(name in guarded_vars for name in VAR_REF_RE.findall(resolved)):
-            return "リダイレクト（> %s）による書き込み" % display_text(target)
-        reason = cwd_redirect_violation(target, cwd)
-        if reason:
-            return reason
     return None
 
 
@@ -661,13 +813,13 @@ def statement_violation(statement, guarded_vars, substs=(), cwd=""):
     if any(k == "op" and op_kind(v) == "heredoc" for k, v in statement):
         return "ヒアドキュメントによる書き込みの可能性"
     for segment_words in pipe_segments(statement):
-        reason = segment_violation(segment_words, substs)
+        reason = segment_violation(segment_words, substs, cwd)
         if reason:
             return reason
     return None
 
 
-def degraded_violation(command):
+def degraded_violation(command, cwd=""):
     """字句解析できない入力向けのフォールバック。
 
     旧版（KLK-010 以前）の find_violation と同じ判定要素をすべて持つ:
@@ -676,6 +828,11 @@ def degraded_violation(command):
     セグメント判定。唯一の意図的な差分は「リダイレクト先が `$` /
     バッククォートを含むだけで deny する」規則を復活させないこと
     （無関係な後段リダイレクトの巻き添えを解消するため）。
+
+    cwd は呼び出し元（find_violation）が持つ作業ディレクトリで、ローカルの
+    cwd 追跡の初期値になる（置換の内側が degraded になった場合にも効かせる）。
+    保護対象 cwd 下の書き込み判定は segment_violation / awk_violation の内側に
+    あるため、degraded は cwd を渡すだけで同じ保護を得る（判定を複製しない）。
     """
     if not mentions_guarded(command.split()):
         return None
@@ -687,7 +844,6 @@ def degraded_violation(command):
             return "リダイレクト（> %s）による書き込み" % target
     if "<<" in command:
         return "ヒアドキュメントによる書き込みの可能性"
-    cwd = ""
     for statement in LEGACY_STATEMENT_RE.split(command):
         parts = [p for p in statement.split("|") if p.strip()]
         if not parts:
@@ -695,40 +851,64 @@ def degraded_violation(command):
         words_list = [p.split() for p in parts]
         if cwd_is_guarded(cwd) or any(mentions_guarded(w) for w in words_list):
             for words in words_list:
-                reason = segment_violation(words)
+                reason = segment_violation(words, cwd=cwd)
                 if reason:
                     return reason
         for match in LEGACY_REDIRECT_RE.finditer(statement):
-            reason = cwd_redirect_violation(match.group(1), cwd)
-            if reason:
-                return reason
+            if guarded_write_target(match.group(1), cwd):
+                return ("リダイレクト（> %s）による書き込み" % match.group(1))
         cwd = next_cwd(words_list[0], cwd)
     return None
 
 
-def find_violation(command, depth=0):
+def statement_subst_indexes(statement):
+    """ステートメントの語トークンに現れるプレースホルダのインデックスを返す。"""
+    return [int(m.group(1)) for kind, value in statement if kind == "w"
+            for m in SUBST_PLACEHOLDER_RE.finditer(value)]
+
+
+def subst_violation(substs, index, depth, cwd):
+    """コマンド置換の内側（内側方向）を、その置換が現れた文の cwd で評価する。"""
+    if index >= len(substs):
+        return None  # 利用者が書いた同名リテラル（プレースホルダの偽装）
+    inner = substs[index]
+    if depth >= MAX_SUBST_DEPTH:
+        # 深追いはせず保守側で打ち切る（$($($(rm ...))) を抜け道にしないため）
+        if is_guarded_token(inner) or cwd_is_guarded(cwd):
+            return "深いコマンド置換の内側で保護対象パスに言及しています"
+        return None
+    return find_violation(inner, depth + 1, cwd)
+
+
+def find_violation(command, depth=0, cwd=""):
     """コマンド全体の違反理由を返す。問題なければ None。"""
     try:
         tokens, substs = lex(command)
     except ValueError:
-        return degraded_violation(command)
-    for inner in substs:
-        if depth >= MAX_SUBST_DEPTH:
-            # 深追いはせず保守側で打ち切る（$($($(rm ...))) を抜け道にしないため）
-            if is_guarded_token(inner):
-                return "深いコマンド置換の内側で保護対象パスに言及しています"
-            continue
-        reason = find_violation(inner, depth + 1)
-        if reason:
-            return reason
-    guarded_vars, cwd = set(), ""
+        return degraded_violation(command, cwd)
+    guarded_vars, seen = set(), set()
     for statement in split_statements(tokens):
+        # 内側方向（置換の中身が書き込み）は、**その置換が現れた文の cwd**で
+        # 評価する（`cd tickets/active && ls $(rm APP-001.md)` を閉じるため）。
+        # プレースホルダにインデックスがあるため、どの置換がどの文に属するかが
+        # 判る
+        for index in statement_subst_indexes(statement):
+            seen.add(index)
+            reason = subst_violation(substs, index, depth, cwd)
+            if reason:
+                return reason
         record_assignments(statement, guarded_vars, substs)
         reason = statement_violation(statement, guarded_vars, substs, cwd)
         if reason:
             return reason
         segments = pipe_segments(statement)
         cwd = next_cwd(segments[0] if segments else [], cwd)
+    # どの文の語にも現れなかった置換（構造上起きないが取りこぼしを作らない）。
+    # 帰属が取れないため cwd は与えずに評価する
+    for index in sorted(set(range(len(substs))) - seen):
+        reason = subst_violation(substs, index, depth, "")
+        if reason:
+            return reason
     return None
 
 
