@@ -417,16 +417,42 @@ def pipe_segments(statement):
     return segments
 
 
+def is_assignment_word(word):
+    """`FOO=bar` 形式の環境変数代入前置きか。"""
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*=.*", word))
+
+
+def head_index(words):
+    """語リスト中で「先頭コマンド名」に当たる語の位置を返す。無ければ -1。
+
+    環境変数代入の前置き（`FOO=bar`）とグループ化の `(` 単独語を読み飛ばす。
+    先頭コマンドの位置は head_of / next_cwd のオペランド抽出 / git のサブコマンド
+    抽出 / awk の引数走査が共有する。「先頭語の次から」（words[1:]）と決め打ちすると
+    代入前置きのある形（`X=1 cd tickets/active`・`X=1 git add ...`）で前提がずれ、
+    語そのもの（"cd" / "git"）をオペランド・サブコマンドと誤認するため、
+    位置の判定はこの1関数に集約する。
+    """
+    for index, word in enumerate(words):
+        if is_assignment_word(word):
+            continue  # FOO=bar 形式の前置き
+        if not word.lstrip("("):
+            continue  # `(` 単独＝サブシェル開始。本体は次の語
+        return index
+    return -1
+
+
 def head_of(words):
     """語リストの先頭コマンド名を返す（環境変数代入・グループ化の `(` は剥がす）。"""
-    for word in words:
-        if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*=.*", word):
-            continue  # FOO=bar 形式の前置き
-        name = word.lstrip("(")
-        if not name:
-            continue  # `(` 単独＝サブシェル開始。本体は次の語
-        return os.path.basename(name)
-    return ""
+    index = head_index(words)
+    if index < 0:
+        return ""
+    return os.path.basename(words[index].lstrip("("))
+
+
+def head_args(words):
+    """先頭コマンド名より後ろの語（引数列）を返す。先頭コマンドが無ければ空。"""
+    index = head_index(words)
+    return list(words[index + 1:]) if index >= 0 else []
 
 
 def is_readonly_script_call(words):
@@ -434,7 +460,7 @@ def is_readonly_script_call(words):
     スクリプトパスの前にフラグがある形(-c/-m 等の別実行経路)は不許可。"""
     seen_interp = False
     for word in words:
-        if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*=.*", word):
+        if is_assignment_word(word):
             continue  # FOO=bar 形式の前置き
         if not seen_interp:
             seen_interp = True  # インタプリタ本体
@@ -450,7 +476,7 @@ def awk_bindings(words):
     --assign NAME=VALUE / 位置引数 NAME=VALUE）。近似解析であり、オプションの
     引数消費までは厳密に追わない（追えない形は列挙しない＝安全側へ倒す）。"""
     values, expect_value = [], False
-    for word in words[1:]:
+    for word in head_args(words):
         if expect_value:
             expect_value = False
             match = AWK_ASSIGN_RE.match(word)
@@ -492,7 +518,7 @@ def awk_violation(words):
     # 保護対象に言及するセグメントで print/printf の出力リダイレクトを使う。
     # 文字列リテラルを除去してから見るため printf "%s|%s" は一致しない
     if mentions_guarded(words):
-        for word in words[1:]:
+        for word in head_args(words):
             if AWK_OUTPUT_RE.search(AWK_STRING_RE.sub('""', word)):
                 return ("awk のプログラム内リダイレクト（print > file 等）は"
                         "許可されていません")
@@ -535,7 +561,9 @@ def segment_violation(words, substs=()):
     if head == "find" and any(t in FIND_WRITE_FLAGS for t in words):
         return "find の書き込み系フラグ（-exec/-delete等）は許可されていません"
     if head == "git":
-        sub = next((t for t in words[1:] if not t.startswith("-")), "")
+        # 代入前置き（X=1 git add ...）があっても "git" 自身をサブコマンドと
+        # 誤認しないよう、先頭コマンドの位置は head_index に合わせる
+        sub = next((t for t in head_args(words) if not t.startswith("-")), "")
         if sub not in ALLOWED_GIT_SUBCOMMANDS:
             return "git %s は許可されていません" % sub
     return None
@@ -547,7 +575,9 @@ def next_cwd(words, cwd):
         return None
     if head_of(words) != "cd":
         return cwd
-    operand = next((w for w in words[1:] if not w.startswith("-")), "")
+    # 代入前置き（X=1 cd DIR）があっても "cd" 自身をオペランドと誤認しないよう、
+    # 先頭コマンドの位置は head_of と同じ head_index で決める
+    operand = next((w for w in head_args(words) if not w.startswith("-")), "")
     if (not operand or "$" in operand or operand.startswith("~") or
             SUBST_PLACEHOLDER_RE.search(operand)):
         return None  # cd / cd - / cd "$D" / cd $(...) は追跡不能
