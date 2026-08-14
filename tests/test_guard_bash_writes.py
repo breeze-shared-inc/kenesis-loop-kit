@@ -788,6 +788,65 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertAllow('awk \'BEGIN{PROCINFO["sorted_in"]="cmp"} {print}\' '
                          "tickets/active/APP-001.md")
 
+    # --- KLK-010 tester(AW-6再検証)差し戻し: system() 以外の外部コマンド
+    # 実行経路（`"cmd" | getline` / `|& getline` 系）が AW-1/AW-3/AW-5/AW-6
+    # のいずれにも掛からず素通りする（Quality Gate fail・未閉塞）。
+    #
+    # AW-3（AWK_OUTPUT_RE）は `print`/`printf` の直後に `>`/`>>`/`|` が
+    # 現れる形しか見ておらず、`"cmd" | getline` のように **`print`/`printf`
+    # を伴わない入力パイプ**（コマンドの標準出力を読み取る形。gawk はこの際
+    # 実際に `cmd` を子プロセスとして起動する）には一致しない。AW-1 は
+    # 「保護対象に言及する語」自身が `>`/`|` を含む場合のみ発火するため、
+    # 保護対象 cwd 配下でリテラルパスがコマンド文字列に現れない形（相対
+    # ファイル名のみ）では mentions_guarded も語単位の証拠も立たない。
+    # 本ホスト（GNU Awk 5.2.1）で `"rm ..." | getline` および `|& getline`
+    # が実際に外部コマンドを実行し対象ファイルを削除することを scratchpad の
+    # 使い捨てディレクトリで実証済み（tester 実測）。旧版は awk を
+    # ALLOWED_HEADS に持たず全 awk を deny していたため old=deny → new=allow
+    # の回帰であり、AC6 が名指しする「C4 相当（awk の外部コマンド実行）」の
+    # 未対応形。残存リスク4（「system()／"cmd" | getline／print | "cmd"／
+    # |&／@f()／@load は列挙であり網羅証明ではない」）が的中した具体例。
+    def test_awk_input_pipe_getline_bypasses_all_aw_rules_deny(self):
+        self.assertDeny(
+            "cd tickets/active && awk 'BEGIN{\"rm APP-001.md\" | getline x}'")
+        self.assertDeny(
+            "cd tickets/done && "
+            "awk 'BEGIN{\"truncate -s 0 APP-001.md\" | getline x}'")
+
+    def test_awk_coprocess_getline_bypasses_all_aw_rules_deny(self):
+        # gawk 拡張の双方向コプロセス `|&` も同型（`getline` 側で外部コマンド
+        # を起動する。`print ... |& "cmd"` は AW-3 が捕捉するが、読み取り方向
+        # （`"cmd" |& getline`）は捕捉しない）
+        self.assertDeny(
+            "cd tickets/active && "
+            "awk 'BEGIN{\"rm APP-001.md\" |& getline x}'")
+
+    # --- KLK-010 tester(AW-6再検証)差し戻し: 過剰一致（誤deny）の新規発見 ---
+    #
+    # AW-5／AW-6 は「文字列リテラル除去**前**」の語で判定するため（保守側の
+    # 意図的な設計）、awk プログラム内の**文字列リテラルの中身**に
+    # `system(`／`@ident(` に見える部分文字列が現れるだけで deny になる。
+    # 既存 T-AW6C（test_awk_at_sign_without_indirect_call_allow）は正規表現
+    # 内の `@(id|title)` や `-v` 値の `a@b.example` は固定しているが、
+    # 「メールアドレス様の文字列の直後に半角スペース+丸括弧が続く」形
+    # （日常的な注記文でありうる）は未カバーだった。
+    def test_awk_string_literal_at_paren_false_positive_allow(self):
+        # AW-6 の正規表現はリテラル除去前の生テキストに当たるため、
+        # 出力する文字列の中に「a@b (...)」という文面があるだけで
+        # `@\s*IDENT\s*\(` に一致し、間接呼び出しと誤認される
+        self.assertAllow(
+            'awk \'BEGIN{print "contact: a@b (see docs)"}\' '
+            "tickets/active/APP-001.md")
+
+    def test_awk_filename_operand_matching_system_call_pattern_allow(self):
+        # AW-5 は awk への**全引数**（プログラム文字列だけでなくファイル名
+        # オペランドも含む）を語単位で走査するため、awk のプログラムとは
+        # 無関係な「ファイル名」引数が `system(` に見える部分文字列を含む
+        # だけで deny になる（結合テキスト評価とは無関係の単一語レベルの
+        # 過剰一致。C4/AW-5 導入時点から存在）
+        self.assertAllow(
+            "awk '{print}' 'system(1).md' tickets/active/APP-001.md")
+
     def test_awk_safe_options_allow(self):
         # T-AWKOK: AW-4／AW-5 が読み取り awk を誤denyしないことを固定する。
         # ホワイトリストの収載漏れは可視な誤denyとして現れるため、代表形を
