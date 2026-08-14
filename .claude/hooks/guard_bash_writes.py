@@ -96,11 +96,33 @@ READONLY_SCRIPTS = (
     ".claude/skills/spec-interview/scripts/check_spec_structure.py",
 )
 
-# シェル演算子（長いものから最長一致させる）
-OPERATORS = ("<<<", ">>", "<<", "&&", "||", ";;", "|&", "&>", ">&", "<&",
-             "<>", ">|", ";", "&", "|", "<", ">")
+# シェル演算子。種別とセットを1つの表から導出する（種別の宣言漏れを構造的に防ぐ）。
+# 新しい演算子を足すときはここへ (演算子, 種別) を1行加えるだけでよい。
+OPERATOR_KINDS = (
+    # 3文字
+    ("<<<", "heredoc"),
+    # 2文字
+    ("<<", "heredoc"), (">>", "redirect_out"), ("&>", "redirect_out"),
+    (">&", "redirect_out"), (">|", "redirect_out"), ("<>", "redirect_out"),
+    ("<&", "redirect_in"), ("|&", "pipe"),
+    ("&&", "sep"), ("||", "sep"), (";;", "sep"),
+    # 1文字
+    (">", "redirect_out"), ("<", "redirect_in"), ("|", "pipe"),
+    (";", "sep"), ("&", "sep"),
+)
+# 走査は先頭一致の最初の候補を採るため、必ず長い演算子から並べる。
+# 表の並び順に依存しないよう、ここで長さの降順へ明示的に整列する
+# （安定ソートなので同じ長さの相対順序は表のまま）。
+OPERATORS = tuple(op for op, _ in
+                  sorted(OPERATOR_KINDS, key=lambda kv: -len(kv[0])))
+OPERATOR_KIND_MAP = dict(OPERATOR_KINDS)
 OPERATOR_CHARS = ";&|<>"
-SUBST_PLACEHOLDER = "__KLK_SUBST__"
+
+# コマンド置換の退避先インデックスを埋め込むプレースホルダ。
+# 「どのプレースホルダがどの置換か」を後段（言及ゲート・リダイレクト先判定）が
+# 復元できるようにするため、不透明な固定文字列ではなく位置付きにしている。
+SUBST_PLACEHOLDER = "__KLK_SUBST_%d__"
+SUBST_PLACEHOLDER_RE = re.compile(r"__KLK_SUBST_(\d+)__")
 MAX_SUBST_DEPTH = 3
 
 PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/]+")
@@ -108,8 +130,17 @@ ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9]*=")
 VAR_REF_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?")
 SED_INPLACE_SHORT_RE = re.compile(r"-[A-Za-z]*i")     # -i / -i.bak / -ni / -si.bak
 SED_WRITE_RE = re.compile(r"(?:^|[;{}\s/])[wW]\s+\S")  # s/a/b/w FILE ・ /re/w FILE
-# 字句解析に失敗した入力向けの簡易判定でのみ使う（degraded_violation）
+
+# awk 専用（プログラム内リダイレクトと変数束縛の検出）
+AWK_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=(.*)$", re.S)
+AWK_STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')       # 文字列リテラル（除去用）
+AWK_OUTPUT_RE = re.compile(r"\b(?:print|printf)\b[^;}\n]*(?:>>?|\|)")
+
+# 字句解析に失敗した入力向けの簡易判定でのみ使う（degraded_violation）。
+# 旧版（KLK-010 以前）の find_violation と同じ分割を再現するためのもので、
+# 正常経路では使わない。
 LEGACY_REDIRECT_RE = re.compile(r"\d?>>?\s*([^\s;|&]+)")
+LEGACY_STATEMENT_RE = re.compile(r"&&|\|\||;|\n")
 
 
 def allow():
@@ -180,7 +211,7 @@ def _take_subst(command, start, buf, substs):
             depth -= 1
             if depth == 0:
                 substs.append(command[start:i])
-                buf.append(SUBST_PLACEHOLDER)
+                buf.append(SUBST_PLACEHOLDER % (len(substs) - 1))
                 return i + 1
         i += 1
     raise ValueError("no closing parenthesis")
@@ -196,7 +227,7 @@ def _take_backtick(command, start, buf, substs):
             continue
         if c == "`":
             substs.append(command[start:i])
-            buf.append(SUBST_PLACEHOLDER)
+            buf.append(SUBST_PLACEHOLDER % (len(substs) - 1))
             return i + 1
         i += 1
     raise ValueError("no closing backquote")
@@ -279,17 +310,38 @@ def lex(command):
     return tokens, substs
 
 
+def expand_substs(text, substs):
+    """語トークン中のプレースホルダを、対応する置換の内側テキストへ展開する。
+
+    証拠収集専用。展開は「判定に使えるテキストを増やす」方向にしか働かず、
+    判定を緩めることはない。展開する用途・しない用途はモジュール docstring の
+    「プレースホルダ契約」に従うこと。
+    """
+    if not substs or not SUBST_PLACEHOLDER_RE.search(text):
+        return text
+
+    def replace(match):
+        index = int(match.group(1))
+        if index >= len(substs):
+            return match.group(0)  # 利用者が書いた同名リテラル。そのまま残す
+        return " %s " % substs[index]  # 前後の空白で語の誤結合を防ぐ
+
+    return SUBST_PLACEHOLDER_RE.sub(replace, text)
+
+
+def expand_all(words, substs):
+    """語リストの各要素をプレースホルダ解決したリストを返す。"""
+    return [expand_substs(word, substs) for word in words]
+
+
+def display_text(text):
+    """deny 理由に載せる文字列から内部プレースホルダを隠す。"""
+    return SUBST_PLACEHOLDER_RE.sub("$(...)", text)
+
+
 def op_kind(op):
-    """演算子の種別を返す。"""
-    if "<<" in op:
-        return "heredoc"
-    if ">" in op:
-        return "redirect_out"
-    if "<" in op:
-        return "redirect_in"
-    if op in ("|", "|&"):
-        return "pipe"
-    return "sep"
+    """演算子の種別を返す。種別の正は OPERATOR_KINDS。"""
+    return OPERATOR_KIND_MAP.get(op, "sep")
 
 
 # --- L3: 構文レイヤ ---------------------------------------------------------
@@ -330,11 +382,14 @@ def pipe_segments(statement):
 
 
 def head_of(words):
-    """語リストの先頭コマンド名を返す（環境変数代入・パス前置きは剥がす）。"""
+    """語リストの先頭コマンド名を返す（環境変数代入・グループ化の `(` は剥がす）。"""
     for word in words:
         if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*=.*", word):
             continue  # FOO=bar 形式の前置き
-        return os.path.basename(word.lstrip("("))
+        name = word.lstrip("(")
+        if not name:
+            continue  # `(` 単独＝サブシェル開始。本体は次の語
+        return os.path.basename(name)
     return ""
 
 
@@ -354,26 +409,93 @@ def is_readonly_script_call(words):
     return False
 
 
-def segment_violation(words):
-    """パイプ区間（語リスト）単位の違反理由を返す。問題なければ None。"""
+def awk_bindings(words):
+    """awk の変数束縛の VALUE を列挙する（-v NAME=VALUE / -vNAME=VALUE /
+    --assign NAME=VALUE / 位置引数 NAME=VALUE）。近似解析であり、オプションの
+    引数消費までは厳密に追わない（追えない形は列挙しない＝安全側へ倒す）。"""
+    values, expect_value = [], False
+    for word in words[1:]:
+        if expect_value:
+            expect_value = False
+            match = AWK_ASSIGN_RE.match(word)
+            if match:
+                values.append(match.group(1))
+            continue
+        if word in ("-v", "--assign"):
+            expect_value = True
+            continue
+        if word.startswith("-v") and len(word) > 2:
+            match = AWK_ASSIGN_RE.match(word[2:])
+            if match:
+                values.append(match.group(1))
+            continue
+        if word.startswith("--assign="):
+            match = AWK_ASSIGN_RE.match(word[len("--assign="):])
+            if match:
+                values.append(match.group(1))
+            continue
+        if word.startswith("-"):
+            continue  # -F / -f 等のその他オプション
+        match = AWK_ASSIGN_RE.match(word)  # 位置引数の NAME=VALUE
+        if match:
+            values.append(match.group(1))
+    return values
+
+
+def awk_violation(words):
+    """awk セグメントの違反理由を返す（プログラム内リダイレクトと変数束縛）。"""
+    # 保護対象に言及する語そのものが > / | を含む（{print > "docs/SPEC.md"} 等）。
+    # 正常な読み取りでは保護対象は素のパス引数として現れる（> も | も含まない）
+    if any(">" in t or "|" in t for t in words if is_guarded_token(t)):
+        return "awk のプログラム内リダイレクト（print > file 等）は許可されていません"
+    # 保護対象パスを awk 変数へ束縛している（-v f=... / 位置引数 f=...）。
+    # 参照側（print > f）まで追わないのは、エイリアス（g=f; print > g）で
+    # 容易に迂回でき防御にならないため。束縛そのものを証拠とする
+    if any(is_guarded_token(v) for v in awk_bindings(words)):
+        return "awk の変数へ保護対象パスを束縛しています（-v / NAME=VALUE）"
+    # 保護対象に言及するセグメントで print/printf の出力リダイレクトを使う。
+    # 文字列リテラルを除去してから見るため printf "%s|%s" は一致しない
+    if mentions_guarded(words):
+        for word in words[1:]:
+            if AWK_OUTPUT_RE.search(AWK_STRING_RE.sub('""', word)):
+                return ("awk のプログラム内リダイレクト（print > file 等）は"
+                        "許可されていません")
+    return None
+
+
+def segment_violation(words, substs=()):
+    """パイプ区間（語リスト）単位の違反理由を返す。問題なければ None。
+
+    words は未解決の語リスト。substs を与えると、sed / awk の追加規則を
+    プレースホルダ解決後のテキストに対しても評価する（解決前の語も併せて
+    見るため、判定は deny 方向にのみ広がる）。
+    """
     head = head_of(words)
     if not head:
         return None
+    if SUBST_PLACEHOLDER_RE.search(head):
+        # コマンド名の位置にコマンド置換を使う形は解決せず不許可とする
+        return "コマンド名の位置にコマンド置換が使われています"
     if head in ("python3", "python") and is_readonly_script_call(words):
         return None
     if head not in ALLOWED_HEADS:
         return "'%s' は許可されていません" % head
+    words = list(words)
+    expanded = expand_all(words, substs)
+    variants = [words] if expanded == words else [words, expanded]
     if head == "sed":
+        flat = [t for variant in variants for t in variant]
         if any(SED_INPLACE_SHORT_RE.match(t) or t == "--in-place" or
-               t.startswith("--in-place=") for t in words):
+               t.startswith("--in-place=") for t in flat):
             return "sed -i（in-place編集）は許可されていません"
         # スクリプト引数に埋め込まれた書き出し（s/a/b/w FILE ・ /re/w FILE）
-        if any(SED_WRITE_RE.search(t) for t in words if is_guarded_token(t)):
+        if any(SED_WRITE_RE.search(t) for t in flat if is_guarded_token(t)):
             return "sed の w コマンド（ファイル書き出し）は許可されていません"
-    if head == "awk" and any(">" in t or "|" in t
-                             for t in words if is_guarded_token(t)):
-        # 正常な読み取りでは保護対象は素のパス引数として現れる（> も | も含まない）
-        return "awk のプログラム内リダイレクト（print > file 等）は許可されていません"
+    if head == "awk":
+        for variant in variants:
+            reason = awk_violation(variant)
+            if reason:
+                return reason
     if head == "find" and any(t in FIND_WRITE_FLAGS for t in words):
         return "find の書き込み系フラグ（-exec/-delete等）は許可されていません"
     if head == "git":
@@ -383,18 +505,53 @@ def segment_violation(words):
     return None
 
 
-def record_assignments(statement, guarded_vars):
+def next_cwd(words, cwd):
+    """`cd DIR` 実行後の作業ディレクトリを返す。追跡不能なら None。"""
+    if cwd is None:
+        return None
+    if head_of(words) != "cd":
+        return cwd
+    operand = next((w for w in words[1:] if not w.startswith("-")), "")
+    if (not operand or "$" in operand or operand.startswith("~") or
+            SUBST_PLACEHOLDER_RE.search(operand)):
+        return None  # cd / cd - / cd "$D" / cd $(...) は追跡不能
+    return os.path.normpath(os.path.join(cwd or ".", operand))
+
+
+def cwd_is_guarded(cwd):
+    """作業ディレクトリ自体が保護対象配下か（相対パス書き込みの検出用）。"""
+    return bool(cwd) and _is_guarded_path(cwd)
+
+
+def cwd_redirect_violation(target, cwd):
+    """保護対象配下を作業ディレクトリとする相対パスへの出力リダイレクトか。
+
+    `cd tickets/active && echo x > APP-001.md` のように、cd で作業ディレクトリを
+    移すとリダイレクト先が保護対象パターンに一致しなくなる経路を塞ぐ。
+    解決できない先（変数・コマンド置換）は allow 方向へ倒す。
+    """
+    if not cwd_is_guarded(cwd):
+        return None
+    if "$" in target or SUBST_PLACEHOLDER_RE.search(target):
+        return None
+    if not _is_guarded_path(os.path.normpath(os.path.join(cwd, target))):
+        return None  # 絶対パス・cwd の外へ抜ける相対パスは対象外
+    return "リダイレクト（> %s）による書き込み" % display_text(target)
+
+
+def record_assignments(statement, guarded_vars, substs=()):
     """`NAME=保護対象パス` の前置き代入を記録する（リダイレクト先の追跡用）。"""
     for words in pipe_segments(statement):
         for word in words:
             match = ASSIGN_RE.match(word)
             if not match:
                 break  # 先頭から連続する代入のみが前置き
-            if is_guarded_token(word[match.end():]):
+            value = expand_substs(word[match.end():], substs)
+            if is_guarded_token(value):
                 guarded_vars.add(word[:match.end() - 1])
 
 
-def redirect_violation(statement, guarded_vars):
+def redirect_violation(statement, guarded_vars, substs=(), cwd=""):
     """出力リダイレクト先が保護対象・保護対象を代入された変数なら理由を返す。"""
     for index, (kind, value) in enumerate(statement):
         if kind != "op" or op_kind(value) != "redirect_out":
@@ -406,33 +563,55 @@ def redirect_violation(statement, guarded_vars):
             continue
         if "&" in value and (target.isdigit() or target == "-"):
             continue  # 2>&1 等の fd 複製
-        if is_guarded_token(target):
-            return "リダイレクト（> %s）による書き込み" % target
-        if any(name in guarded_vars for name in VAR_REF_RE.findall(target)):
-            return "リダイレクト（> %s）による書き込み" % target
+        # リダイレクト先はコマンドではないためパイプ区間の検査から外れる。
+        # 置換の結果が書き込み先になる形（> $(echo docs/SPEC.md)）はここで解決する
+        resolved = expand_substs(target, substs)
+        if is_guarded_token(resolved):
+            return "リダイレクト（> %s）による書き込み" % display_text(target)
+        if any(name in guarded_vars for name in VAR_REF_RE.findall(resolved)):
+            return "リダイレクト（> %s）による書き込み" % display_text(target)
+        reason = cwd_redirect_violation(target, cwd)
+        if reason:
+            return reason
     return None
 
 
-def statement_violation(statement, guarded_vars):
-    """ステートメント単位の違反理由を返す。問題なければ None。"""
-    reason = redirect_violation(statement, guarded_vars)
+def statement_violation(statement, guarded_vars, substs=(), cwd=""):
+    """ステートメント単位の違反理由を返す。問題なければ None。
+
+    cwd は「このステートメントを実行する時点の作業ディレクトリ」（追跡不能なら
+    None）。保護対象配下なら相対パスが保護対象を指しうるため判定を強める。
+    """
+    reason = redirect_violation(statement, guarded_vars, substs, cwd)
     if reason:
         return reason
-    if not mentions_guarded([v for k, v in statement if k == "w"]):
+    words = [v for k, v in statement if k == "w"]
+    # 言及ゲートはプレースホルダ解決後のテキストで判定する（置換の結果が
+    # 外側コマンドの引数になる形を取りこぼさないため）。作業ディレクトリが
+    # 保護対象配下ならゲートは無条件に真とする
+    if not (cwd_is_guarded(cwd) or
+            mentions_guarded(expand_all(words, substs))):
         return None
     if any(k == "op" and op_kind(v) == "heredoc" for k, v in statement):
         return "ヒアドキュメントによる書き込みの可能性"
-    for words in pipe_segments(statement):
-        reason = segment_violation(words)
+    for segment_words in pipe_segments(statement):
+        reason = segment_violation(segment_words, substs)
         if reason:
             return reason
     return None
 
 
 def degraded_violation(command):
-    """字句解析できない入力向けの簡易判定（素朴なトークン分割・リテラル先のみ）。"""
-    words = command.split()
-    if not mentions_guarded(words):
+    """字句解析できない入力向けのフォールバック。
+
+    旧版（KLK-010 以前）の find_violation と同じ判定要素をすべて持つ:
+    全体の言及ゲート → リテラルリダイレクト → heredoc の部分文字列判定 →
+    ステートメント分割 → パイプ分割 → パイプライン単位の言及ゲート →
+    セグメント判定。唯一の意図的な差分は「リダイレクト先が `$` /
+    バッククォートを含むだけで deny する」規則を復活させないこと
+    （無関係な後段リダイレクトの巻き添えを解消するため）。
+    """
+    if not mentions_guarded(command.split()):
         return None
     for match in LEGACY_REDIRECT_RE.finditer(command):
         target = match.group(1)
@@ -440,7 +619,25 @@ def degraded_violation(command):
             continue  # 2>&1 等の fd 複製
         if is_guarded_token(target):
             return "リダイレクト（> %s）による書き込み" % target
-    return segment_violation(words)
+    if "<<" in command:
+        return "ヒアドキュメントによる書き込みの可能性"
+    cwd = ""
+    for statement in LEGACY_STATEMENT_RE.split(command):
+        parts = [p for p in statement.split("|") if p.strip()]
+        if not parts:
+            continue
+        words_list = [p.split() for p in parts]
+        if cwd_is_guarded(cwd) or any(mentions_guarded(w) for w in words_list):
+            for words in words_list:
+                reason = segment_violation(words)
+                if reason:
+                    return reason
+        for match in LEGACY_REDIRECT_RE.finditer(statement):
+            reason = cwd_redirect_violation(match.group(1), cwd)
+            if reason:
+                return reason
+        cwd = next_cwd(words_list[0], cwd)
+    return None
 
 
 def find_violation(command, depth=0):
@@ -458,12 +655,14 @@ def find_violation(command, depth=0):
         reason = find_violation(inner, depth + 1)
         if reason:
             return reason
-    guarded_vars = set()
+    guarded_vars, cwd = set(), ""
     for statement in split_statements(tokens):
-        record_assignments(statement, guarded_vars)
-        reason = statement_violation(statement, guarded_vars)
+        record_assignments(statement, guarded_vars, substs)
+        reason = statement_violation(statement, guarded_vars, substs, cwd)
         if reason:
             return reason
+        segments = pipe_segments(statement)
+        cwd = next_cwd(segments[0] if segments else [], cwd)
     return None
 
 

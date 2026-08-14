@@ -318,6 +318,148 @@ class TestGuardBashWrites(unittest.TestCase):
         # ALLOWED_HEADS へ追加しない。将来誤って追加されないことを固定する。
         self.assertDeny("printf '%s' tickets/active/APP-001.md")
 
+    # --- KLK-010 Phase 4: 置換の「外側」方向（C1・設計書§3-2 P1） ---
+
+    def test_substitution_result_as_argument_deny(self):
+        # T-C1a: 置換で包んだだけで言及ゲートを外せてはならない
+        self.assertDeny("rm $(echo docs/SPEC.md)")
+        self.assertDeny("rm `echo docs/SPEC.md`")
+
+    def test_substitution_result_as_sed_target_deny(self):
+        # T-C1b: 置換 × sed -i
+        self.assertDeny("sed -i 's/a/b/' $(echo tickets/active/APP-001.md)")
+
+    def test_substitution_result_as_write_target_deny(self):
+        # T-C1c: 置換 × 書き込み系 head
+        self.assertDeny("cp /tmp/e $(echo docs/SPEC.md)")
+        self.assertDeny("truncate -s 0 $(echo docs/SPEC.md)")
+
+    def test_substitution_result_in_pipe_segment_deny(self):
+        # T-C1d: 置換 × パイプ区間（tee）
+        self.assertDeny("cat a | tee $(echo docs/SPEC.md)")
+
+    def test_redirect_target_from_substitution_deny(self):
+        # T-C1e: リダイレクト先が置換の結果（パイプ区間の検査から外れる経路）
+        self.assertDeny("echo x > $(echo docs/SPEC.md)")
+        self.assertDeny('echo x > "$(echo docs/SPEC.md)"')
+        self.assertDeny("echo x > `echo docs/SPEC.md`")
+
+    def test_substitution_of_readonly_command_result_deny(self):
+        # T-C1f: 置換の内側が読み取りでも、結果が書き込み系 head の引数なら deny
+        self.assertDeny("rm $(basename docs/SPEC.md)")
+        self.assertDeny("rm $(ls tickets/active/APP-001.md)")
+
+    def test_substitution_attribution_is_scoped_allow(self):
+        # T-C1g: プレースホルダに帰属（インデックス）があるため、置換の言及が
+        # 無関係な後続ステートメントを巻き添えにしない
+        self.assertAllow("ls $(cat tickets/active/APP-001.md); rm /tmp/junk")
+
+    def test_substitution_assigned_to_variable_redirect_deny(self):
+        # T-C1h: 置換 × 変数追跡（代入値もプレースホルダを解決する）
+        self.assertDeny('f=$(echo docs/SPEC.md); cat x > "$f"')
+
+    # --- KLK-010 Phase 4: degraded mode の分割復元（C2・設計書§3-5 P2） ---
+
+    def test_degraded_statement_split_deny(self):
+        # T-C2a: 先頭が読み取りでも、後続ステートメントの書き込みを見逃さない
+        self.assertDeny("ls ; rm docs/SPEC.md #'")
+
+    def test_degraded_natural_english_comment_deny(self):
+        # T-C2b: degraded は `#'` に限らず日常的な英文コメントでも発火する
+        self.assertDeny("cat README.md ; rm docs/SPEC.md # it's stale")
+
+    def test_degraded_statement_split_with_sed_deny(self):
+        # T-C2c: degraded × sed -i
+        self.assertDeny("cat x; sed -i 's/a/b/' tickets/active/APP-001.md #'")
+
+    def test_degraded_and_operator_split_deny(self):
+        # T-C2d: `&&` 区切り
+        self.assertDeny("cat x && tee tickets/active/APP-001.md #'")
+
+    def test_degraded_leading_cd_and_copy_deny(self):
+        # T-C2e: 先頭が cd / ls でも後続の書き込みを検出する
+        self.assertDeny("cd .; rm docs/SPEC.md #'")
+        self.assertDeny("ls x; cp /tmp/e docs/SPEC.md #'")
+
+    def test_degraded_pipe_split_deny(self):
+        # T-C2f: パイプ分割（xargs へのパイプ越しの書き込み連鎖）
+        self.assertDeny("find tickets/active -name '*.md' | xargs rm #'")
+
+    def test_degraded_trailing_escape_deny(self):
+        # T-C2g: 末尾の孤立エスケープも degraded の発火条件（shlex の ValueError）
+        self.assertDeny("rm tickets/active/APP-001.md \\")
+
+    def test_degraded_read_with_english_comment_allow(self):
+        # T-C2h: degraded の誤denyを拡大しない（読み取りは allow のまま）
+        self.assertAllow("cat tickets/active/APP-001.md # don't")
+
+    # --- KLK-010 Phase 4: awk の変数束縛とプログラム内出力（H1・設計書§3-6 D1） ---
+
+    def test_awk_positional_assignment_write_deny(self):
+        # T-H1a: 位置引数の NAME=VALUE 束縛
+        self.assertDeny("awk '{print > f}' f=docs/SPEC.md in.txt")
+
+    def test_awk_v_assignment_write_deny(self):
+        # T-H1b: -v NAME=VALUE 束縛
+        self.assertDeny("awk -v f=docs/SPEC.md '{print > f}' in.txt")
+
+    def test_awk_assignment_to_ticket_deny(self):
+        # T-H1c: tickets 宛て
+        self.assertDeny("awk '{print > f}' f=tickets/active/APP-001.md in.txt")
+
+    def test_awk_external_program_with_assignment_deny(self):
+        # T-H1d: プログラムが外部ファイルで見えない形でも束縛を証拠に deny
+        self.assertDeny("awk -f prog.awk f=docs/SPEC.md in.txt")
+
+    def test_awk_output_redirect_without_binding_deny(self):
+        # T-H1e: 束縛を伴わない print > FILENAME 形
+        self.assertDeny("awk '{print > FILENAME}' tickets/active/APP-001.md")
+
+    def test_awk_readonly_programs_allow(self):
+        # T-H1f: 読み取り awk を誤denyしない（AW-2/AW-3 の誤爆防止）
+        self.assertAllow("awk -F'|' '{print $1}' tickets/active/APP-001.md")
+        self.assertAllow("awk 'NR>1 {print}' tickets/active/APP-001.md")
+        self.assertAllow(
+            "awk '{if ($1 > 2) print $1}' tickets/active/APP-001.md")
+        self.assertAllow(
+            'awk \'{printf "%s|%s\\n", $1, $2}\' tickets/active/APP-001.md')
+        self.assertAllow("awk -v OFS=, '{print $1,$2}' "
+                         "tickets/active/APP-001.md")
+
+    # --- KLK-010 Phase 4: cd による作業ディレクトリ追跡（M1・設計書§3-8） ---
+
+    def test_cd_into_tickets_then_relative_write_deny(self):
+        # T-M1a: cd 後の相対パス書き込み（cd 自体は allow のまま）
+        self.assertDeny("cd tickets/active && rm APP-001.md")
+
+    def test_cd_tracking_released_allow(self):
+        # T-M1b: 保護対象外へ戻れば追跡は解除。追跡不能なら誤denyしない
+        self.assertAllow("cd tickets/active && cd ../.. && rm foo.md")
+        self.assertAllow('cd "$D" && rm APP-001.md')
+
+    def test_cd_into_tickets_then_relative_redirect_deny(self):
+        # T-M1c: cd 後の相対パスへのリダイレクト（head が echo でも書き込み）。
+        # 旧版は `cd` がホワイトリスト不在だったため偶然 deny していた経路
+        self.assertDeny("cd tickets/done && echo x > APP-001.md")
+        self.assertDeny("cd tickets/active && cat draft.md >> APP-001.md")
+        self.assertDeny("cd tickets/active && echo x > APP-001.md #'")
+
+    def test_cd_into_tickets_then_redirect_outside_allow(self):
+        # T-M1d: cwd 配下から外れる先（絶対パス・上位への相対）は誤denyしない
+        self.assertAllow("cd tickets/active && cat APP-001.md > /tmp/x.md")
+        self.assertAllow("cd tickets/active && cat APP-001.md > ../../out.txt")
+        self.assertAllow('cd tickets/active && cat APP-001.md > "$TMP"')
+
+    # --- KLK-010 Phase 4: サブシェルのグループ化（M4-5） ---
+
+    def test_spaced_subshell_write_deny(self):
+        # T-M45: `( ` が独立語になる形でも先頭コマンドを見失わない
+        self.assertDeny("( rm tickets/active/APP-001.md )")
+
+    def test_spaced_subshell_read_allow(self):
+        # T-M45b: 読み取りは allow のまま
+        self.assertAllow("( cat tickets/active/APP-001.md )")
+
 
 if __name__ == "__main__":
     unittest.main()
