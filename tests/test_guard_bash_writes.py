@@ -506,6 +506,33 @@ class TestGuardBashWrites(unittest.TestCase):
         # T-M45b: 読み取りは allow のまま
         self.assertAllow("( cat tickets/active/APP-001.md )")
 
+    # --- KLK-010 (tester再検証・reviewer差し戻し後): next_cwd() の operand
+    # 抽出が head_of() の柔軟な先頭コマンド検出に追随していない未閉塞サブ経路
+    # （M1・新規発見） ---
+    #
+    # next_cwd() は `words[1:]`（＝「先頭語の次から」）を cd のオペランド列とみなす。
+    # 一方 head_of() は FOO=bar 形式の環境変数代入前置きを読み飛ばして cd を
+    # 見つける（M4-5 と同種の柔軟な先頭コマンド検出）。この2関数の前提が
+    # 食い違うため、cd の前に代入前置きがあると next_cwd() の operand 抽出が
+    # "cd" という語自身を誤って operand と誤認し（"tickets/active" ではなく）、
+    # cwd 追跡が全く働かなくなる。旧版は cd が ALLOWED_HEADS に無く cd 自体が
+    # 常に deny されていたため顕在化しなかった＝本チケットの M1 修正
+    # （next_cwd の追加）が新設した false negative。
+
+    def test_cd_after_env_assignment_prefix_relative_write_deny(self):
+        self.assertDeny("X=1 cd tickets/active && rm APP-001.md")
+        self.assertDeny("X=1 cd tickets/done && echo x > APP-001.md")
+        self.assertDeny("X=1 Y=2 cd tickets/active && rm APP-001.md")
+
+    def test_git_subcommand_after_env_assignment_prefix_allow(self):
+        # 同根因の裏面（誤deny方向）: segment_violation() の git サブコマンド
+        # 抽出（`next(t for t in words[1:] if not t.startswith("-"))`）も
+        # 同じ「words[1:] = 先頭語の次から」という前提に依存している。
+        # 環境変数代入前置きがあると "git" という語自身を誤ってサブコマンドと
+        # みなし、ALLOWED_GIT_SUBCOMMANDS に無いため正規の `git add` まで
+        # 誤denyする（AC2 の趣旨に反する新規の誤deny）。
+        self.assertAllow("X=1 git add tickets/active/APP-001.md")
+
     # --- KLK-010 Phase 5: 固定リスト回帰ガード（設計書§4-7・D5） ---
 
     def test_legacy_deny_commands_all_still_deny(self):
