@@ -533,6 +533,38 @@ class TestGuardBashWrites(unittest.TestCase):
         # 誤denyする（AC2 の趣旨に反する新規の誤deny）。
         self.assertAllow("X=1 git add tickets/active/APP-001.md")
 
+    def test_multiple_env_assignment_prefixes_before_allowed_git_allow(self):
+        # head_index() への一元化がオフセットの想定回数を1つに限定していないか
+        # の確認。GIT_PAGER=cat のような実運用でよく使う代入や、複数代入の
+        # 積み重ねでも ALLOWED_GIT_SUBCOMMANDS のサブコマンドが誤denyされない
+        self.assertAllow("GIT_PAGER=cat git status tickets/active/APP-001.md")
+        self.assertAllow("X=1 Y=2 git add tickets/active/APP-001.md")
+        self.assertAllow("X=1 git commit tickets/active/APP-001.md")
+        self.assertAllow("X=1 git log tickets/active/APP-001.md")
+        self.assertAllow("X=1 git show tickets/active/APP-001.md")
+        self.assertAllow("X=1 git blame tickets/active/APP-001.md")
+
+    def test_git_disallowed_subcommands_after_env_assignment_prefix_deny(self):
+        # 同根因の修正が「代入前置き付きなら何でも通す」方向へ緩みすぎていないか
+        # の確認（test_git_subcommand_after_env_assignment_prefix_allow の裏側）。
+        # ALLOWED_GIT_SUBCOMMANDS に無いサブコマンドは代入前置きがあっても
+        # 引き続き deny されること
+        self.assertDeny("X=1 git checkout tickets/active/APP-001.md")
+        self.assertDeny("X=1 git rm tickets/active/APP-001.md")
+        self.assertDeny("X=1 git restore tickets/active/APP-001.md")
+        self.assertDeny("GIT_DIR=x git clean -f tickets/active")
+        self.assertDeny("X=1 git push tickets/active/APP-001.md")
+        self.assertDeny("X=1 git reset tickets/active/APP-001.md")
+
+    def test_spaced_subshell_cd_relative_write_deny(self):
+        # M4-5（サブシェルの `(` 単独語スキップ）と M1（cd の cwd 追跡）の
+        # 組み合わせで生じる副次的な穴（implementer 報告・修正の副産物として
+        # 閉じたことを固定する）。`(` の直後に空白があるため `(` が独立語になり、
+        # 代入前置きの有無にかかわらず cd の cwd 追跡が正しく機能する必要がある
+        self.assertDeny("( cd tickets/active && rm APP-001.md )")
+        self.assertDeny("X=1 ( cd tickets/active && rm APP-001.md )")
+        self.assertDeny("( X=1 cd tickets/active && rm APP-001.md )")
+
     # --- KLK-010 Phase 5: 固定リスト回帰ガード（設計書§4-7・D5） ---
 
     def test_legacy_deny_commands_all_still_deny(self):
