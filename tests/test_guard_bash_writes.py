@@ -665,6 +665,38 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertDeny(
             "awk '@load \"inplace\"; {print}' tickets/active/APP-001.md")
 
+    # --- tester (Phase 6・7 再検証): AW-5 の未閉塞バイパス ---
+    #
+    # gawk は 4.1.2 以降「間接関数呼び出し」`@varname(...)` をサポートし、
+    # 変数に格納した文字列名の関数（組み込みの system() を含む）をその場で
+    # 呼び出せる（本ホストの GNU Awk 5.2.1 で実測確認済み。scratchpad で
+    # `awk 'BEGIN{f="system"; @f("echo x > out.txt")}'` が実際に out.txt を
+    # 作成することを確認した）。AWK_EXEC_RE は `\bsystem\s*\(` と
+    # `@(?:load|include)\b` のみを見るため、"system" という文字列が変数へ
+    # 代入され `@f(...)` 経由で間接呼び出しされる形は両方の分岐に一致せず、
+    # AW-1（`>`/`|` を含む語）・AW-2（変数束縛の値）・AW-4（フラグ）・AW-3
+    # （print/printf 構文）のいずれにも掛からない。degraded 版は
+    # `f="system";` の `;` が LEGACY_STATEMENT_RE でステートメント分割され
+    # 偶然 deny になるが、正常経路（字句解析に成功する通常の呼び出し）は
+    # 素通りする。旧版は awk を ALLOWED_HEADS に持たず全 awk を deny して
+    # いたため old=deny → new=allow の回帰であり、AC6 が名指しする C4
+    # （awk の system() による任意コマンド実行）そのものである。
+    def test_awk_indirect_system_call_deny(self):
+        self.assertDeny(
+            "awk 'BEGIN{f=\"system\"; "
+            "@f(\"rm tickets/active/APP-001.md\")}'")
+        self.assertDeny(
+            "awk 'BEGIN{f=\"system\"; @f(\"rm docs/SPEC.md\")}'")
+        self.assertDeny(
+            "awk -v f=system 'BEGIN{@f(\"rm tickets/active/APP-001.md\")}'")
+
+    def test_awk_indirect_system_call_cwd_guarded_deny(self):
+        # 保護対象 cwd 下では書き込み先の相対パスさえコマンド文字列に
+        # 現れない（`cd tickets/active` の後、引数は "APP-001.md" のみ）。
+        self.assertDeny(
+            "cd tickets/active && "
+            "awk 'BEGIN{f=\"system\"; @f(\"rm APP-001.md\")}'")
+
     def test_awk_safe_options_allow(self):
         # T-AWKOK: AW-4／AW-5 が読み取り awk を誤denyしないことを固定する。
         # ホワイトリストの収載漏れは可視な誤denyとして現れるため、代表形を
