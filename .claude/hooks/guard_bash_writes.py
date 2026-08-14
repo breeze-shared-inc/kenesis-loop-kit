@@ -47,11 +47,25 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
     区間はどこかで保護対象に言及していれば全区間の先頭コマンドがホワイトリストに
     載っている必要がある（`find tickets/... | xargs rm` のようなパイプ越しの
     書き込み連鎖を防ぐため）。ホワイトリスト収載コマンドのうち引数だけで書ける
-    ものには追加規則を持つ（sed の -i 全表記と w コマンド、awk のプログラム内
-    リダイレクト・変数束縛、find の書き込み系フラグ、git のサブコマンド）。
-    加えて `cd` は作業ディレクトリを追跡し、保護対象配下へ移動した後は
-    ステートメントの言及ゲートを無条件に真とし、相対パスへの出力リダイレクトを
-    cwd と結合して判定する（`cd` セグメント自体は常に許可）。
+    ものには追加規則を持つ（sed の -i 全表記と w／W コマンド、awk の
+    プログラム内リダイレクト・変数束縛・**オプション**〔既知の読み取り専用
+    オプションのホワイトリスト。未知の `-` 始まりの語は deny〕・**system() /
+    @load / @include**、sort の -o／--output、uniq の第2位置引数、find の
+    書き込み系フラグ、git のサブコマンド）。
+
+  書き込み先オペランドと cwd — 語のうち**構文的に書き込み先と確定している**もの
+    （出力リダイレクトの直後の語・sort の -o の値・uniq の第2位置引数）だけを
+    「書き込み先オペランド」と呼び、cwd との結合（相対パスの解決）は
+    guarded_write_target でこのオペランドに限って行う。任意の語へ cwd を
+    結合してはならない（tickets を部分文字列で判定するため
+    `tickets/active/NR>1 {print}` のような語が保護対象と誤判定される）。
+    `cd` は作業ディレクトリを追跡し（セグメント自体は常に許可）、保護対象配下へ
+    移動した後はステートメントの言及ゲートを無条件に真とする。書き込み先
+    オペランドを取り出せない書き込み形（awk の `print > "REL"`・sed の
+    `w REL`）は、保護対象を cwd とする場合に「構文の存在」で deny する（保守側）。
+    保護対象 cwd 下で許可する先頭コマンドは CWD_SAFE_HEADS の明示列挙であり、
+    ALLOWED_HEADS へ足すだけでは cwd 下の許可を得られない（棚卸し忘れが
+    deny 側へ落ちるフォールセーフ既定）。
 
 保護対象パスの判定（guarded_paths / is_guarded_token）は _ticket_lib.is_ticket とは
 **意図的に基準が異なる**。is_ticket は「Write/Edit の対象ファイルが状態検証対象の
@@ -69,17 +83,54 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
     1トークンに収まるため判定は保守側（deny 方向）へ倒れる。
   - cd の作業ディレクトリ追跡はリテラルのオペランドに限る。`cd "$DIR"` /
     `cd $(...)` / `cd` / `cd -` は追跡を打ち切り、以降は cwd による強化を行わない。
+  - cwd と相対パスの**両方に接頭辞が分割**された形は捕捉できない
+    （`cd tickets/active && cd .. && rm active/APP-001.md`）。cwd が
+    `tickets` へ戻るため cwd 判定が偽になり、`active/APP-001.md` 単体は
+    保護対象パターンに一致しない。一般解は `cd . && rm foo` のような形まで
+    deny する誤deny爆発を招くため実装していない。
+  - `mv` は保護対象 cwd 下でも許可する（`cd tickets/active && mv /tmp/e
+    APP-001.md`）。CLAUDE.md が active/ ↔ done/ の移動を Bash `mv` の正規手段と
+    定めているためで、**意図的な許可**である。
   - degraded mode（下記）は旧版と同じ素朴な分割を使うため、クォート内の `|` と
     未閉じクォートが同時に成立する入力（`grep -E '^(id|title):' tickets/... # don't`）
     は誤denyになる。これは旧版と同一の挙動であり、正常に字句解析できる入力
     （コメントを伴わない同じコマンド）では発生しない。
+  - 保守側へ倒している判定（誤deny方向。保護対象に言及する／保護対象を cwd と
+    する場合に限る）: 保護対象を cwd とする sed のスクリプトに ` w <非空白>` が
+    現れる形（`sed 's/a w b/c/'`）／mawk・BWK awk 固有のオプション（`-W ...` 等）と
+    gawk の未収載オプション（`-I`・`--trace`・`-O`・`-L`）は AWK_SAFE_FLAGS /
+    AWK_SAFE_VALUE_FLAGS に無いため deny になる（安全性を確認してから収載する）／
+    awk の文字列リテラル内に `system(` と書いただけの形／degraded mode では
+    awk のプログラムが空白で分割されるため、`-` で始まる断片（`{print -$2}` の
+    `-$2}`）がオプションと見なされて deny になる（旧版は degraded の awk を
+    常に deny していたため回帰ではない。正常に字句解析できる同じコマンドは
+    allow）。
   - ホワイトリスト収載コマンドのうち次の書き込み／実行経路は**未対応**である。
     いずれも本 hook の導入当初から存在する穴で、別チケットで扱う:
-    `sort -o FILE` / `sort --output=FILE`、`uniq INPUT OUTPUT` の第2位置引数、
-    `sed -f SCRIPT`（外部スクリプト）、GNU sed の `e` フラグ（**任意コマンド実行**）。
-  - ALLOWED_HEADS へコマンドを追加するときは、設計書 docs/designs/KLK-010.md §3-9
-    の書き込みベクタ棚卸し表へ行を追加し、「引数だけで書き込み／任意コマンド実行が
-    できる経路」を列挙してから追加すること（awk の変数束縛の見落としの再発防止）。
+    `python3 IDENTIFIER=VALUE <READONLY_SCRIPT> ...` による READONLY_SCRIPTS の
+    許可経路の偽装（python3 が実行するのは `IDENTIFIER=VALUE` という名前の
+    ファイルであり、**任意コード実行**に到達しうる。深刻度が最も高い）、
+    `sed -f SCRIPT`（外部スクリプトでプログラムが不可視）、GNU sed の `e`
+    フラグ・`e` コマンド（**任意コマンド実行**）、
+    `sort --compress-program=PROG`（外部プログラム実行）、
+    `git diff --output=FILE`。
+  - パスがリテラルに現れない形（変数・置換の出力・断片の結合。
+    `awk -v d=tickets -v f=active/X.md '{print > (d"/"f)}'` 等）は検出できない。
+  - ALLOWED_HEADS へコマンドを追加するときの手順（設計書
+    docs/designs/KLK-010.md §3-9・§3-10 と同内容）:
+      1. `man <cmd>` / `<cmd> --help` を**4次元**で走査する
+         （① 書き込みを行うオプション ② 外部コード〔プログラム・ライブラリ・
+         拡張〕を読み込むオプション ③ プログラム／スクリプト内の書き込み・実行
+         構文 ④ 位置引数そのものが出力先）。迷う経路は「危険」側に分類する。
+      2. §3-9 の棚卸し表へ行を追加する（4列すべてを埋め、「なし」も明記して
+         空白セルを残さない）。
+      3. cwd 安全性を判定し、「書き込み経路が無い」「書き込み判定がパスに
+         依存しない」「書き込み判定が cwd 対応済み」のいずれかを満たすときだけ
+         CWD_SAFE_HEADS へ収載する（満たさない／判定できない場合は収載しない）。
+      4. 新たに deny できるようになった形と、意図的に allow のままにする形の
+         **両方**を tests/test_guard_bash_writes.py の LEGACY_DENY_COMMANDS と
+         allow 固定テストへ追加する。
+      5. 本「既知の限界」を更新する。
 
 fail-open: 内部エラーでは allow。検知した違反のみ deny。ただし字句解析できない
 入力（未閉じシングル／ダブルクォート・未閉じバッククォート・未閉じ `$(` ・末尾の
@@ -100,7 +151,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _ticket_lib as lib  # noqa: E402
 
 # 保護対象に言及するコマンドで許可する先頭コマンド（読み取り・移動系）。
-# いずれも「引数だけでファイルを書き込む経路を持たない」ことが条件。
+# 収載の条件は「引数だけでファイルを書き込む経路を持たない」か、
+# **持つ場合はその経路を下記の追加規則で個別に deny できていること**
+# （sed・awk・sort・uniq・find・git は後者。書き込み経路の棚卸しは設計書
+# docs/designs/KLK-010.md §3-9 の表を正とし、追加時の手順はモジュール
+# docstring「既知の限界」末尾の5手順に従う）。
 # xargs（任意コマンド実行）・tee/cp/rm/touch（書き込み系）・
 # python3/perl/ruby/node（任意実行。READONLY_SCRIPTS の例外のみ）は載せない。
 ALLOWED_HEADS = {
@@ -111,7 +166,8 @@ ALLOWED_HEADS = {
     "pwd", "echo", "cut", "tr", "nl", "rev", "realpath", "readlink",
     "mv",    # active/ ↔ done/ の移動・アーカイブは設計上 Bash mv が正規手段
     "sed",   # -i（in-place）・w コマンドが無ければ読み取り
-    "awk",   # プログラム内リダイレクト（print > file）が無ければ読み取り
+    "awk",   # プログラム内リダイレクト（print > file）・system()・
+             # 書き出し／外部コード読み込みオプションが無ければ読み取り
     "find",  # -exec / -delete 等が無ければ読み取り
     "git",   # サブコマンドを別途判定
 }

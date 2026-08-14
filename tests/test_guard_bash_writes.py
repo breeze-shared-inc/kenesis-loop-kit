@@ -54,6 +54,37 @@ LEGACY_DENY_COMMANDS = [
     # --- cd + 相対パス ---
     "cd tickets/active && rm APP-001.md",
     "cd tickets/done && echo x > APP-001.md",
+    # --- C3: gawk の in-place 拡張と外部コード読み込みオプション ---
+    "awk -i inplace '{gsub(/a/,\"b\")}1' tickets/active/APP-001.md",
+    "awk -i inplace '{gsub(/a/,\"b\")}1' docs/SPEC.md",
+    "awk -iinplace '{print}' tickets/active/APP-001.md",
+    "awk --include inplace '{print}' tickets/active/APP-001.md",
+    "awk --include=inplace '{print}' tickets/active/APP-001.md",
+    "awk -i inplace '{print}' tickets/active/APP-001.md #'",
+    "awk -f prog.awk tickets/active/APP-001.md",
+    # --- C4: awk の外部コマンド実行 ---
+    "awk 'BEGIN{system(\"rm tickets/active/APP-001.md\")}'",
+    "awk '{system(\"rm tickets/active/APP-001.md\")}' /dev/null",
+    "awk 'END{system(\"rm tickets/active/APP-001.md\")}' /dev/null",
+    "awk 'BEGIN{system(\"rm docs/SPEC.md\")}'",
+    "awk 'BEGIN{system(\"rm docs/SPEC.md\")}' #'",
+    # --- H2: 保護対象を作業ディレクトリとする相対パス書き込み ---
+    "cd tickets/active && awk '{print > \"APP-001.md\"}' in.txt",
+    "cd tickets/active && awk '{printf \"x\" >> \"APP-001.md\"}' in.txt",
+    "cd tickets/active && awk -v f=APP-001.md '{print > f}' in.txt",
+    "cd tickets/active && awk '{print > f}' f=APP-001.md in.txt",
+    "cd tickets/active && sed 's/a/b/w APP-001.md' in.md",
+    "cd tickets/active; sed 's/a/b/w APP-001.md' in.md #'",
+    "cd tickets/active && sort -o APP-001.md in.md",
+    "cd tickets/active && uniq in.md APP-001.md",
+    "cd tickets/active && ls $(rm APP-001.md)",
+    "cd tickets/active && ls `rm APP-001.md`",
+    "cd tickets/active && cat <(rm APP-001.md)",
+    # --- 旧版でも allow だったが本改訂で閉じた形（維持規律3が許容する追加） ---
+    "sort -o tickets/active/APP-001.md in.md",
+    "sort --output=docs/SPEC.md x.md",
+    "uniq in.md tickets/active/APP-001.md",
+    "find tickets/active -name '*.md' -fprint0 /tmp/x",
 ]
 
 
