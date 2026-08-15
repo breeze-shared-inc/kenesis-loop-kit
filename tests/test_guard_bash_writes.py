@@ -22,6 +22,20 @@ def payload(command):
 #      対応する回帰ケースを本リストへ追加すること。
 #   3. 「旧版が deny していた集合」に限らず、将来見つかった穴を塞いだ時点で
 #      本リストへ追加してよい。
+#   4. 収載の基準は「**old（merge-base 72ae730）が deny していたか**」または
+#      「本改訂で塞いだ穴か」である。
+#      - `old=allow` の形を「新版の保守的既定（未知は deny）によって deny に
+#        なった」という理由**だけ**で入れてはならない（将来安全性を確認して
+#        緩める余地を残すため）。
+#      - **`old=deny` の形は、現在は誤deny寄りに見えても収載してよい。**
+#        例: `awk 'BEGIN{xyzzy("rm docs/SPEC.md")}'` は実機 gawk が構文として
+#        受け付けない未知の関数名だが、旧版は awk を ALLOWED_HEADS に持たず
+#        保護対象に言及する awk をコマンドごと deny していた＝old=deny であり、
+#        収載は「未知の呼び出し名は deny」という機械的既定の回帰ガードとして
+#        機能する（この1行を消すとその既定が守られなくなる）。
+#      - **将来 allow へ緩める余地を残したい形は、本リストへ収載せず個別テストと
+#        INVENTORY_CASES で判定を固定する。** 例: `@namespace`（old=deny だが
+#        安全性を確認できれば許可文字集合へ加える余地を残す）。
 LEGACY_DENY_COMMANDS = [
     # --- 既存の書き込みベクタ ---
     "echo x > tickets/active/APP-001.md",
@@ -121,11 +135,37 @@ LEGACY_DENY_COMMANDS = [
     "awk '/\"/ {system(\"rm docs/SPEC.md\")}' in.txt",
     "awk 'BEGIN{x=\"(/a\"; system(\"rm /docs/SPEC.md\")}'",
     "awk 'BEGIN{x=1/2; system(\"rm docs/SPEC.md\")/3}'",
+    # --- C6: $'...'（ANSI-C 引用）の hex エスケープによるバイパス（QT-1）。
+    # bash が \x22 を `"` へ、\x7c を `|` へ復号するため、hook から見ると全体が
+    # 1つの巨大な文字列リテラル（安全）に見えるが、実機では文字列が途中で閉じて
+    # system(...) と入力パイプ getline が実行コードとして残る。使い捨て
+    # ディレクトリで実機 gawk が EXIT 0 でファイルを削除することを確認済み ---
+    "awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+    "tickets/active/APP-001.md\\x22)\\x22\"}'",
+    "cd tickets/active && awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+    "APP-001.md\\x22)\\x22\"}'",
+    "awk $'BEGIN{x=\"foo\\x22(\\x22rm "
+    "tickets/active/APP-001.md\\x22\\x7cgetline x)\\x22\"}'",
+    "cd tickets/active && awk $'BEGIN{x=\"foo\\x22(\\x22rm "
+    "APP-001.md\\x22\\x7cgetline x)\\x22\"}'",
+    # degraded 版（末尾に ` #'` を足すだけで字句解析が失敗する）
+    "awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+    "tickets/active/APP-001.md\\x22)\\x22\"}' #'",
+    # 印トークンの挿入位置の回帰ガード（既存テストと同形）
+    "rm $'tickets/active/APP-001.md'",
     # --- 旧版でも allow だったが本改訂で閉じた形（維持規律3が許容する追加） ---
     "sort -o tickets/active/APP-001.md in.md",
     "sort --output=docs/SPEC.md x.md",
     "uniq in.md tickets/active/APP-001.md",
     "find tickets/active -name '*.md' -fprint0 /tmp/x",
+    # C6 の SPEC.md 宛て（ドリフト検知のバックストップが無い経路）
+    "awk $'BEGIN{x=\"foo\\x22system(\\x22rm docs/SPEC.md\\x22)\\x22\"}'",
+    # C6-2: sed の w（ファイル書き出し）を \x77 で隠す形（QT-1 は head 非依存）
+    "sed $'s/a/b/\\x77 tickets/active/APP-001.md' in.md",
+    # SH-1: 行継続で語を分断する形（QT-2。bash は削除して連結する）
+    "rm tickets/acti\\\nve/APP-001.md",
+    # INV-SH-04: 証拠そのものを符号化する形（QT-3 の証拠復号）
+    "rm $'\\x74ickets/active/APP-001.md'",
 ]
 
 # 設計書 docs/designs/KLK-010.md §3-9 の書き込みベクタ棚卸し表と、実装の
@@ -204,6 +244,37 @@ INVENTORY_CASES = (
      "sed '1e cat /etc/hosts' tickets/active/APP-001.md", "allow"),
     ("INV-SED-08", "-n '1,5p'（読み取り・意図的に allow）",
      "sed -n '1,5p' tickets/active/APP-001.md", "allow"),
+    # --- シェル展開の次元（§3-9-2。bash が解釈するがコマンド文字列上は
+    # 見えない変換）。この次元は第4版まで棚卸し表に1行も無く、C6 はその空白
+    # から出た。相違の**向き**（allow 方向＝危険／deny 方向＝保守的）を
+    # 判定として固定する ---
+    ("INV-SH-01", "$'...' の hex エスケープで system( を隠す（QT-1）",
+     "awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+     "tickets/active/APP-001.md\\x22)\\x22\"}'", "deny"),
+    ("INV-SH-02", "$'...' の hex エスケープで | （入力パイプ）を隠す（QT-1）",
+     "awk $'BEGIN{x=\"foo\\x22(\\x22rm "
+     "tickets/active/APP-001.md\\x22\\x7cgetline x)\\x22\"}'", "deny"),
+    ("INV-SH-03", "$'...' × 保護対象 cwd（リテラルパスが現れない形・QT-1）",
+     "cd tickets/active && awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+     "APP-001.md\\x22)\\x22\"}'", "deny"),
+    ("INV-SH-04", "$'...' で保護対象パス自体を符号化して証拠を隠す（QT-3）",
+     "rm $'\\x74ickets/active/APP-001.md'", "deny"),
+    ("INV-SH-05", '$"..."（ロケール翻訳・復号は原理的に不可能＝QT-1 のみ）',
+     'awk $"BEGIN{print}" tickets/active/APP-001.md', "deny"),
+    ("INV-SH-06", "行継続（\\+改行）による語の分断（QT-2）",
+     "rm tickets/acti\\\nve/APP-001.md", "deny"),
+    ("INV-SH-07", "ブレース展開による分断（**未対応**・別チケット）",
+     "rm tickets/{active,done}/APP-001.md", "allow"),
+    ("INV-SH-08", "glob（保護対象ディレクトリが素で残り証拠になる形）",
+     "rm tickets/active/*.md", "deny"),
+    ("INV-SH-09", "glob（パス中に * が入り分断される形・**未対応**）",
+     "rm tickets/acti*e/APP-001.md", "allow"),
+    ("INV-SH-10", "チルダ展開（残りのパスが証拠として残る）",
+     "rm ~/kit/tickets/active/APP-001.md", "deny"),
+    ("INV-SH-11", "パラメータ展開（値は不可視＝構造的限界・**未対応**）",
+     "f=tickets/active/APP-001.md; rm $f", "allow"),
+    ("INV-SH-12", "算術展開（$( としてコマンド置換扱い＝保守側の副作用）",
+     "echo $((1+2)) && cat tickets/active/APP-001.md", "allow"),
 )
 
 
