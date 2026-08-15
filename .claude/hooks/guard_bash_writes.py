@@ -21,7 +21,26 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
     ステートメント分割・特殊構文判定を引き起こさない。`$(...)` / バッククォート /
     プロセス置換は内側テキストを substs へ退避し、元の位置には**位置インデックス
     付きのプレースホルダ**（`__KLK_SUBST_0__`）を置く。インデックスがあることで
-    「どの語がどの置換に由来するか」を後段が復元できる。
+    「どの語がどの置換に由来するか」を後段が復元できる。行継続（`\`+改行）は
+    bash と同じく**削除して前後の語を連結する**（空白へ置換すると
+    `rm tickets/acti\<改行>ve/APP-001.md` の語が割れて証拠が分断される）。
+    ただしシングルクォートの**内側**では bash は行継続を解釈せずリテラルの
+    `\`+改行として残す（＝そこで語が割れる）のに対し、本 hook は内側でも
+    連結する。相違は**証拠が増える方向（保守側）**にのみ働く。
+
+  判定不能なステートメント（ANSI-C 引用 $'...' / ロケール翻訳 $"...'）—
+    bash はこの2形を**展開時にデコード／翻訳する**ため、hook が見る字面と
+    コマンドが実際に受け取る文字列が一致しない（`$'…\x22…'` の `\x22` は
+    実際には `"` になり、`\x7c` は `|` になる）。一致しないことが確定して
+    いる以上、ホワイトリスト（awk のプログラム本文）でもブラックリスト
+    （`system(` 等の照合）でも判定できない — 前者は「見えているテキストが
+    安全か」しか確認できず、後者は符号化された字面に一致しないためである。
+    そこで lex() は**クォート外の** `$'` / `$"` を検出して「判定不能」の印を
+    トークン列へ残し（語の内容は1文字も変えない）、L3 は言及ゲート／保護対象
+    cwd が成立した時点でそのステートメントを無条件に deny する。証拠が無い
+    ステートメント（`printf $'a\tb'` 単独）は従来どおり allow である。
+    ダブルクォート内の `$'` は bash も展開しないため印を置かない。
+    判定は head 非依存（awk 限定にすると `sed $'s/a/b/\x77 ...'` が残る）。
 
   プレースホルダ契約 — L3 は置換を2方向に評価する。内側方向（置換の中身が
     書き込み。`ls $(rm tickets/...)`）は substs を同じ判定へ再帰させる。外側方向
@@ -38,7 +57,12 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
     トークン境界に依存しないため `python3 -c "open('docs/SPEC.md','w')..."` のように
     1トークンへ埋め込まれたパスも検出する。正規化を除外判定より**先に**行うため、
     `./tickets/active/../../.claude/../tickets/active/X.md` のようなパストラバーサルで
-    除外を悪用できない。
+    除外を悪用できない。素の字面で見つからないときに限り、ANSI-C エスケープを
+    復号した字面でももう一度判定する（`rm $'\x74ickets/active/APP-001.md'` の
+    ように**証拠そのものを符号化して隠す**形を捕捉するため）。復号は
+    **証拠収集専用**であり、判定用テキスト（awk のプログラム本文・先頭コマンド
+    名・cd の移動先）へ渡してはならない（「復号後は安全な形」と誤認する余地を
+    作らないため）。復号器が誤っても最悪「証拠が増えない＝現状維持」になる。
 
   L3 構文（find_violation）— 「証拠があるときだけ deny する」。出力リダイレクトは
     ステートメント単位で判定し、リダイレクト先が保護対象パスか、**同一コマンド内で
@@ -100,8 +124,18 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
   - 別のコマンドで export された変数経由のリダイレクトは検出できない（hook は
     1回の Bash 呼び出ししか見えない）。tickets/ 宛ては check_loop_integrity.py の
     ドリフト検知がバックストップになるが、docs/SPEC.md 宛てにはバックストップが無い。
-  - `$'...'`（ANSI-C 引用）は shlex が bash と同一には解釈しないが、語として
-    1トークンに収まるため判定は保守側（deny 方向）へ倒れる。
+  - **シェル展開の次元**（bash が解釈するがコマンド文字列上は見えない変換）の
+    うち、次は**未対応**である。いずれも本 hook の導入当初から allow で、
+    保護対象パスがコマンド文字列上で再構成できないため検出できない:
+    ブレース展開（`rm tickets/{active,done}/APP-001.md`）、パス中に `*` が
+    入って分断される glob（`rm tickets/acti*e/APP-001.md`）、パラメータ展開
+    （`f=tickets/active/APP-001.md; rm $f` の**引数側**。値が別コマンドで
+    export された場合は原理的に見えない。リダイレクト先については同一コマンド
+    内の代入を guarded_vars が追跡して deny する）。`tickets/active/*.md` の
+    ように保護対象ディレクトリが素で残る形は従来どおり deny される。
+    ANSI-C 引用・ロケール翻訳・行継続は上記「判定不能なステートメント」と
+    L1 の行継続連結で対処済み。履歴展開（`!!`・`!$`）は非対話シェルでは
+    既定で無効のため相違を生まない。
   - cd の作業ディレクトリ追跡はリテラルのオペランドに限る。`cd "$DIR"` /
     `cd $(...)` / `cd` / `cd -` は追跡を打ち切り、以降は cwd による強化を行わない。
   - cwd と相対パスの**両方に接頭辞が分割**された形は捕捉できない
@@ -147,7 +181,15 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
     awk のプログラムが空白で分割されるため、`-` で始まる断片（`{print -$2}` の
     `-$2}`）がオプションと見なされて deny になる（旧版は degraded の awk を
     常に deny していたため回帰ではない。正常に字句解析できる同じコマンドは
-    allow）。
+    allow）／**クォート外に `$'...'` を含む形**（`awk -F$'\t' '{print $1}' T`・
+    `grep $'\t' T`・`sed $'s/\t/ /' T`）は判定不能として deny になる。
+    **回避策が確実に存在する**: `awk -F'\t'`（awk 自身がエスケープを解釈する）・
+    `grep -P '\t'`・リテラルのタブを書く（`"$(printf '\t')"` は printf が
+    ホワイトリスト非収載のため使えない）／同じく `$"..."` を含む形／
+    degraded mode ではクォート状態を追えないため、引用符の**内側**に `$'`・
+    `$"` の2文字並びがあるだけで deny になる（`awk '{print "cost: $"}' T #'`）／
+    ANSI-C 復号によって保護対象パスが現れる語を含む形（`\x74ickets/...` の
+    ような字面を実ファイル名として扱っている場合のみ）。
   - ホワイトリスト収載コマンドのうち次の書き込み／実行経路は**未対応**である。
     いずれも本 hook の導入当初から存在する穴で、別チケットで扱う:
     `python3 IDENTIFIER=VALUE <READONLY_SCRIPT> ...` による READONLY_SCRIPTS の
@@ -384,6 +426,35 @@ AWK_PROGRAM_TEXT_FLAGS = ("-e", "--source")
 AWK_VALUE_CONSUMING_FLAGS = ("-F", "-v", "-e",
                              "--field-separator", "--assign", "--source")
 
+# --- L1: ANSI-C 引用 $'...' / ロケール翻訳 $"..." の扱い（QT-1・QT-3）--------
+#
+# bash はこの2形を**展開時にデコード／翻訳する**ため、hook が見る字面と
+# コマンドが実際に受け取る文字列が一致しない（`$'…\x22…'` は `"` になり、
+# `\x7c` は `|` になる）。一致しないことが確定している以上、ホワイトリスト
+# （AW-7）でもブラックリスト（AW-5／AW-6・SED_WRITE_RE）でも判定できない
+# ——「見えているテキストが安全か」も「見えているテキストが危険か」も、
+# 実行されるテキストと異なる入力に対しては意味を持たないためである。
+# したがって「判定不能」の印を字句レイヤで残し、保護対象への言及または
+# 保護対象 cwd が成立した時点で deny する（証拠が無ければ従来どおり allow）。
+ANSI_QUOTE_KIND = "ansiq"          # 語でも演算子でもない印トークンの種別
+ANSI_QUOTE_RE = re.compile(r"\$['\"]")   # degraded（クォート状態を追えない）用
+ANSI_QUOTE_REASON = (
+    "ANSI-C 引用（$'...'）／ロケール翻訳（$\"...\"）を含むコマンドは判定でき"
+    "ません（bash が展開時にエスケープを復号・翻訳するため、hook が見る文字列と"
+    "実際にコマンドが受け取る文字列が一致しません）。保護対象に触れるコマンドで"
+    "は使わず、エスケープを使わない書き方（awk -F'\\t' / grep -P '\\t' 等）を"
+    "使ってください")
+
+# 証拠収集専用の ANSI-C 復号（QT-3）。**判定用テキストには決して使わない。**
+# bash が $'...' 内で認識するエスケープのみを対象とし、認識しない形
+# （`\|`・`\d` 等）はバックスラッシュを残す（bash と同じ）。
+ANSI_C_SIMPLE_ESCAPES = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b",
+                         "f": "\f", "n": "\n", "r": "\r", "t": "\t",
+                         "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+ANSI_C_ESCAPE_RE = re.compile(
+    r"\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}"
+    r"|[0-7]{1,3}|c.|[abeEfnrtv\\'\"?])")
+
 # 字句解析に失敗した入力向けの簡易判定でのみ使う（degraded_violation）。
 # 旧版（KLK-010 以前）の find_violation と同じ分割を再現するためのもので、
 # 正常経路では使わない。
@@ -421,9 +492,45 @@ def guarded_paths(text):
     return found
 
 
+def ansi_c_decode(text):
+    """$'...' の ANSI-C エスケープを復号する（QT-3）。
+
+    **証拠収集専用。** 復号結果を is_guarded_token の追加判定以外で使っては
+    ならない（プログラム本文の判定に渡すと「復号後は安全な形」と誤認する
+    余地が生まれる。判定不能な入力は QT-1 が先に deny するため必要も無い）。
+    復号できない・未知のエスケープは元の字面を残す（bash と同じ挙動）。
+    """
+    if "\\" not in text:
+        return text
+
+    def replace(match):
+        body = match.group(1)
+        try:
+            if body[0] in "xuU":
+                return chr(int(body[1:], 16))
+            if body[0] == "c":
+                return chr(ord(body[1].upper()) ^ 0x40)
+            if body[0] in "01234567":
+                return chr(int(body, 8) & 0xFF)
+            return ANSI_C_SIMPLE_ESCAPES[body]
+        except (ValueError, KeyError, IndexError):
+            return match.group(0)  # 例外は出さない（hook 全体は fail-open）
+
+    return ANSI_C_ESCAPE_RE.sub(replace, text)
+
+
 def is_guarded_token(text):
-    """テキスト（トークン・コマンド断片のいずれでも可）が保護対象に言及するか。"""
-    return bool(guarded_paths(text))
+    """テキスト（トークン・コマンド断片のいずれでも可）が保護対象に言及するか。
+
+    QT-3: 素の字面で見つからないときに限り、ANSI-C エスケープを復号した字面でも
+    もう一度判定する（`rm $'\\x74ickets/active/APP-001.md'` のように**証拠その
+    ものを符号化して隠す**形を捕捉するため）。判定に使えるテキストが増える
+    方向にのみ作用し、deny が allow へ転じることはない。
+    """
+    if guarded_paths(text):
+        return True
+    decoded = ansi_c_decode(text)
+    return decoded != text and bool(guarded_paths(decoded))
 
 
 def mentions_guarded(values):
@@ -484,12 +591,17 @@ def _take_backtick(command, start, buf, substs):
 def lex(command):
     """コマンドを (tokens, substitutions) へ分解する。
 
-    tokens: [("w", クォート解除済みの語), ("op", 演算子文字列), ...]
+    tokens: [("w", クォート解除済みの語), ("op", 演算子文字列),
+             ("ansiq", "$'" | '$"')]  ← QT-1 の「判定不能」の印
     substitutions: `$(...)` / バッククォート / プロセス置換の内側テキスト
     未閉じクォート・未閉じ括弧では ValueError を送出する。
     """
-    command = command.replace("\\\n", " ").replace("\n", ";")
-    tokens, substs, buf = [], [], []
+    # QT-2: bash は行継続 `\`+改行を**削除して前後の語を連結する**。空白へ
+    # 置換すると `rm tickets/acti\<改行>ve/APP-001.md` の語が割れて言及ゲートが
+    # 偽になり、bash が実際には保護対象を rm するのに allow になる。連結は
+    # 部分文字列としての証拠を失わせないため、証拠は増える方向にしか動かない。
+    command = command.replace("\\\n", "").replace("\n", ";")
+    tokens, substs, buf, pending = [], [], [], []
 
     def flush():
         chunk = "".join(buf)
@@ -497,6 +609,14 @@ def lex(command):
         if chunk.strip():
             for word in shlex.split(chunk, comments=False, posix=True):
                 tokens.append(("w", word))
+        # QT-1: 印は**そのチャンクの語をすべて出した後**に置く。演算子と
+        # 「その次の語」の間に割り込ませると redirect_violation がリダイレクト
+        # 先を見失う（`echo x > $'tickets/active/APP-001.md'` が allow になる）。
+        # flush() は演算子トークンを積む直前と入力末尾でしか呼ばれないため、
+        # この位置なら印が演算子と語の間へ入ることは構造的に起こらない。
+        for mark in pending:
+            tokens.append((ANSI_QUOTE_KIND, mark))
+        del pending[:]
 
     i, n, quote = 0, len(command), ""
     while i < n:
@@ -535,6 +655,14 @@ def lex(command):
             quote = c
             i += 1
             continue
+        # QT-1: クォート**外**の `$'` / `$"` だけが ANSI-C 引用・ロケール翻訳に
+        # なる。`"$'...'"` のようにダブルクォート内に現れる `$'` は bash では
+        # 展開されない（素の `$` + `'`）ため、この判定は「通常状態」の分岐に
+        # しか置いてはならない。**語の取り込み方は一切変えない**（`$` はこの後の
+        # 共通処理で buf へ積まれ、続く引用符が従来どおりクォート状態を開始
+        # する）＝証拠となるテキストは1文字も変わらない
+        if c == "$" and i + 1 < n and command[i + 1] in "'\"":
+            pending.append(command[i:i + 2])     # "$'" または '$"'
         if c == "$" and i + 1 < n and command[i + 1] == "(":
             i = _take_subst(command, i + 2, buf, substs)
             continue
@@ -621,6 +749,10 @@ def pipe_segments(statement):
                 skip_next = kind_of_op in ("redirect_out", "redirect_in",
                                            "heredoc")
             continue
+        if kind != "w":
+            continue  # QT-1 の印トークンは語ではない。**skip_next を消費させ
+            # ない**ため、この判定は skip_next の処理より前に置く（印は演算子と
+            # 語の間に入らない設計だが、防御的にこの順序にする）
         if skip_next:
             skip_next = False  # リダイレクト先・heredoc の終端子はコマンドではない
             continue
@@ -1163,6 +1295,14 @@ def statement_violation(statement, guarded_vars, substs=(), cwd=""):
     if not (cwd_is_guarded(cwd) or
             mentions_guarded(expand_all(words, substs))):
         return None
+    # QT-1: この文には bash が展開時にデコード／翻訳する語がある。hook が見て
+    # いる字面と実行される文字列が一致しないことが確定しているため、ホワイト
+    # リスト（AW-7）でもブラックリスト（AW-5／AW-6・SED_WRITE_RE）でも判定
+    # できない。**証拠（言及ゲート／保護対象 cwd）が立った時点で無条件に
+    # deny する。** ゲートの後に置くのは `printf $'a\tb'` 単独のような保護対象と
+    # 無関係なコマンドを巻き添えにしないため
+    if any(k == ANSI_QUOTE_KIND for k, _ in statement):
+        return ANSI_QUOTE_REASON
     if any(k == "op" and op_kind(v) == "heredoc" for k, v in statement):
         return "ヒアドキュメントによる書き込みの可能性"
     for segment_words in pipe_segments(statement):
@@ -1203,6 +1343,14 @@ def degraded_violation(command, cwd=""):
             continue
         words_list = [p.split() for p in parts]
         if cwd_is_guarded(cwd) or any(mentions_guarded(w) for w in words_list):
+            # QT-1: degraded はクォート状態を追えないため、`$'` / `$"` の検出は
+            # **部分文字列判定**で行う（クォート内側の `$'` にも発火する＝
+            # 保守側）。**この規則を degraded にも置くことが必須である** —
+            # 置かないと `awk $'…\x7cgetline…' #'` のように未閉じクォートを
+            # 1つ足すだけで判定不能な入力がそのまま通る（degraded の
+            # ブラックリストは符号化された字面に一致しない）
+            if ANSI_QUOTE_RE.search(statement):
+                return ANSI_QUOTE_REASON
             for words in words_list:
                 # degraded=True: awk は AW-7 を使わず AW-5／AW-6 で見る
                 reason = segment_violation(words, cwd=cwd, degraded=True)

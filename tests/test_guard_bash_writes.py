@@ -1138,6 +1138,98 @@ class TestGuardBashWrites(unittest.TestCase):
             "awk $'BEGIN{x=\"foo\\x22(\\x22rm "
             "APP-001.md\\x22\\x7cgetline x)\\x22\"}'")
 
+    # --- KLK-010 Phase 10: QT-1／QT-2／QT-3（字句レイヤの ANSI-C デコード相違を
+    # 閉じる）。設計書 §3-2・§3-4「判定不能なステートメント」・§3-6 D9・
+    # §4-2〜§4-4(g)(h)・§4-5-4 ---
+    #
+    # QT-1: クォート**外**の `$'…'`／`$"…"` を含むステートメントは、hook が
+    # 見ている字面と bash が実際にコマンドへ渡す文字列が一致しないことが確定
+    # している。ホワイトリスト（AW-7）は「見えているテキストが安全か」しか
+    # 確認できず、ブラックリスト（AW-5／AW-6・SED_WRITE_RE）は符号化された
+    # 字面に一致しないため、どちらでも判定できない。したがって「判定不能」の
+    # 印を字句レイヤで残し、証拠（言及ゲート／保護対象 cwd）が立った時点で
+    # 無条件に deny する。
+
+    def test_ansi_c_quoted_degraded_still_deny(self):
+        # T-QT1c: C6 の5形の末尾に ` #'` を付けて未閉じクォート＝degraded へ
+        # 落とした形。**degraded 側に QT-1 を置かないと ` #'` を1つ足すだけで
+        # 全形が通る**（`\x7c` はコマンド文字列上に `|` として現れないため
+        # degraded の statement.split("|") がパイプ分割せず、後段 head が
+        # getline にならない。AW-1／AW-5／AW-6／AW-3 のいずれにも一致しない
+        # ＝設計書 §3-6 D9 の11段トレース）。この規則を落とすと必ず失敗する
+        for command in (
+            "awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+            "tickets/active/APP-001.md\\x22)\\x22\"}' #'",
+            "cd tickets/active && awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+            "APP-001.md\\x22)\\x22\"}' #'",
+            "awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+            "docs/SPEC.md\\x22)\\x22\"}' #'",
+            "awk $'BEGIN{x=\"foo\\x22(\\x22rm "
+            "tickets/active/APP-001.md\\x22\\x7cgetline x)\\x22\"}' #'",
+            "cd tickets/active && awk $'BEGIN{x=\"foo\\x22(\\x22rm "
+            "APP-001.md\\x22\\x7cgetline x)\\x22\"}' #'",
+        ):
+            with self.subTest(command=command):
+                self.assertDeny(command)
+
+    def test_ansi_c_quoted_sed_write_command_deny(self):
+        # T-QT1d: QT-1 が head 非依存であることの固定。`\x77` は bash が `w`
+        # （sed のファイル書き出しコマンド）へ復号するため、SED_WRITE_RE は
+        # 復号前のテキストに一致しない。awk 限定の規則にすると1形目が通る
+        self.assertDeny(
+            "sed $'s/a/b/\\x77 tickets/active/APP-001.md' in.md")
+        # エスケープを含まない同型（従来から SED_WRITE_RE でも deny）
+        self.assertDeny("sed $'s/a/b/w tickets/active/APP-001.md' in.md")
+
+    def test_ansi_c_quote_mark_does_not_break_redirect_target_deny(self):
+        # T-QT1e: 印トークンの挿入位置（flush() 完了後）が redirect_violation を
+        # 壊していないことの検出器。印を演算子と「次の語」の間に置く実装だと
+        # リダイレクト先を見失い1形目が allow に転じる
+        self.assertDeny("echo x > $'tickets/active/APP-001.md'")
+        self.assertDeny("echo x > $'docs/SPEC.md'")
+        self.assertDeny("rm $'tickets/active/APP-001.md'")
+
+    def test_locale_translation_quoted_program_deny(self):
+        # T-QT1f: `$"…"`（ロケール翻訳）。メッセージカタログがあれば任意の
+        # 文字列へ置換されるため**復号は原理的に不可能**で、判定不能として
+        # deny する以外に対処が無い（設計書 §6 R30・INV-SH-05）
+        self.assertDeny('awk $"BEGIN{print}" tickets/active/APP-001.md')
+        self.assertDeny('awk $"BEGIN{print}" docs/SPEC.md')
+
+    def test_ansi_c_quote_without_guarded_evidence_allow(self):
+        # T-QTOK: QT-1／QT-3 の誤deny上限の固定。
+        #   1・2: 証拠（言及ゲート）が立たない `$'…'` は巻き添えにしない
+        #        （2 はステートメント単位の粒度により第2文だけがゲート偽）
+        #   3:   ダブルクォート内の `$'` は bash も展開しないため印を置かない
+        #   4・5: `$'…'` の**代替となる推奨形**が使えること（R29 ① の回避策が
+        #        実在することの担保）
+        self.assertAllow("printf $'a\\tb'")
+        self.assertAllow("cat tickets/active/APP-001.md && printf $'a\\tb'")
+        self.assertAllow("echo \"$'not ansi'\" tickets/active/APP-001.md")
+        self.assertAllow("awk -F'\\t' '{print $1}' tickets/active/APP-001.md")
+        self.assertAllow(
+            "awk '{printf \"%s\\t%s\\n\", $1, $2}' tickets/active/APP-001.md")
+
+    def test_line_continuation_joins_words_deny(self):
+        # T-QT2: bash は行継続（`\`+改行）を**削除して前後を連結する**。空白へ
+        # 置換していた第4版までは語が割れて言及ゲートが偽になり、bash が実際に
+        # 保護対象を rm するのに allow だった（設計書 §2-3 SH-1・old=allow）
+        self.assertDeny("rm tickets/acti\\\nve/APP-001.md")
+        self.assertDeny("rm docs/SP\\\nEC.md")
+
+    def test_line_continuation_making_non_guarded_name_allow(self):
+        # T-QT2b: QT-2 の帰結。連結後の語は `docs/SPEC.md.bak` であり bash も
+        # 同じ語を作る＝**実際には保護対象を触らない**ため allow が正しい
+        # （第4版までは誤deny。設計書 §4-9 の許容分類8）
+        self.assertAllow("echo x > docs/SPEC.md\\\n.bak")
+
+    def test_ansi_c_encoded_guarded_path_deny(self):
+        # T-QT3: 証拠そのものを符号化して隠す形。`\x74` は `t` へ復号され
+        # `tickets/active/…` になる。QT-3（証拠収集に限った復号）が無ければ
+        # 言及ゲートが偽のまま allow になる（設計書 §3-3・INV-SH-04）
+        self.assertDeny("rm $'\\x74ickets/active/APP-001.md'")
+        self.assertDeny("rm $'\\x64ocs/SPEC.md'")
+
     def test_awk_everyday_read_programs_allow(self):
         # T-AW7OK: AW-7 が日常の読み取り awk を誤denyしないことの固定
         # （第4版で最重要の allow 固定。設計書 §3-6 D8 の16形・§4-5-3 の
