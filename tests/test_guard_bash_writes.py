@@ -1659,6 +1659,75 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertDeny(
             "awk 'BEGIN{\nsystem(\"rm docs/SPEC.md\")\n}'")
 
+    # --- KLK-010 tester round9（reviewer 3回目差し戻し後）: D-1/D-2 の逸脱・
+    # F1-2/F1-7 の分類確認のため追加。normalize_line_continuations() を破る
+    # 形を約90通り探索したが新規バイパスは見つからなかった。以下はその過程で
+    # 見つかった「既存テストに無い正当な allow／回帰対象」を固定する ---
+
+    def test_backtick_readonly_substitution_allow(self):
+        # D-2 の回帰確認: `_skip_balanced` がバッククォート領域を
+        # `_skip_backtick` と同じ規則で読み飛ばすよう変更されたことが、
+        # 日常的な（読み取り専用の）バッククォート置換の解析を壊していない
+        # ことを固定する。ネスト（$(...) を内側に持つ形）・クォート内容
+        # （bash 自身もバッククォート内ではクォート状態を追わない仕様）を含む
+        self.assertAllow("echo `date +%Y` tickets/active/APP-001.md")
+        self.assertAllow("echo `echo $(echo hi)` tickets/active/APP-001.md")
+        self.assertAllow(
+            "echo `echo \"a'b\"` tickets/active/APP-001.md")
+        self.assertAllow("echo `git rev-parse HEAD` tickets/active/APP-001.md")
+
+    def test_line_continuation_even_run_separator_survives_nested_substitution_deny(
+            self):
+        # T-C7 と AC4（置換再帰）の組み合わせ確認: 偶数個の `\`+改行 が
+        # コマンド置換の内側で「区切り」として働くことは、置換の内側が
+        # find_violation により独立に再正規化・再字句解析されるため、
+        # ネスト深さに関わらず（MAX_SUBST_DEPTH=3 の境界を越えても）
+        # 保たれなければならない。実機 bash で深さ1〜5すべてにおいて
+        # 内側の rm が独立コマンドとして実行されファイルが削除されることを
+        # 確認済み（tester round9）
+        for depth in range(1, 6):
+            inner = "echo x\\\\\nrm tickets/active/APP-001.md"
+            wrapped = inner
+            for _ in range(depth):
+                wrapped = "echo $(%s)" % wrapped
+            with self.subTest(depth=depth):
+                self.assertDeny(wrapped)
+
+    def test_line_continuation_even_backslash_run_generalizes_across_heads_deny(
+            self):
+        # T-C7a の一般化固定: 「head が許可コマンドなら何でも成立する」という
+        # reviewer の指摘（3回目レビューメモ）を、既存テストが使っていない
+        # 許可 head（cd・grep・awk・cut）でも実機 bash と突き合わせて固定する。
+        # いずれも偶数個（2個）の `\`+改行 の後続に書き込みコマンドが続き、
+        # 実機 bash はこれを独立した2つ目のステートメントとして実行する
+        for command in (
+            "cd ..\\\\\nrm tickets/active/APP-001.md",
+            "grep x README.md\\\\\nrm tickets/active/APP-001.md",
+            "awk '{print}' README.md\\\\\nrm tickets/active/APP-001.md",
+            "cut -d: -f1 README.md\\\\\nrm tickets/active/APP-001.md",
+        ):
+            with self.subTest(command=command):
+                self.assertDeny(command)
+
+    def test_f1_2_and_f1_7_bash_syntax_error_forms_allow(self):
+        # reviewer 3回目レビューメモ・implementer Phase12/13 実装メモが分類を
+        # 委ねた2形（F1-2／F1-7）。tester round9 で使い捨てディレクトリの
+        # 実機 bash（GNU bash）に投入し検証した:
+        #   F1-2 `cd tickets/active && ls `rm APP-001.md \``
+        #     -> rc=2 "unexpected EOF while looking for matching ``'"
+        #        対象ファイルは変更されない
+        #   F1-7 `cd tickets/active && cat <(rm APP-001.md #')`
+        #     -> rc=2 "unexpected EOF while looking for matching `)'"
+        #        対象ファイルは変更されない
+        # いずれも bash 自身が構文エラーで何も実行しないため、hook が allow
+        # でも実害が無い。§4-9 の許容分類10（bash が実際には保護対象を
+        # 触らない）と同じ根拠で許容できるという tester の判断を固定する。
+        # 将来 lex()／`_skip_balanced` の変更でこれらが「実際に実行される
+        # 構文」に転じた場合はこのテストが deny への変更を要求する形で
+        # 検出できるようにするため、ここに固定しておく
+        self.assertAllow("cd tickets/active && ls `rm APP-001.md \\`")
+        self.assertAllow("cd tickets/active && cat <(rm APP-001.md #')")
+
 
 if __name__ == "__main__":
     unittest.main()
