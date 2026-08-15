@@ -49,9 +49,30 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
     書き込み連鎖を防ぐため）。ホワイトリスト収載コマンドのうち引数だけで書ける
     ものには追加規則を持つ（sed の -i 全表記と w／W コマンド、awk の
     プログラム内リダイレクト・変数束縛・**オプション**〔既知の読み取り専用
-    オプションのホワイトリスト。未知の `-` 始まりの語は deny〕・**system() /
-    @load / @include**・**間接関数呼び出し `@f(...)`**、sort の -o／--output、
-    uniq の第2位置引数、find の書き込み系フラグ、git のサブコマンド）。
+    オプションのホワイトリスト。未知の `-` 始まりの語は deny〕・**プログラム
+    本文**〔下記〕、sort の -o／--output、uniq の第2位置引数、find の
+    書き込み系フラグ、git のサブコマンド）。
+
+  awk のプログラム本文（awk_program_violation）— awk が実際に実行する
+    テキスト（`-e` / `--source` の値と、無ければ位置引数の先頭オペランド）
+    だけを取り出し、**ホワイトリスト**で判定する。ファイル名オペランド・
+    変数束縛値は awk が実行しないため判定対象にしない。判定は
+    (1) 文字列・正規表現リテラルを**左→右の1パス**で除去し
+    (2) 許可文字集合（`@` と `|` を含まない＝間接呼び出し・@load・
+    出力パイプ・`"cmd" | getline`・コプロセスの入口を閉じる）
+    (3) 呼び出し名の許可集合（`system` を含まない。同一プログラム内で
+    `function NAME(` と宣言された名前は許可。**未知の名前は deny**）
+    (4) `print`/`printf` の後に `>` `>>` `|` が現れる出力構文の不在
+    の4段で行う。**未知の文字・未知の関数名は自動的に deny 側へ落ちる**ため、
+    gawk に新しい実行経路が加わってもホワイトリストへ収載しない限りすり抜け
+    ない（規則を積み増すブラックリストではこの次元で4ラウンド連続して穴が
+    出たため、第4版でホワイトリストへ反転した）。1パス除去でなければならない
+    のは、2パス（文字列を全部消してから正規表現を消す等）だと片方のリテラルの
+    内側に見える引用符／スラッシュが実際には外側にあるコードを飲み込むため
+    （`/"/ {system("rm F")}` と `BEGIN{x="(/a"; system("rm /F")}` が実例）。
+    なお degraded mode（下記）は空白分割でプログラム本文の同一性が失われる
+    ためこの判定を適用できず、`system(` / `@load` / `@include` と間接呼び出し
+    `@f(...)` のブラックリスト（語単位＋空白結合テキスト）で見る。
 
   書き込み先オペランドと cwd — 語のうち**構文的に書き込み先と確定している**もの
     （出力リダイレクトの直後の語・sort の -o の値・uniq の第2位置引数）だけを
@@ -95,17 +116,34 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
     未閉じクォートが同時に成立する入力（`grep -E '^(id|title):' tickets/... # don't`）
     は誤denyになる。これは旧版と同一の挙動であり、正常に字句解析できる入力
     （コメントを伴わない同じコマンド）では発生しない。
+  - degraded mode の awk には**プログラム本文のホワイトリスト（AW-7）が
+    及ばない**（空白分割でプログラム本文の同一性が失われるため）。`|` 系は
+    パイプ分割で後段の head が `getline`／`&` になりホワイトリスト非収載で
+    deny、`system (`・`@ f(` は空白結合テキストで deny になるが、この経路には
+    「未知の構文は deny」という機械的既定が無い。degraded の awk は旧版で
+    常に deny だったため保護の後退ではない。
   - 保守側へ倒している判定（誤deny方向。保護対象に言及する／保護対象を cwd と
     する場合に限る）: 保護対象を cwd とする sed のスクリプトに ` w <非空白>` が
     現れる形（`sed 's/a w b/c/'`）／mawk・BWK awk 固有のオプション（`-W ...` 等）と
     gawk の未収載オプション（`-I`・`--trace`・`-O`・`-L`）は AWK_SAFE_FLAGS /
     AWK_SAFE_VALUE_FLAGS に無いため deny になる（安全性を確認してから収載する）／
-    awk の文字列リテラル内に `system(` と書いただけの形／awk の**間接関数
-    呼び出し構文 `@f(...)`**（ユーザー定義関数を間接呼び出しする読み取り専用の
-    用途も deny になる。関数名が文字列変数から供給されるため呼び先が
-    組み込みの system() かユーザー定義関数かを静的に判別できない。なお
-    `PROCINFO["sorted_in"]="cmp"` のような関数名文字列の受け渡しは `@f(` 構文を
-    使わないため影響しない）／degraded mode では
+    **awk のプログラム本文がホワイトリスト（AW-7）の3条件を満たさない形**は
+    すべて deny になる。具体的には ① `@namespace` 指令（`@` は許可文字集合に
+    無い） ② AWK_SAFE_CALLS 未収載の組み込み関数・拡張関数の呼び出し
+    （gawk の新しい関数を含む） ③ `|` を伴う形（`print | "cmd"`・
+    `"cmd" | getline`・`|&`。いずれも実際に外部コマンドを起動する）
+    ④ リテラル**外**にバックスラッシュ・バッククォート・シングルクォート・
+    非ASCII文字が現れる形 ⑤ `{print a (b)}` のような `IDENT (` 形の文字列連結
+    （未知の関数呼び出しに見える） ⑥ プログラムが `$(...)`／バッククォート
+    由来で、置換の内側テキストがシェル引用符を含む形 ⑦ 未閉じの文字列
+    リテラルを含むプログラム ⑧ コメント（`#` 以降）に `@`・`|` を含む形
+    （改行が `;` へ正規化されるためコメント範囲を確定できず除去しない）。
+    いずれも deny 理由文が原因（許可されない文字／関数名）を示す。回避するには
+    `cat`／`grep` を単独で使うか、保護対象パスを引数に取らない形にする。
+    なお**文字列／正規表現リテラルの中身**（`print "contact: a@b (see docs)"`）
+    と**プログラム以外のオペランド**（ファイル名 `'system(1).md'`・変数束縛値）
+    は awk が実行し得ないため判定対象にしない（第4版で誤denyを解消した）／
+    degraded mode では
     awk のプログラムが空白で分割されるため、`-` で始まる断片（`{print -$2}` の
     `-$2}`）がオプションと見なされて deny になる（旧版は degraded の awk を
     常に deny していたため回帰ではない。正常に字句解析できる同じコマンドは
@@ -283,7 +321,68 @@ AWK_EXEC_RE = re.compile(r"\bsystem\s*\(|@(?:load|include)\b")
 # 本ホストの GNU Awk 5.2.1 で成立するのは `@f(` と `@ f(`（`@` の直後の空白のみ許容）
 # であり、`@f (` / `@"system"(` / `@(f g)(` / `@a[1](` / `@ENVIRON["X"](` は
 # いずれも構文エラーになる（実測）。正規表現は成立形より広く取る（保守側）。
+# **第4版で degraded mode 専用**（正常経路は AW-7 が担う）。
 AWK_INDIRECT_CALL_RE = re.compile(r"@\s*[A-Za-z_][A-Za-z_0-9]*\s*\(")
+
+# --- AW-7: awk プログラム本文のホワイトリスト --------------------------------
+#
+# awk のプログラム内構文の次元は、規則を積み増すブラックリストでは4ラウンド
+# 連続して穴が出た（print > file → system() → @f() → "cmd" | getline）。
+# 第4版ではこの次元を**ホワイトリストへ反転**し、「安全と確認できる狭い
+# プログラム形」だけを許可する。未知の文字・未知の呼び出し名は自動的に
+# deny 側へ落ちる（原則 P4 の3つ目の機械的既定）。
+
+# リテラル（文字列・正規表現）除去後のプログラム本文に現れてよい文字。
+# **ここに無い文字が1つでもあれば deny。** 意図的に含めない文字と根拠:
+#   @  … 間接呼び出し @f( ・@load ・@include ・@namespace（gawk 拡張の入口）
+#   |  … 出力パイプ print | "cmd" ・入力パイプ "cmd" | getline ・コプロセス |&
+#   \ ` ' … リテラル外に現れる正当な用途が無い（行継続の \+改行は L1 が正規化）
+#   非ASCII・制御文字 … gawk はリテラル外の非ASCII識別子を受け付けない
+AWK_SAFE_PROGRAM_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+    " \t"
+    '$(){}[],;:?!~=<>+-*/%^&."#'
+)
+
+# 正規表現リテラルの開始か除算かを分けるための「直前の非空白文字がオペランドの
+# 終端になりうるか」の集合（awk の字句規則の近似）。判定を誤っても「除算＝
+# リテラルを除去しない＝内容が判定対象に残る」＝deny 方向へ倒れる。
+AWK_OPERAND_END_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+    '$)]".+-'
+)
+
+# 呼び出しを許可する名前。**ここに無い名前の `IDENT(` は deny。**
+# system は意図的に非収載（AW-7 の中核。`system (` の空白形も IDENT\s*\( で
+# 捕捉する）。getline は関数呼び出し構文を持たないため収載不要
+# （`getline(` は awk の構文ではない）。収載を増やすときは man/info の説明に
+# ファイル書き込み・プロセス起動が無いことを根拠として記録すること。
+AWK_SAFE_CALLS = frozenset({
+    # `(` を伴いうる構文キーワード
+    "if", "else", "while", "for", "do", "switch", "case", "default",
+    "return", "exit", "print", "printf", "delete", "break", "continue",
+    "next", "nextfile", "function", "func",
+    # 副作用の無い組み込み関数（GNU Awk マニュアルの Built-in Functions）
+    "length", "substr", "index", "split", "sub", "gsub", "gensub", "match",
+    "sprintf", "tolower", "toupper", "sin", "cos", "atan2", "exp", "log",
+    "sqrt", "int", "rand", "srand", "patsplit", "asort", "asorti",
+    "strtonum", "mktime", "strftime", "systime", "and", "or", "xor",
+    "compl", "lshift", "rshift", "typeof", "isarray",
+    # ストリームの解放のみで、プロセス起動・ファイル書き込みを行わない
+    "close", "fflush",
+})
+
+AWK_CALL_RE = re.compile(r"([A-Za-z_][A-Za-z_0-9]*)\s*\(")
+AWK_FUNC_DECL_RE = re.compile(
+    r"\bfunc(?:tion)?\s+([A-Za-z_][A-Za-z_0-9]*)\s*\(")
+
+# プログラム本文を供給するオプション（値は必ずプログラムとして検査する）。
+AWK_PROGRAM_TEXT_FLAGS = ("-e", "--source")
+# 値を「次の語」から取る安全オプション。**--lint は含めない**
+# （gawk の --lint は省略可能引数のため `--lint=fatal` 形でしか値を取らない）。
+# 載せ忘れると「その値をプログラム候補として検査する」＝deny 方向へ倒れる。
+AWK_VALUE_CONSUMING_FLAGS = ("-F", "-v", "-e",
+                             "--field-separator", "--assign", "--source")
 
 # 字句解析に失敗した入力向けの簡易判定でのみ使う（degraded_violation）。
 # 旧版（KLK-010 以前）の find_violation と同じ分割を再現するためのもので、
@@ -667,13 +766,146 @@ def is_safe_awk_flag(word):
     return False
 
 
-def awk_violation(words, cwd=""):
-    """awk セグメントの違反理由を返す（設計書 §3-6 D1 の AW-1〜AW-5）。
+def awk_strip_literals(text):
+    """awk プログラムの文字列リテラルと正規表現リテラルを**1パス**で除去する。
+
+    左→右の1パスで「その位置に何のリテラルが始まるか」を awk の字句規則に
+    倣って決める。2パス（文字列を全部消してから正規表現を消す等）にすると、
+    片方のリテラルの内側に見える引用符／スラッシュが、実際には外側にある
+    コードを飲み込む（`/"/ {system("rm F")}` は文字列先だと system( が消え、
+    `BEGIN{x="(/a"; system("rm /F")}` は正規表現先だと消える）。1パスなら
+    リテラルの開始位置が awk と一致するため、awk が実行するコードが
+    リテラルとして消えることは起こらない。
+
+    正規表現と除算の区別は「直前の非空白文字がオペランドの終端になりうるか」
+    （AWK_OPERAND_END_CHARS）で行い、候補スパンが `;` や改行を含む場合は
+    正規表現と認めない（二重の安全網）。誤ると「除算と判定してリテラルを
+    除去しない＝内容が判定対象に残る」＝deny 方向へ倒れる。
+
+    戻り値: 除去後テキスト（文字列は `""`・正規表現は `//` へ置換）。
+            未閉じ文字列リテラルは None（判定不能＝呼び出し側で deny）。
+    """
+    out, i, n, prev = [], 0, len(text), ""
+    while i < n:
+        char = text[i]
+        if char == '"':
+            j, closed = i + 1, False
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    closed = True
+                    break
+                j += 1
+            if not closed:
+                return None
+            out.append('""')
+            prev, i = '"', j + 1
+            continue
+        if char == "/" and prev not in AWK_OPERAND_END_CHARS:
+            j, closed = i + 1, False
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == "/":
+                    closed = True
+                    break
+                if text[j] in ";\n":
+                    break  # 正規表現リテラルは文・行をまたがない
+                j += 1
+            if closed:
+                out.append("//")
+                prev, i = "/", j + 1
+                continue
+        out.append(char)  # 除算・その他の文字はそのまま
+        if not char.isspace():
+            prev = char
+        i += 1
+    return "".join(out)
+
+
+def awk_program_texts(words):
+    """awk が**プログラムとして実行する**テキストを列挙する（設計書 §3-4）。
+
+    - `-e TEXT` / `-eTEXT` / `--source TEXT` / `--source=TEXT` の値（複数可）
+    - `-e` / `--source` が無い場合に限り、位置引数の**先頭のオペランド**
+      （awk は最初の非オプション引数をプログラムとして扱い、2番目以降は
+      NAME=VALUE 代入と入力ファイル名として扱う＝実行しない）
+    - `-f FILE` / `--file=FILE` は AW-4 が deny するためここへ到達しない
+
+    ファイル名オペランド・変数束縛値をプログラム候補に含めてはならない
+    （awk が実行しないテキストを判定すると `'system(1).md' のような
+    ファイル名が誤denyになる）。値を「次の語」から取るオプションは
+    AWK_VALUE_CONSUMING_FLAGS に限る（載せ忘れた場合はその値をプログラム
+    候補として検査する＝deny 方向）。
+    """
+    texts, positionals, expect = [], [], ""
+    for word in head_args(words):
+        if expect:
+            if expect in AWK_PROGRAM_TEXT_FLAGS:
+                texts.append(word)
+            expect = ""
+            continue
+        if word in AWK_VALUE_CONSUMING_FLAGS:
+            expect = word
+            continue
+        if word.startswith("-e") and len(word) > 2:
+            texts.append(word[2:])
+            continue
+        if word.startswith("--source="):
+            texts.append(word[len("--source="):])
+            continue
+        if word.startswith("-"):
+            continue  # 値を取らないオプション・`-`・`--`
+        positionals.append(word)
+    if not texts and positionals:
+        texts.append(positionals[0])
+    return texts
+
+
+def awk_program_violation(text):
+    """プログラム本文が「安全と確認できる形」でなければ理由を返す（AW-7）。
+
+    **ホワイトリスト。** 3条件（許可文字集合・呼び出し名の許可集合・
+    print/printf 出力構文の不在）をすべて満たす形だけを許可し、未知の文字・
+    未知の関数名はすべて deny 側へ落ちる。判定はリテラル除去後に行うため、
+    文字列・正規表現の中身に `@` や `system(` が現れるだけの読み取りは
+    許可される（awk に eval が無いため実行され得ない）。
+    """
+    stripped = awk_strip_literals(text)
+    if stripped is None:
+        return ("awk プログラムの文字列リテラルが閉じていません"
+                "（安全と確認できるプログラム形に限り許可します）")
+    unsafe = [c for c in stripped if c not in AWK_SAFE_PROGRAM_CHARS]
+    if unsafe:
+        return ("awk プログラムに許可されていない文字 %r があります"
+                "（@ 間接呼び出し・@load・| パイプ／コプロセス等の"
+                "外部コマンド実行経路になりうるため）" % unsafe[0])
+    declared = set(AWK_FUNC_DECL_RE.findall(stripped))
+    for name in AWK_CALL_RE.findall(stripped):
+        if name not in AWK_SAFE_CALLS and name not in declared:
+            return ("awk プログラムの関数呼び出し %s() は許可されていません"
+                    "（副作用の無いことを確認した組み込み関数と、同じ"
+                    "プログラム内で定義された関数のみ許可します）" % name)
+    if AWK_OUTPUT_RE.search(stripped):
+        return ("awk のプログラム内リダイレクト（print > file 等）は"
+                "許可されていません")
+    return None
+
+
+def awk_violation(words, cwd="", degraded=False):
+    """awk セグメントの違反理由を返す（設計書 §3-6 D1 の AW-1〜AW-7）。
 
     cwd が保護対象配下なら、プログラム内の出力リダイレクト・オプション・
-    外部コマンド実行の判定を「保護対象に言及していなくても」適用する
+    プログラム本文の判定を「保護対象に言及していなくても」適用する
     （相対パスで書き込む形は書き込み先オペランドを取り出せないため、
     構文の存在そのものを証拠にする）。
+
+    degraded は「字句解析に失敗して空白分割へ落ちた入力か」。空白分割では
+    プログラム本文の同一性が失われる（`BEGIN{@ f("rm x")}` が3語に割れる）
+    ため AW-7 を適用できず、AW-5／AW-6 のブラックリストで見る。
     """
     # AW-1: 保護対象に言及する語そのものが > / | を含む（{print > "docs/SPEC.md"}
     # 等）。正常な読み取りでは保護対象は素のパス引数として現れる
@@ -695,40 +927,64 @@ def awk_violation(words, cwd=""):
             return ("awk のオプション %s は許可されていません（外部プログラム・"
                     "拡張の読み込みとファイル書き出しの経路になりうるため）"
                     % display_text(word))
-        # AW-5: system() / @load / @include（外部コマンド実行・拡張読み込み）。
-        # 文字列リテラル除去**前**の語で判定する（保守側）
-        if AWK_EXEC_RE.search(word):
-            return ("awk の system() / @load / @include（外部コマンド実行・"
-                    "拡張読み込み）は許可されていません")
-        # AW-6: gawk の間接関数呼び出し `@f(...)`。関数名を文字列変数から供給
-        # できるため `system(` のリテラルが現れないまま system() を呼べる。
-        # AW-2／AW-3 と同じく「構文の存在」を証拠とする（値は追跡しない）
-        if AWK_INDIRECT_CALL_RE.search(word):
-            return ("awk の間接関数呼び出し（@f(...) 形式）は許可されていません"
-                    "（関数名を変数経由で供給して system() を呼び出せるため）")
+        if degraded:
+            # AW-5 / AW-6（degraded 専用）。正常経路では AW-7 が同じ構文を
+            # 「プログラム本文のみ・リテラル除去後」で判定するため、ここへ
+            # 来ない（リテラルの中身やファイル名オペランドを巻き込む
+            # 過剰一致を正常経路へ持ち込まないための分岐）
+            #
+            # AW-5: system() / @load / @include（外部コマンド実行・拡張読み込み）。
+            # 文字列リテラル除去**前**の語で判定する（保守側）
+            if AWK_EXEC_RE.search(word):
+                return ("awk の system() / @load / @include（外部コマンド実行・"
+                        "拡張読み込み）は許可されていません")
+            # AW-6: gawk の間接関数呼び出し `@f(...)`。関数名を文字列変数から
+            # 供給できるため `system(` のリテラルが現れないまま system() を
+            # 呼べる。AW-2／AW-3 と同じく「構文の存在」を証拠とする
+            if AWK_INDIRECT_CALL_RE.search(word):
+                return ("awk の間接関数呼び出し（@f(...) 形式）は許可されて"
+                        "いません（関数名を変数経由で供給して system() を"
+                        "呼び出せるため）")
         # AW-3: print/printf の出力リダイレクト。文字列リテラルを除去してから
         # 見るため printf "%s|%s" は一致しない
         if AWK_OUTPUT_RE.search(AWK_STRING_RE.sub('""', word)):
             return ("awk のプログラム内リダイレクト（print > file 等）は"
                     "許可されていません")
-    # AW-5／AW-6 を空白結合したテキストへも当てる。degraded mode は空白分割の
-    # ため `@ f(` が `@` と `f(` に、`system (` が `system` と `(` に割れて
-    # 語単位では一致しない（`awk -v f=system 'BEGIN{@ f("rm ...")}' #'` は
-    # プログラム内に `;` が無いためステートメント分割にも掛からない）。
-    # gawk は `@` の直後と関数名の直後の空白をどちらも受け付けるため、
-    # 語をまたぐ形も実際に system() を実行できる（実測）。結合は証拠テキストを
-    # 増やす操作であり判定を緩める方向には働かない。オプション判定（AW-4）と
-    # 出力構文（AW-3）は結合テキストへ当てない（結合により語の意味が変わり
-    # 誤denyになりうるため、外部コマンド実行の検出に限って適用する）
-    args = head_args(words)
-    if len(args) > 1:
-        joined = " ".join(args)
-        if AWK_EXEC_RE.search(joined):
-            return ("awk の system() / @load / @include（外部コマンド実行・"
-                    "拡張読み込み）は許可されていません")
-        if AWK_INDIRECT_CALL_RE.search(joined):
-            return ("awk の間接関数呼び出し（@f(...) 形式）は許可されていません"
-                    "（関数名を変数経由で供給して system() を呼び出せるため）")
+    if degraded:
+        # AW-5／AW-6 を空白結合したテキストへも当てる。degraded mode は空白
+        # 分割のため `@ f(` が `@` と `f(` に、`system (` が `system` と `(` に
+        # 割れて語単位では一致しない（`awk -v f=system 'BEGIN{@ f("rm ...")}' #'`
+        # はプログラム内に `;` が無いためステートメント分割にも掛からない）。
+        # gawk は `@` の直後と関数名の直後の空白をどちらも受け付けるため、
+        # 語をまたぐ形も実際に system() を実行できる（実測）。結合は証拠
+        # テキストを増やす操作であり判定を緩める方向には働かない。オプション
+        # 判定（AW-4）と出力構文（AW-3）は結合テキストへ当てない（結合により
+        # 語の意味が変わり誤denyになりうるため）
+        args = head_args(words)
+        if len(args) > 1:
+            joined = " ".join(args)
+            if AWK_EXEC_RE.search(joined):
+                return ("awk の system() / @load / @include（外部コマンド実行・"
+                        "拡張読み込み）は許可されていません")
+            if AWK_INDIRECT_CALL_RE.search(joined):
+                return ("awk の間接関数呼び出し（@f(...) 形式）は許可されて"
+                        "いません（関数名を変数経由で供給して system() を"
+                        "呼び出せるため）")
+        return None
+    # AW-7（正常経路の本体）: プログラム本文がホワイトリストの安全形か。
+    # 判定対象はプログラム本文だけであり、ファイル名オペランド・変数束縛値は
+    # awk が実行しないため検査しない
+    texts = awk_program_texts(words)
+    for text in texts:
+        reason = awk_program_violation(text)
+        if reason:
+            return reason
+    if len(texts) > 1:
+        # gawk は複数の -e / --source を連結して1つのプログラムにする。
+        # 語をまたいで `sys` + `tem(` のように割った形を取りこぼさない
+        reason = awk_program_violation(" ".join(texts))
+        if reason:
+            return reason
     return None
 
 
@@ -769,14 +1025,16 @@ def uniq_output_operand(words):
     return positionals[1] if len(positionals) > 1 else ""
 
 
-def segment_violation(words, substs=(), cwd=""):
+def segment_violation(words, substs=(), cwd="", degraded=False):
     """パイプ区間（語リスト）単位の違反理由を返す。問題なければ None。
 
     words は未解決の語リスト。substs を与えると、sed / awk の追加規則を
     プレースホルダ解決後のテキストに対しても評価する（解決前の語も併せて
     見るため、判定は deny 方向にのみ広がる）。cwd は「この区間を実行する時点の
     作業ディレクトリ」（追跡不能なら None）。保護対象配下なら相対パスが
-    保護対象を指しうるため判定を強める。
+    保護対象を指しうるため判定を強める。degraded は「字句解析に失敗して
+    空白分割へ落ちた入力か」（awk のプログラム本文の同一性が失われるため
+    AW-7 を適用せず AW-5／AW-6 で見る）。渡すのは degraded_violation だけ。
     """
     head = head_of(words)
     if not head:
@@ -816,7 +1074,7 @@ def segment_violation(words, substs=(), cwd=""):
             return "sed の w コマンド（ファイル書き出し）は許可されていません"
     if head == "awk":
         for variant in variants:
-            reason = awk_violation(variant, cwd)
+            reason = awk_violation(variant, cwd, degraded)
             if reason:
                 return reason
     if head == "sort":
@@ -946,7 +1204,8 @@ def degraded_violation(command, cwd=""):
         words_list = [p.split() for p in parts]
         if cwd_is_guarded(cwd) or any(mentions_guarded(w) for w in words_list):
             for words in words_list:
-                reason = segment_violation(words, cwd=cwd)
+                # degraded=True: awk は AW-7 を使わず AW-5／AW-6 で見る
+                reason = segment_violation(words, cwd=cwd, degraded=True)
                 if reason:
                     return reason
         for match in LEGACY_REDIRECT_RE.finditer(statement):

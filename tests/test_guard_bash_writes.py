@@ -923,6 +923,95 @@ class TestGuardBashWrites(unittest.TestCase):
         # ためパスに依存しない
         self.assertDeny("find tickets/active -name '*.md' -fprint0 /tmp/x")
 
+    # --- KLK-010 Phase 8: awk のプログラム内構文のホワイトリスト化
+    # （AW-7・設計書 §3-6 D1／D8・§4-4(d)） ---
+    #
+    # プログラム内構文の次元は規則を積み増すブラックリストで4ラウンド連続して
+    # 穴が出た（print > file → system() → @f() → "cmd" | getline）。第4版は
+    # この次元を反転し、awk が**実際に実行するテキスト**（-e/--source の値と、
+    # 無ければ位置引数の先頭オペランド）だけを取り出して
+    #   (1) リテラル（文字列・正規表現）を左→右の1パスで除去
+    #   (2) 許可文字集合（`@` と `|` を含まない）
+    #   (3) 呼び出し名の許可集合（system を含まない・未知名は deny）
+    #   (4) print/printf の後に > >> | が現れる出力構文の不在
+    # の3条件を満たす形だけを許可する。未知の文字・未知の関数名は自動的に
+    # deny 側へ落ちる（この次元の機械的既定）。
+
+    def test_awk_pipe_syntax_other_forms_deny(self):
+        # T-AW7e: 入力パイプ（リテラルパス形）・while 内の入力パイプ・
+        # コプロセス出力。いずれも gawk が実際に子プロセスを起動する
+        # （使い捨てディレクトリで実測済み）
+        self.assertDeny(
+            "awk 'BEGIN{\"rm tickets/active/APP-001.md\" | getline}'")
+        self.assertDeny("awk 'BEGIN{while((\"ls\" | getline l)>0) print l}' "
+                        "tickets/active/APP-001.md")
+        self.assertDeny(
+            "awk 'BEGIN{print \"x\" |& \"cat\"}' tickets/active/APP-001.md")
+
+    def test_awk_call_name_whitelist_deny(self):
+        # T-AW7f: 呼び出し名のホワイトリスト。`system (`（組み込み名と `(` の
+        # 間の空白。gawk は受け付ける＝実測）は正常経路でも捕捉され、
+        # 未知の関数名は**未知＝deny の機械的既定**で落ちる
+        self.assertDeny("awk 'BEGIN{system (\"rm docs/SPEC.md\")}'")
+        self.assertDeny("awk 'BEGIN{xyzzy(\"rm docs/SPEC.md\")}'")
+
+    def test_awk_namespace_directive_deny(self):
+        # T-AW7g: 許可文字集合（`@`）の固定。@namespace は gawk 5 の名前空間
+        # 指令であり、それ自体は書き込みを行わないが `@` を許可すると
+        # @f( / @load / @include が同時に通るため deny 側に倒す（誤deny側・
+        # 設計書 §6 R26 ① に列挙済み）
+        self.assertDeny(
+            "awk '@namespace \"util\"; {print $1}' tickets/active/APP-001.md")
+
+    def test_awk_literal_stripping_soundness_deny(self):
+        # T-AW7h: S1（リテラル除去が1パスであること）の健全性。2パス実装
+        # （文字列を全部消してから正規表現を消す／その逆）だと、片方の
+        # リテラルの内側に見える引用符・スラッシュが実際には外側にある
+        # `system(` を飲み込み、いずれかが allow に転じる。実機 gawk で
+        # 4形とも実際にファイルを削除することを確認済み
+        self.assertDeny("awk '/\"/ {system(\"rm docs/SPEC.md\")}' in.txt")
+        self.assertDeny("awk 'BEGIN{x=\"(/a\"; system(\"rm /docs/SPEC.md\")}'")
+        self.assertDeny("awk 'BEGIN{x=1/2; system(\"rm docs/SPEC.md\")/3}'")
+        self.assertDeny(
+            "awk 'BEGIN{i=0; i++ /2; system(\"rm docs/SPEC.md\")/3}'")
+        # 文字列リテラルの中身に `system(` があるだけでは実行されないが、
+        # 同じプログラムの**リテラル外**に本物の呼び出しがあれば deny になる
+        self.assertDeny(
+            "awk 'BEGIN{print \"system(\" ; system(\"rm docs/SPEC.md\")}'")
+
+    def test_awk_program_unsafe_characters_deny(self):
+        # T-AW7i: 許可文字集合の固定。リテラル外のバックスラッシュ・
+        # バッククォートは awk のプログラムとして正当な用途が無い
+        self.assertDeny("awk 'BEGIN{t=1 \\ 2}' tickets/active/APP-001.md")
+        self.assertDeny("awk 'BEGIN{x=`id`}' tickets/active/APP-001.md")
+        # 未閉じの文字列リテラル（判定不能＝deny）
+        self.assertDeny("awk 'BEGIN{print \"unterminated}' docs/SPEC.md")
+
+    def test_awk_everyday_read_programs_allow(self):
+        # T-AW7OK: AW-7 が日常の読み取り awk を誤denyしないことの固定
+        # （第4版で最重要の allow 固定。設計書 §3-6 D8 の16形・§4-5-3 の
+        # トレースに対応する）。1件でも deny になったら設計の欠陥である
+        ticket = "tickets/active/APP-001.md"
+        for program in (
+            "'NR>1 && $1!=\"\" {print $2}'",
+            "-v n=3 '{if (NF > n) print $1}'",
+            "'{print toupper($1)}'",
+            "'{print length($0)}'",
+            "'{gsub(/a/,\"b\"); print}'",
+            "'{sub(/^ +/, \"\"); print}'",
+            "'{n=split($0,a,\"|\"); print n}'",
+            "'{printf(\"%s\\n\", substr($0,1,5))}'",
+            "'{a[$1]++} END{for (k in a) print k, a[k]}'",
+            "'BEGIN{FS=\":\"} {print $2}'",
+            "'BEGIN{print \"日本語のメッセージ\"}'",
+        ):
+            command = "awk %s %s" % (program, ticket)
+            with self.subTest(command=command):
+                self.assertAllow(command)
+        # `|` を伴わない getline（読み取り方向。意図的に allow）
+        self.assertAllow(
+            "awk 'BEGIN{getline l < \"tickets/active/APP-001.md\"; print l}'")
+
     # --- KLK-010 Phase 5: 固定リスト回帰ガード（設計書§4-7・D5） ---
 
     def test_legacy_deny_commands_all_still_deny(self):
