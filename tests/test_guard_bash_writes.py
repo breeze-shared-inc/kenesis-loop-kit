@@ -1728,6 +1728,138 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertAllow("cd tickets/active && ls `rm APP-001.md \\`")
         self.assertAllow("cd tickets/active && cat <(rm APP-001.md #')")
 
+    # --- KLK-010 Phase 14: awk の**字句次元**（コメント・リテラルの終端規則）を
+    # awk の規則へ一致させる（設計書 §3-6 D11 の AWL-1〜AWL-4・§3-9-3）と、
+    # degraded のステートメント区切り集合を正常経路へ一致させる（H5）。
+    # テキストを除去する近似には**方向の非対称**がある — 除去しすぎ
+    # （over-removal）は allow 方向（危険）、除去しなさすぎ（under-removal）は
+    # deny 方向（安全）。したがって deny 側（T-C9a〜e）と allow 側
+    # （T-C9f〜h）を**対で**固定する。片方だけでは検出できない ---
+
+    def test_awk_comment_shifts_string_parity_deny(self):
+        # T-C9a（AWL-3・INV-AWKLEX-01）: awk の `#` コメントをモデル化せず、
+        # 文字列リテラルの走査が改行で打ち切られないと、**コメント内の `"` が
+        # 文字列の対応をずらし、awk が実際に実行するコード（system( 等）が
+        # リテラルとして飲み込まれる**。コメント側に `"` をもう1つ置いて
+        # パリティを戻せば「未閉じ文字列＝deny」にも掛からず、除去後テキストが
+        # AW-7 の3条件をすべて満たして allow になっていた。実機 gawk 5.2.1 が
+        # rc=0 で docs/SPEC.md を削除し、sed -i でチケットを改変することを
+        # 使い捨てディレクトリで確認済み。**`#` 分岐（AWL-3）を落とすと
+        # 全件が失敗する**
+        for payload in (
+            'system("rm docs/SPEC.md")',
+            'system("sed -i s/a/b/ tickets/active/APP-001.md")',
+            'print "x" > "docs/SPEC.md"',
+            '"rm docs/SPEC.md" | getline x',
+        ):
+            command = "awk 'BEGIN{ #\"\n%s #\"\n}'" % payload
+            with self.subTest(payload=payload):
+                self.assertDeny(command)
+
+    def test_awk_comment_parity_across_program_sources_deny(self):
+        # T-C9b（INV-AWKLEX-02／04）: プログラム本文の**供給形**を変えても
+        # 閉じていること。`-e` / `--source=` は awk_program_texts が拾う経路で
+        # あり、間接呼び出し `@x(` は許可文字集合（`@` 非収載）で落ちる。
+        # いずれもコメントが正しく除去されて初めて到達する
+        shift = 'BEGIN{ #"\n%s #"\n}'
+        self.assertDeny("awk -e '%s'" % (shift % 'system("rm docs/SPEC.md")'))
+        self.assertDeny(
+            "awk --source='%s'" % (shift % 'system("rm docs/SPEC.md")'))
+        self.assertDeny(
+            "awk '%s'" % (shift % 'x="system"; @x("rm docs/SPEC.md")'))
+
+    def test_awk_comment_parity_under_guarded_cwd_deny(self):
+        # T-C9c（INV-AWKLEX-03）: 語に保護対象パスが1文字も現れない形。
+        # 言及ゲートではなく cwd ゲート（cwd_is_guarded）で AW-7 に到達する
+        for directory in ("tickets/active", "tickets/done"):
+            command = ("cd %s && awk 'BEGIN{ #\"\nsystem(\"rm APP-001.md\")"
+                       " #\"\n}'" % directory)
+            with self.subTest(cwd=directory):
+                self.assertDeny(command)
+
+    def test_awk_ambiguous_division_before_comment_deny(self):
+        # T-C9d（AWL-4・INV-AWKLEX-10）: **AWL-3 だけを入れた実装で allow に
+        # 転じる検出器。** AWK_OPERAND_END_CHARS は post-increment（`a++ /2/`）
+        # を除算と判定するため `+` を含む。そのため hook はここを除算と読むが、
+        # awk の文法は `+` の直後にオペランドを期待するため `/#/` を**正規表現
+        # 定数**として読みうる（その場合 system(…) は実行される）。除算として
+        # 据え置いた `/` と同じ行に除去対象があり、その位置以降にも `/` が
+        # 残るときは、いかなる除去も行わず「判定不能」＝deny とする
+        self.assertDeny("awk 'BEGIN{x=1+ /#/; system(\"rm docs/SPEC.md\")}'")
+
+    def test_awk_ambiguous_division_before_string_deny(self):
+        # T-C9e（AWL-4／AWL-1・INV-AWKLEX-11／05）: 同型の文字列版
+        # （AWL-4 が無ければ2つの `"` が対になって `; system(` を飲み込み
+        # allow になる）と、**文字列リテラルが生の改行に達する形**
+        # （awk の文字列は行をまたげない＝未終端＝判定不能）
+        self.assertDeny(
+            "awk 'BEGIN{x=1+ /\"/ ; system(\"rm docs/SPEC.md\")"
+            " ; y=2+ /\"/ }'")
+        self.assertDeny("awk 'BEGIN{x=\"a\nb\"; system(\"rm docs/SPEC.md\")}'")
+
+    def test_awk_hash_inside_literals_is_not_a_comment_allow(self):
+        # T-C9f（allow 固定・INV-AWKLEX-08／09／06）: 過剰deny側へ倒した実装を
+        # 機械的に検出する。文字列・正規表現の分岐はスパン全体を1回の反復で
+        # 消費して `i` を進めるため、**リテラル内側の `#` はループ先頭へ到達
+        # しない**（`/#/`・`"#"` をコメントと誤検出しない）。3形目は
+        # **AWL-1 のエスケープ対消費が改行判定より前にある**ことの検出器で、
+        # 順序を逆にすると gawk が受け付ける文字列内の行継続が「未終端＝deny」
+        # に転じる
+        for command in (
+            "awk '/#/ {print}' tickets/active/APP-001.md",
+            "awk '{print \"#\"}' tickets/active/APP-001.md",
+            "awk 'BEGIN{x=\"a\\\nb\"; print x}' tickets/active/APP-001.md",
+        ):
+            with self.subTest(command=command):
+                self.assertAllow(command)
+
+    def test_awk_division_without_trailing_slash_allow(self):
+        # T-C9g（allow 固定・INV-AWKLEX-12）: **AWL-4 の誤deny上限。**
+        # 除算があっても、除去位置以降・同一行に `/` が残らなければ、awk 側の
+        # 解釈では正規表現が閉じず fatal error になり1文も実行されない＝
+        # 曖昧さが実行に到達しえないため除去してよい
+        for command in (
+            "awk '{print $1/2, $3/4, \"ratio\"}' tickets/active/APP-001.md",
+            "awk '{print $1/$2}' tickets/active/APP-001.md",
+        ):
+            with self.subTest(command=command):
+                self.assertAllow(command)
+
+    def test_awk_comment_body_only_patterns_allow(self):
+        # T-C9h（allow 固定・INV-AWKLEX-07／13）: **awk はコメントを実行しない
+        # ため deny する根拠が無い。** 危険様パターン（`|`・`@`・`system(`・
+        # 引用符の不均衡）がコメント本文にしか現れない形は allow が正しい
+        # （設計書 §6 R26⑧ の誤denyの解消＝§4-9 許容分類11）。3形目は
+        # 複数行プログラム（改行は awk では `;` と同じ文終端）の固定点
+        for command in (
+            "awk '{print $1} # a|b @c system(' tickets/active/APP-001.md",
+            "awk '{ #\"\nprint $1 }' tickets/active/APP-001.md",
+            "awk 'BEGIN{FS=\":\"}\n{print $2}' tickets/active/APP-001.md",
+        ):
+            with self.subTest(command=command):
+                self.assertAllow(command)
+
+    def test_degraded_single_ampersand_is_statement_separator_deny(self):
+        # T-H5a（INV-SH-21）: 正常経路は `&` を "sep"（ステートメント区切り）
+        # として扱うのに degraded の LEGACY_STATEMENT_RE に単独 `&` が無いと、
+        # ` #'` の2文字を足すだけで `&` の後段が先頭 head のセグメントへ
+        # 埋もれて全防御が消える（実機 bash は rc=0 で削除・改変する）。
+        # **この1文字を戻すと全件が失敗する**
+        for command in (
+            "ls & rm docs/SPEC.md #'",
+            "ls & sed -i 's/a/b/' tickets/active/APP-001.md #'",
+            "ls & truncate -s 0 docs/SPEC.md #'",
+            "cd tickets/active & rm APP-001.md #'",
+        ):
+            with self.subTest(command=command):
+                self.assertDeny(command)
+
+    def test_degraded_ampersand_does_not_spill_into_reads_allow(self):
+        # T-H5b（allow 固定・対照）: `&` の追加が fd 複製（`2>&1`）と、
+        # 後段の head が許可されている読み取りへ波及しないことの固定
+        self.assertAllow("cat tickets/active/APP-001.md 2>&1 #'")
+        self.assertAllow("ls & cat tickets/active/APP-001.md #'")
+
 
 if __name__ == "__main__":
     unittest.main()
