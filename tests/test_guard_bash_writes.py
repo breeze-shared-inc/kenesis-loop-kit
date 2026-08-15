@@ -166,6 +166,42 @@ LEGACY_DENY_COMMANDS = [
     "rm tickets/acti\\\nve/APP-001.md",
     # INV-SH-04: 証拠そのものを符号化する形（QT-3 の証拠復号）
     "rm $'\\x74ickets/active/APP-001.md'",
+    # --- C7: 行継続の削除がステートメント区切りを飲み込む形（LX-2）。
+    # bash が行継続として扱うのは「バックスラッシュが自身エスケープされて
+    # いないとき」だけであり、①偶数個並ぶ形 ②`#` コメント末尾の形 では改行は
+    # **本物のコマンド区切り**になる。無条件に削除すると後続コマンドの head が
+    # 前の語へ吸収され、ALLOWED_HEADS 判定に使われる head が先頭の許可
+    # コマンドになる（＝任意の読み取りコマンドに2文字足すだけで hook 全体が
+    # 無効化される）。旧版は改行で無条件に分割していたため old=deny。
+    # 実機 bash が後続コマンドを実行してファイルを削除・改変することを
+    # 使い捨てディレクトリで確認済み ---
+    "echo x\\\\\nrm docs/SPEC.md",                    # 2個（偶数）
+    "ls \\\\\nrm docs/SPEC.md",
+    "echo x\\\\\\\\\nrm docs/SPEC.md",                # 4個（偶数）
+    "pwd\\\\\ntruncate -s 0 docs/SPEC.md",
+    "cat README.md #\\\nsed -i 's/orig/pwned/' "
+    "tickets/active/APP-001.md",                      # コメント末尾
+    "ls #x\\\nrm docs/SPEC.md",
+    "grep x README.md #\\\ncat y | tee docs/SPEC.md",
+    # ダブルクォート内のコマンド置換の中はコマンド文脈へ戻るため `#` が
+    # コメントになる（置換の内側は無加工で残し再帰の入口で正規化する）
+    'cat "$(ls #\\\nrm docs/SPEC.md)"',
+    # 連結の直後にコメントが始まる形（正規化走査が連結時に「直前の文字」を
+    # 書き換えないことの回帰ガード。書き換えると allow に転じる）
+    "echo a \\\n#c\\\nrm docs/SPEC.md",
+    # --- C8: degraded の関数レベルゲートが cwd を見ない形。保護対象 cwd 下で
+    # 「字句解析できない置換」を1つ挟むだけで全判定を回避できた。旧版は `cd` を
+    # ALLOWED_HEADS に持たず `cd tickets/active` を含むコマンドを丸ごと deny
+    # していたため old=deny。実機 bash が削除・上書きすることを確認済み ---
+    "cd tickets/active && ls `rm APP-001.md #'`",
+    "cd tickets/active && ls `echo x > APP-001.md #'`",
+    "cd tickets/active && ls `sed -i 's/a/b/' APP-001.md #'`",
+    "cd tickets/active && ls `find . -delete #'`",
+    "cd tickets/done && ls `rm APP-001.md #'`",
+    # 同型の入れ子（`$( )` の内側のバッククォート）。置換の終端探索が
+    # バッククォート領域を読み飛ばさないと対応する `)` を見失い、コマンド
+    # 全体が degraded へ落ちて内側の `rm` が `ls` セグメントへ埋もれる
+    "cd tickets/active && ls $(ls `rm APP-001.md #'`)",
 ]
 
 # 設計書 docs/designs/KLK-010.md §3-9 の書き込みベクタ棚卸し表と、実装の
@@ -275,6 +311,33 @@ INVENTORY_CASES = (
      "f=tickets/active/APP-001.md; rm $f", "allow"),
     ("INV-SH-12", "算術展開（$( としてコマンド置換扱い＝保守側の副作用）",
      "echo $((1+2)) && cat tickets/active/APP-001.md", "allow"),
+    # --- 行継続と `#` コメントの**分岐条件**（§3-9-2-1）。棚卸し表の行は
+    # 「bash の挙動が分岐する条件」まで分解して初めて防御になる（表に
+    # 「行継続」という行は存在していたのに、バックスラッシュの偶奇・コメント
+    # 内かどうかというサブケースが分解されていなかったために穴が出た）。
+    #
+    # **期待値 allow の行には2種類があり、混同してはならない**:
+    #   (a) **意図的に未対応の穴**（INV-SH-07・09・11）— 塞いだ時点で "deny"
+    #       へ変える。
+    #   (b) **bash と一致した結果としての allow**（INV-SH-15・16・19）—
+    #       bash も後続コマンドを実行しない／触るのは保護対象ではない別名で
+    #       あるため、**"deny" へ変えたら誤り**（過剰deny＝AC2 違反）。
+    ("INV-SH-13", "行継続・バックスラッシュ偶数個（＝リテラル\\ + 区切り）",
+     "echo x\\\\\nrm docs/SPEC.md", "deny"),
+    ("INV-SH-14", "行継続・# コメント末尾（＝区切り）",
+     "cat README.md #\\\nsed -i 's/a/b/' tickets/active/APP-001.md", "deny"),
+    ("INV-SH-15", "行継続・奇数個で後続が語へ吸収される（bash も連結＝(b)）",
+     "echo x\\\nrm docs/SPEC.md", "allow"),
+    ("INV-SH-16", "行継続・'…' の内側（bash は連結しない＝(b)）",
+     "rm 'tickets/acti\\\nve/APP-001.md'", "allow"),
+    ("INV-SH-17", '行継続・"…" の内側（bash は連結する）',
+     'rm "tickets/acti\\\nve/APP-001.md"', "deny"),
+    ("INV-SH-18", "dq 内のコマンド置換の中のコメント（内側はコマンド文脈）",
+     'cat "$(ls #\\\nrm docs/SPEC.md)"', "deny"),
+    ("INV-SH-19", "連結後に basename が保護対象でなくなる形（＝(b)）",
+     "echo x > docs/SPEC.md\\\n.bak", "allow"),
+    ("INV-SH-20", "クォート内・語中の # はコメントではない（AC1 との整合）",
+     "rm 'x#y' tickets/acti\\\nve/APP-001.md", "deny"),
 )
 
 
