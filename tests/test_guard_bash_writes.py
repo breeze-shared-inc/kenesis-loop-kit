@@ -202,6 +202,39 @@ LEGACY_DENY_COMMANDS = [
     # バッククォート領域を読み飛ばさないと対応する `)` を見失い、コマンド
     # 全体が degraded へ落ちて内側の `rm` が `ls` セグメントへ埋もれる
     "cd tickets/active && ls $(ls `rm APP-001.md #'`)",
+    # --- C9: awk の `#` コメントに引用符を1つ置いて文字列リテラルの
+    # パリティをずらす形（AWL-3）。コメントがモデル化されておらず文字列走査が
+    # 改行で打ち切られなかったため、awk が実際に実行する `system(` 等が
+    # 文字列の中身として消え、除去後テキストが AW-7 の3条件をすべて満たして
+    # allow になっていた。コメント側に `"` をもう1つ置いてパリティを戻すため
+    # 「未閉じ文字列＝deny」にも掛からない。旧版は awk を ALLOWED_HEADS に
+    # 持たず保護対象に言及する awk をコマンドごと deny していたため old=deny。
+    # 実機 gawk 5.2.1 が rc=0 で削除・改変することを確認済み ---
+    "awk 'BEGIN{ #\"\nsystem(\"rm docs/SPEC.md\") #\"\n}'",
+    "awk 'BEGIN{ #\"\nsystem(\"sed -i s/a/b/ tickets/active/APP-001.md\")"
+    " #\"\n}'",
+    "awk 'BEGIN{ #\"\nprint \"x\" > \"docs/SPEC.md\" #\"\n}'",
+    "awk 'BEGIN{ #\"\n\"rm docs/SPEC.md\" | getline x #\"\n}'",
+    "awk 'BEGIN{ #\"\nx=\"system\"; @x(\"rm docs/SPEC.md\") #\"\n}'",
+    "awk -e 'BEGIN{ #\"\nsystem(\"rm docs/SPEC.md\") #\"\n}'",
+    "awk --source='BEGIN{ #\"\nsystem(\"rm docs/SPEC.md\") #\"\n}'",
+    "cd tickets/active && awk 'BEGIN{ #\"\nsystem(\"rm APP-001.md\") #\"\n}'",
+    # --- AWL-4: 正規表現／除算の曖昧位置（判定不能→deny）。
+    # AWK_OPERAND_END_CHARS が `+` を含むため hook はここを除算と読むが、
+    # 実機 gawk は `1 + /re/` を正規表現定数として受け付け後段を実行する
+    # （V-15(3a) で実測）。曖昧位置では除去せず判定不能として deny する。
+    # 3件目は AWL-1 の改行終端（awk の文字列は行をまたげない） ---
+    "awk 'BEGIN{x=1+ /#/; system(\"rm docs/SPEC.md\")}'",
+    "awk 'BEGIN{x=1+ /\"/ ; system(\"rm docs/SPEC.md\") ; y=2+ /\"/ }'",
+    "awk 'BEGIN{x=\"a\nb\"; system(\"rm docs/SPEC.md\")}'",
+    # --- H5: degraded のステートメント区切りに単独 `&` が無く、` #'` の
+    # 2文字を足すだけで `&` の後段が先頭 head のセグメントへ埋もれる形。
+    # **old=allow だが維持規律3（将来見つかった穴を塞いだ時点で追加してよい）
+    # に基づき収載する。** 実機 bash が rc=0 で削除・改変することを確認済み ---
+    "ls & rm docs/SPEC.md #'",
+    "ls & sed -i 's/a/b/' tickets/active/APP-001.md #'",
+    "ls & truncate -s 0 docs/SPEC.md #'",
+    "cd tickets/active & rm APP-001.md #'",
 ]
 
 # 設計書 docs/designs/KLK-010.md §3-9 の書き込みベクタ棚卸し表と、実装の
@@ -215,6 +248,24 @@ LEGACY_DENY_COMMANDS = [
 # 対し、本リストは「棚卸し表の各セルが実装されていることを守る」もの
 # （目的が異なるため統合しない）。期待値 "allow" の行は**意図的に未対応の
 # 穴**であり、塞いだ時点で "deny" へ変える（変更は意識的な行為になる）。
+#
+# **↑ この記述は下記のとおり精密化する（期待値 "allow" の行を一律に「未対応の
+# 穴」と読むと、正しい allow を "deny" へ変える事故が起きる）。**
+#
+# **期待値 "allow" の行には3種類があり、混同してはならない**（混同すると
+# 「穴を塞いだつもりで正しい allow を deny へ変える」事故が起きる）:
+#   (a) **意図的に未対応の穴**（INV-SH-07・09・11・INV-SED-05〜07 ほか）—
+#       塞いだ時点で "deny" へ変える（変更は意識的な行為になる）。
+#   (b) **bash と一致した結果としての allow**（INV-SH-15・16・19 ほか）—
+#       bash も後続コマンドを実行しない／触るのは保護対象ではない別名で
+#       あるため、**"deny" へ変えたら誤り**（過剰deny）。
+#   (c) **awk と一致した結果としての allow**（INV-AWKLEX-06・07・08・09・
+#       12・13、INV-AWK-16〜20 ほか）— awk が**実行しない**テキスト
+#       （コメント・リテラル・プログラム以外のオペランド）にのみ危険様
+#       パターンが現れる形、および曖昧さが実行に到達しえない形であるため、
+#       **"deny" へ変えたら誤り**。
+# (b)(c) を変更するには、設計書 §3-9-2-1／§3-9-3 の分岐条件そのものを覆す
+# 実測（V-14(7)／V-15）が要る。
 INVENTORY_CASES = (
     # --- awk のプログラム内構文（§3-9 ③列・§3-11 の写像表） ---
     ("INV-AWK-01", "print/printf ... > >>（出力リダイレクト）",
@@ -338,6 +389,53 @@ INVENTORY_CASES = (
      "echo x > docs/SPEC.md\\\n.bak", "allow"),
     ("INV-SH-20", "クォート内・語中の # はコメントではない（AC1 との整合）",
      "rm 'x#y' tickets/acti\\\nve/APP-001.md", "deny"),
+    ("INV-SH-21", "degraded の単独 & ステートメント区切り（H5）",
+     "ls & rm docs/SPEC.md #'", "deny"),
+    # --- awk の**字句次元**（§3-9-3）。hook はプログラム本文の字面を見るが、
+    # awk が実行するのは「リテラルでもコメントでもない部分」だけである。
+    # 両者が食い違う条件をサブケースへ分解して固定する（P7／P8）。
+    # テキストを除去する近似には**方向の非対称**があり、除去しすぎ
+    # （over-removal）だけが allow 方向（危険）、除去しなさすぎ
+    # （under-removal）は deny 方向（安全）になる。
+    #
+    # **期待値 allow の行の3種類目（(c)）をここで追加する**:
+    #   (c) **awk と一致した結果としての allow**（INV-AWKLEX-06・07・08・09・
+    #       12・13）— awk が**実行しない**テキスト（コメント・リテラル）に
+    #       のみ危険様パターンが現れる形、および曖昧さが実行に到達しえない
+    #       形であることが根拠であり、**"deny" へ変えたら誤り**。変更するには
+    #       設計書 §3-9-3 の分岐条件そのものを覆す実測（V-15）が要る。
+    # 逆に INV-AWKLEX-01〜05・10・11 は「判定不能→deny」の固定点であり、
+    # "allow" へ変えたら C9 と同型の穴が開く。
+    ("INV-AWKLEX-01", 'コメント本文の " で文字列パリティをずらす（C9-1）',
+     "awk 'BEGIN{ #\"\nsystem(\"rm docs/SPEC.md\") #\"\n}'", "deny"),
+    ("INV-AWKLEX-02", "同・-e 形（C9-4）",
+     "awk -e 'BEGIN{ #\"\nsystem(\"rm docs/SPEC.md\") #\"\n}'", "deny"),
+    ("INV-AWKLEX-03", "同・保護対象 cwd 相対（C9-5）",
+     "cd tickets/active && awk 'BEGIN{ #\"\nsystem(\"rm APP-001.md\")"
+     " #\"\n}'", "deny"),
+    ("INV-AWKLEX-04", "同・間接呼び出し（C9-3）",
+     "awk 'BEGIN{ #\"\nx=\"system\"; @x(\"rm docs/SPEC.md\") #\"\n}'",
+     "deny"),
+    ("INV-AWKLEX-05", "文字列が改行に達する（未終端＝判定不能）",
+     "awk 'BEGIN{x=\"a\nb\"; system(\"rm docs/SPEC.md\")}'", "deny"),
+    ("INV-AWKLEX-06", "文字列内の \\+改行（gawk の行継続＝(c)）",
+     "awk 'BEGIN{x=\"a\\\nb\"; print x}' tickets/active/APP-001.md", "allow"),
+    ("INV-AWKLEX-07", "コメント本文の | / @ / system(（読み取り＝(c)）",
+     "awk '{print $1} # a|b @c system(' tickets/active/APP-001.md", "allow"),
+    ("INV-AWKLEX-08", "正規表現内の #（AWL-2 が先に消費＝(c)）",
+     "awk '/#/ {print}' tickets/active/APP-001.md", "allow"),
+    ("INV-AWKLEX-09", "文字列内の #（AWL-1 が先に消費＝(c)）",
+     "awk '{print \"#\"}' tickets/active/APP-001.md", "allow"),
+    ("INV-AWKLEX-10", "除算の後の # × 同一行に / が残る（AWL-4）",
+     "awk 'BEGIN{x=1+ /#/; system(\"rm docs/SPEC.md\")}'", "deny"),
+    ("INV-AWKLEX-11", "除算の後の文字列 × 同一行に / が残る（AWL-4）",
+     "awk 'BEGIN{x=1+ /\"/ ; system(\"rm docs/SPEC.md\") ; y=2+ /\"/ }'",
+     "deny"),
+    ("INV-AWKLEX-12", "除算あり・以降に / が残らない（AWL-4 の非発火＝(c)）",
+     "awk '{print $1/2, $3/4, \"ratio\"}' tickets/active/APP-001.md",
+     "allow"),
+    ("INV-AWKLEX-13", "複数行プログラム（D-1 の固定点＝(c)）",
+     "awk 'BEGIN{FS=\":\"}\n{print $2}' tickets/active/APP-001.md", "allow"),
 )
 
 
