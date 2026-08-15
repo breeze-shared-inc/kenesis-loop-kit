@@ -1350,6 +1350,86 @@ class TestGuardBashWrites(unittest.TestCase):
                 else:
                     self.assertAllow(command)
 
+    # --- KLK-010 Phase 10・11 差し戻し検証（tester・8ラウンド目）で追加した
+    # 回帰ガード。QT-1/QT-2/QT-3 を破る形を探索したが新規バイパスは
+    # 見つからなかった。以下は「見つからなかったことの証拠」として固定する
+    # 境界ケースと、日常運用（Kit 自身のタブ区切り処理）で R29 ① に
+    # 該当する追加形である。既存137件は無変更（本メソッド群のみ追加）---
+
+    def test_r29_tab_processing_daily_forms_deny(self):
+        # R29 ① の一般化: 「クォート外の $'…' を含む形」は awk -F$'\t' /
+        # grep $'\t' / sed $'s/\t/ /' の3例に限らず、保護対象へ言及する
+        # あらゆる ALLOWED_HEADS コマンドで同じ理由により判定不能＝deny になる
+        # （回避策は常に awk -F'\t' 等のリテラルタブ表記）。Kit 自身のログ整形・
+        # メトリクス集計・フロントマター抽出で使われがちなタブ処理コマンドで
+        # 固定する（tester round8 の探索・新規バイパスなし）
+        self.assertDeny("grep $'\\t' tickets/active/APP-001.md")
+        self.assertDeny("sed $'s/\\t/ /' tickets/active/APP-001.md")
+        self.assertDeny("cat tickets/active/APP-001.md | cut -f1 -d$'\\t'")
+        self.assertDeny("awk -F$'\\t' '{print $1}' tickets/active/APP-001.md")
+        # 対になる allow 側の回避策（重複回避のためリテラルタブ表記のみ・
+        # 既存 T-QTOK は awk -F'\t' を固定済み）
+        self.assertAllow("grep -P '\\t' tickets/active/APP-001.md")
+        self.assertAllow(
+            "cat tickets/active/APP-001.md | cut -f1 -d'\t'")
+
+    def test_ansi_c_quote_inside_nested_substitution_all_depths_deny(self):
+        # tester round8: QT-1 の印は lex() の「通常状態」でのみ検出される。
+        # $(...) の内側は _take_subst が退避し、後段で find_violation を
+        # 再帰させて改めて lex() を通すため、各深さで独立に検出できることを
+        # 固定する（深さ0〜MAX_SUBST_DEPTH(3) 境界・その先の深さ4も含む）。
+        # 深さ4以降は subst_violation が保守側で打ち切るが、保護対象パスが
+        # リテラルで現れる限り is_guarded_token（QT-3の復号込み）が
+        # 引き続き deny させることも併せて固定する
+        inner = ("awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+                 "tickets/active/APP-001.md\\x22)\\x22\"}'")
+        self.assertDeny(inner)
+        self.assertDeny("ls $(%s)" % inner)
+        self.assertDeny("ls $(echo $(%s))" % inner)
+        self.assertDeny("ls $(echo $(echo $(%s)))" % inner)
+        self.assertDeny("ls $(echo $(echo $(echo $(%s))))" % inner)  # depth 4
+
+    def test_ansi_c_quote_inside_backtick_and_process_subst_deny(self):
+        # tester round8: バッククォート／プロセス置換の内側に $'...' が
+        # ある形も、置換内側の再帰評価（find_violation の再帰呼び出し）で
+        # 新しい lex() 走査が行われるため検出されることを固定する
+        inner = ("awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+                 "tickets/active/APP-001.md\\x22)\\x22\"}'")
+        self.assertDeny("ls `%s`" % inner)
+        self.assertDeny("cat <(%s)" % inner)
+
+    def test_degraded_line_split_between_dollar_and_quote_still_deny(self):
+        # tester round8 の探索: degraded_violation の QT-1 判定
+        # （ANSI_QUOTE_RE = \$['"]）はステートメント分割後の**部分文字列**
+        # 判定であり、行継続 `\`+改行 の削除は lex() 内でのみ行われ
+        # degraded_violation は元の（未結合の）command を受け取る。
+        # そのため「$」と「'」の間に未エスケープの生の改行を挟むと
+        # （bash は通常の行継続として結合するので実機では同一の $'...' に
+        # なる。実機 gawk で実際にファイルを truncate/削除することを
+        # 使い捨てディレクトリで確認済み）、degraded の
+        # LEGACY_STATEMENT_RE（`\n` を分離子に含む）がこの生の改行でも
+        # ステートメントを分割してしまい、$ と ' が別ピースへ分かれるため
+        # ANSI_QUOTE_RE はどちらのピースにも一致しない。
+        # それでも実際には deny のままである — 分割によって「awk」という
+        # head が「$'...'」の胴体（実際の payload）から切り離され、payload
+        # 側のピースの先頭語が引用符で始まる未知の head になり、
+        # 「'...' は許可されていません」という**別の理由**で deny される
+        # ためである（ANSI_QUOTE_REASON ではない）。この安全網は
+        # head_of() が引用符付きの語をそのまま未知の head として扱う
+        # ことに依存する偶発的なものであり、将来 head_of() が先頭の
+        # 引用符文字を正規化・除去するようになった場合に無音で allow へ
+        # 転じうる。回帰検出のためここに固定する
+        payload_system = (
+            "awk $\\\n'BEGIN{x=\"foo\\x22system(\\x22rm "
+            "tickets/active/APP-001.md\\x22)\\x22\"}' #'"
+        )
+        self.assertDeny(payload_system)
+        payload_cwd = (
+            "cd tickets/active && awk $\\\n'BEGIN{x=\"foo\\x22system(\\x22rm "
+            "APP-001.md\\x22)\\x22\"}' #'"
+        )
+        self.assertDeny(payload_cwd)
+
 
 if __name__ == "__main__":
     unittest.main()
