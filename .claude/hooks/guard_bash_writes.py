@@ -21,12 +21,34 @@ check_loop_integrity.py のドリフト検知（Stop）が捕捉する。
     ステートメント分割・特殊構文判定を引き起こさない。`$(...)` / バッククォート /
     プロセス置換は内側テキストを substs へ退避し、元の位置には**位置インデックス
     付きのプレースホルダ**（`__KLK_SUBST_0__`）を置く。インデックスがあることで
-    「どの語がどの置換に由来するか」を後段が復元できる。行継続（`\`+改行）は
-    bash と同じく**削除して前後の語を連結する**（空白へ置換すると
-    `rm tickets/acti\<改行>ve/APP-001.md` の語が割れて証拠が分断される）。
-    ただしシングルクォートの**内側**では bash は行継続を解釈せずリテラルの
-    `\`+改行として残す（＝そこで語が割れる）のに対し、本 hook は内側でも
-    連結する。相違は**証拠が増える方向（保守側）**にのみ働く。
+    「どの語がどの置換に由来するか」を後段が復元できる。クォート外の改行は
+    ステートメント区切りとして扱う。
+
+  L0 正規化（normalize_line_continuations）— 行継続（`\`+改行）の扱いは
+    **bash の字句規則と一致していなければ両方向へ倒れる。「安全側の近似」は
+    存在しない。** 連結しすぎればステートメント区切りという証拠を失い（許可
+    コマンドの後ろに `\\`+改行 を足すだけで後続コマンドの head が前の語へ
+    吸収され、ホワイトリスト判定が無効化される）、連結しなさすぎれば語の
+    同一性という証拠を失う（`rm tickets/acti\<改行>ve/APP-001.md` のパスが
+    2語に割れて言及ゲートが偽になる）。したがって bash と同じ条件でのみ削除
+    する: ① バックスラッシュ自身がエスケープされていない（走査が `\`+次の
+    1文字を対として消費するため、連の偶奇はカウンタ無しで決まる。`\\`+改行 は
+    リテラルの `\` ＋**区切り**） ② `#` コメントの内側でない（コメント内で
+    `\` は特別扱いされず改行が区切りになる） ③ `'…'`（`$'…'` を含む）の
+    内側でない（内側は `\` も改行もリテラルであり、bash が触るのは「改行を
+    含む別名のファイル」であって保護対象ではない） ④ `"…"` の内側では bash も
+    連結するため削除する。`$(…)` / バッククォート / `<(…)` / `>(…)` の内側は
+    読み飛ばして原文のまま残し、置換の再帰評価の入口で**内側の文脈として**
+    改めて正規化する（ダブルクォート内のコマンド置換の中では bash がコマンド
+    文脈へ戻り `#` がコメントになるため）。正規化は find_violation の入口で
+    1回だけ行い、**正規化後の同じ文字列を lex() と degraded_violation() の
+    双方へ渡す**（両経路が異なる行構造を評価すると正常経路が区切りを失う）。
+    `#` は**この正規化走査の中だけ**でモデル化し（クォート外で語頭に現れた
+    ときにコメントを開始し改行で終わる）、**用途は行継続の適用可否の判定に
+    限る。コメント本文は除去しない** — lex()／degraded はコメント本文を語と
+    して走査し続ける。この相違の向きは deny 側（保守的）であり、除去は
+    deny → allow 方向の変化を生む（`cat a #> docs/SPEC.md` が allow になる）
+    ため本 hook では行わない。
 
   判定不能なステートメント（ANSI-C 引用 $'...' / ロケール翻訳 $"..."）—
     bash はこの2形を**展開時にデコード／翻訳する**ため、hook が見る字面と
@@ -382,7 +404,15 @@ AWK_INDIRECT_CALL_RE = re.compile(r"@\s*[A-Za-z_][A-Za-z_0-9]*\s*\(")
 #   非ASCII・制御文字 … gawk はリテラル外の非ASCII識別子を受け付けない
 AWK_SAFE_PROGRAM_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
-    " \t"
+    # 改行は awk では `;` と同じ**文の終端**であり、複数行プログラム
+    # （`awk 'BEGIN{FS=":"}<改行>{print $2}' T`）の日常形で必ず現れる。
+    # L1 が改行を `;` へ全体置換していた頃はここへ到達しなかったが、
+    # 改行を走査の中で扱う（＝クォート内の改行は改行のまま語へ入る）よう
+    # 変えたため明示的に収載する。**判定は弱まらない**: AWK_OUTPUT_RE は
+    # 既に `[^;}\n]*` で改行を `;` と同じ終端として扱い、awk_strip_literals も
+    # 正規表現スパンを `;` と改行の双方で打ち切る。収載しないと複数行の
+    # 読み取り awk が新規に誤denyになる（設計書 §6 R33 の列挙外）
+    " \t\n"
     '$(){}[],;:?!~=<>+-*/%^&."#'
 )
 
@@ -425,6 +455,18 @@ AWK_PROGRAM_TEXT_FLAGS = ("-e", "--source")
 # 載せ忘れると「その値をプログラム候補として検査する」＝deny 方向へ倒れる。
 AWK_VALUE_CONSUMING_FLAGS = ("-F", "-v", "-e",
                              "--field-separator", "--assign", "--source")
+
+# --- L1: 行継続とコメントの正規化（LX-2／LX-3）------------------------------
+#
+# bash が `#` をコメントの開始として扱うのは「語頭に現れたとき」だけである。
+# 直前の文字がこの集合に含まれる（または入力の先頭である）ときに語頭とみなす。
+# 用途は**行継続の適用可否の判定だけ**であり、コメント本文は除去しない
+# （除去は deny → allow 方向の変化を生む。設計書 §3-2-1 LX-3・§6 R35）。
+COMMENT_START_PREV = frozenset(" \t\n;&|()<>")
+# コマンド置換・バッククォートの直後は「語の途中」であり `#` は語頭にならない
+# （`echo $(ls)#x` の `#` はコメントではない）。読み飛ばした領域の後に置く
+# 「直前の文字」の代用値。COMMENT_START_PREV に含まれない任意の文字でよい。
+MIDWORD_SENTINEL = "\x00"
 
 # --- L1: ANSI-C 引用 $'...' / ロケール翻訳 $"..." の扱い（QT-1・QT-3）--------
 #
@@ -540,8 +582,23 @@ def mentions_guarded(values):
 
 # --- L1: 字句レイヤ ---------------------------------------------------------
 
-def _take_subst(command, start, buf, substs):
-    """`$(` / `<(` / `>(` の内側を置換として取り込み、終端 `)` の次の位置を返す。"""
+def _skip_balanced(command, start):
+    """`$(` / `<(` / `>(` の内側を読み飛ばし、対応する `)` の**次**の位置を返す。
+
+    start は開き括弧の次の位置（深さ1から開始）。クォートとエスケープを尊重する。
+    対応する `)` が無ければ **-1** を返す（呼び出し側が ValueError／打ち切りを
+    選ぶ）。normalize_line_continuations() と lex() の双方がこのヘルパを使うこと
+    で、**2箇所が別々に置換の終端を判断してずれる**ことを構造的に防ぐ
+    （正規化とスキャンで文脈がずれると内側の区切りを失う穴が開く）。
+
+    クォート**外**のバッククォート領域は `_skip_backtick` と同じ規則
+    （最初の未エスケープの ` まで）で読み飛ばす。bash もバッククォートの
+    内側ではクォート状態を持ち越さないため、追うと `$(ls `rm F #'`)` の
+    ように内側の引用符が不均衡な形で対応する `)` を見失い、**コマンド全体が
+    degraded へ落ちて置換の内側が空白分割で `ls` セグメントへ埋もれる**
+    （実機 bash は内側の `rm` を実行する）。終端が無いときは従来どおり
+    1文字進める（未閉じ＝bash も構文エラー）。
+    """
     depth, i, n, quote = 1, start, len(command), ""
     while i < n:
         c = command[i]
@@ -556,6 +613,11 @@ def _take_subst(command, start, buf, substs):
         if c == "\\" and i + 1 < n:
             i += 2
             continue
+        if c == "`":
+            end = _skip_backtick(command, i + 1)
+            if end > 0:
+                i = end
+                continue
         if c in "'\"":
             quote = c
             i += 1
@@ -565,27 +627,180 @@ def _take_subst(command, start, buf, substs):
         elif c == ")":
             depth -= 1
             if depth == 0:
-                substs.append(command[start:i])
-                buf.append(SUBST_PLACEHOLDER % (len(substs) - 1))
                 return i + 1
         i += 1
-    raise ValueError("no closing parenthesis")
+    return -1
+
+
+def _skip_backtick(command, start):
+    """バッククォート置換の終端の**次**の位置を返す。無ければ -1。
+
+    bash と同じく、**クォート状態は追わない**（バッククォートは最初の
+    エスケープされていない ` で閉じる）。内側に未閉じクォートが残ることが
+    あるのは仕様どおりであり、その場合は内側の再帰評価が degraded へ落ちる
+    （その経路のゲートは degraded_violation の関数レベルゲートが cwd 対応
+    済みであるため素通りしない）。
+    """
+    i, n = start, len(command)
+    while i < n:
+        if command[i] == "\\" and i + 1 < n:
+            i += 2
+            continue
+        if command[i] == "`":
+            return i + 1
+        i += 1
+    return -1
+
+
+def _take_subst(command, start, buf, substs):
+    """`$(` / `<(` / `>(` の内側を置換として取り込み、終端 `)` の次の位置を返す。"""
+    end = _skip_balanced(command, start)
+    if end < 0:
+        raise ValueError("no closing parenthesis")
+    substs.append(command[start:end - 1])
+    buf.append(SUBST_PLACEHOLDER % (len(substs) - 1))
+    return end
 
 
 def _take_backtick(command, start, buf, substs):
     """バッククォート置換の内側を取り込み、終端の次の位置を返す。"""
-    i, n = start, len(command)
+    end = _skip_backtick(command, start)
+    if end < 0:
+        raise ValueError("no closing backquote")
+    substs.append(command[start:end - 1])
+    buf.append(SUBST_PLACEHOLDER % (len(substs) - 1))
+    return end
+
+
+def normalize_line_continuations(command):
+    r"""bash と同じ条件でのみ行継続（`\`+改行）を削除する（設計書 §3-2-1）。
+
+    **削除するのは次をすべて満たすときだけ**である。
+      1. バックスラッシュ自身がエスケープされていない（走査が `\`+次の1文字を
+         対として消費するため、連の偶奇は自動的に決まる。カウンタは持たない）
+      2. `#` コメントの内側でない（コメント内で `\` は特別扱いされず、改行が
+         コメントを終わらせる＝**区切り**）
+      3. `'…'`（`$'…'` を含む）の内側でない（内側は `\` も改行もリテラル）
+      4. `"…"` の内側では bash も連結するため削除する
+
+    **「安全側の近似」は存在しない。** 連結しすぎればステートメント区切りと
+    いう証拠を失い（許可コマンドの後ろに `\\`+改行 を足すだけで後続コマンドの
+    head が前の語へ吸収され、ALLOWED_HEADS 判定が無効化される）、連結し
+    なさすぎれば語の同一性という証拠を失う（`rm tickets/acti\`+改行+`ve/…` の
+    パスが2語に割れる）。**bash と一致させることだけが正解**であり、一致は
+    実機の argv・実行効果との突き合わせ（設計書 §4-9 V-14）で裏付ける。
+
+    `$(…)` / `` `…` `` / `<(…)` / `>(…)` の内側は**読み飛ばして原文のまま
+    残す**。内側は lex() が substs へ退避し find_violation が再帰評価する際に、
+    改めて**コマンド文脈として**本関数を通る（ダブルクォートの内側にある
+    コマンド置換の中では bash がコマンド文脈へ戻り `#` がコメントになるため、
+    外側の文脈のまま内側を正規化すると `cat "$(ls #\`+改行+`rm …)"` の区切りを
+    失う。文脈スタックを持たずに正しくなる）。
+
+    本関数が L1 で bash の「行構造」を近似する**唯一の場所**であり、呼び出しは
+    find_violation の入口の1箇所だけである（正規化後の同じ文字列を lex() と
+    degraded_violation() の双方へ渡す＝両経路が同じ行構造を見る）。
+    """
+    out, state, prev, i, n = [], "cmd", "", 0, len(command)
+
     while i < n:
         c = command[i]
+
+        if state == "sq":                 # '…' の内側は全てリテラル（条件3）
+            out.append(c)
+            prev = c
+            if c == "'":
+                state = "cmd"
+            i += 1
+            continue
+
+        if state == "cmt":                # コメント内で `\` は特別扱いされない
+            out.append(c)
+            prev = c
+            if c == "\n":
+                state = "cmd"             # 改行はコメントを終わらせ区切りになる
+            i += 1
+            continue
+
+        # ---- ここから "cmd" と "dq" の共通処理 ----
+        # バックスラッシュは左から順に「`\` ＋次の1文字」の対として消費する。
+        # これだけで条件1（連の偶奇）が決まる（`\\`+改行では最後の `\` が
+        # 直前の `\` と対になり、改行は対の外に残る＝区切りになる）
         if c == "\\" and i + 1 < n:
+            if command[i + 1] == "\n":
+                i += 2                    # 行継続＝削除して連結（条件1・4）
+                # **prev は更新しない。** bash は `\`+改行を取り除いて前後を
+                # 直接隣接させるため、語頭判定に効くのは「削除前の直前の
+                # 文字」である（`echo a \<改行>#b` は連結後 `echo a #b` と
+                # なり `#` は**語頭＝コメント**。ここで prev を書き換えると
+                # コメントを見落として次の `\`+改行まで連結してしまう）
+                continue
+            out.append(command[i:i + 2])
+            prev = command[i + 1]
             i += 2
             continue
+
+        # コマンド置換・プロセス置換・バッククォートは**読み飛ばす**
+        if c == "$" and i + 1 < n and command[i + 1] == "(":
+            end = _skip_balanced(command, i + 2)
+            if end < 0:
+                out.append(command[i:])   # 未閉じ＝lex が ValueError → degraded
+                break
+            out.append(command[i:end])
+            prev = MIDWORD_SENTINEL
+            i = end
+            continue
         if c == "`":
-            substs.append(command[start:i])
-            buf.append(SUBST_PLACEHOLDER % (len(substs) - 1))
-            return i + 1
+            end = _skip_backtick(command, i + 1)
+            if end < 0:
+                out.append(command[i:])
+                break
+            out.append(command[i:end])
+            prev = MIDWORD_SENTINEL
+            i = end
+            continue
+
+        if state == "dq":
+            out.append(c)
+            prev = c
+            if c == '"':
+                state = "cmd"
+            i += 1
+            continue
+
+        # ---- ここから "cmd" のみ ----
+        if c in "<>" and i + 1 < n and command[i + 1] == "(":
+            end = _skip_balanced(command, i + 2)
+            if end < 0:
+                out.append(command[i:])
+                break
+            out.append(command[i:end])
+            prev = MIDWORD_SENTINEL
+            i = end
+            continue
+        if c == "'":
+            out.append(c)
+            prev = c
+            state = "sq"
+            i += 1
+            continue
+        if c == '"':
+            out.append(c)
+            prev = c
+            state = "dq"
+            i += 1
+            continue
+        if c == "#" and (prev == "" or prev in COMMENT_START_PREV):
+            out.append(c)                 # 語頭の `#`＝コメント開始
+            prev = c
+            state = "cmt"
+            i += 1
+            continue
+        out.append(c)
+        prev = c
         i += 1
-    raise ValueError("no closing backquote")
+
+    return "".join(out)
 
 
 def lex(command):
@@ -595,12 +810,13 @@ def lex(command):
              ("ansiq", "$'" | '$"')]  ← QT-1 の「判定不能」の印
     substitutions: `$(...)` / バッククォート / プロセス置換の内側テキスト
     未閉じクォート・未閉じ括弧では ValueError を送出する。
+
+    **前提（LX-5）:** command は normalize_line_continuations() を通した文字列で
+    あること（呼び出しは find_violation の入口の1箇所のみ）。bash が連結する
+    行継続は既に削除されているため、**通常状態に残る `\\`+改行は「コメント
+    末尾のバックスラッシュ」しかありえない**（偶数連は対消費で、`'…'` の内側は
+    クォート状態で、置換の内側は _take_subst／_take_backtick で処理される）。
     """
-    # QT-2: bash は行継続 `\`+改行を**削除して前後の語を連結する**。空白へ
-    # 置換すると `rm tickets/acti\<改行>ve/APP-001.md` の語が割れて言及ゲートが
-    # 偽になり、bash が実際には保護対象を rm するのに allow になる。連結は
-    # 部分文字列としての証拠を失わせないため、証拠は増える方向にしか動かない。
-    command = command.replace("\\\n", "").replace("\n", ";")
     tokens, substs, buf, pending = [], [], [], []
 
     def flush():
@@ -645,6 +861,25 @@ def lex(command):
             i += 1
             continue
         # 通常状態
+        # LX-5: 正規化済みのため、ここに来る `\`+改行は「コメント末尾の
+        # バックスラッシュ」だけである。バックスラッシュ1文字を落として、次の
+        # ループで改行を区切りとして扱う。`\` は PATHISH_RE の候補文字では
+        # ないため**パスの証拠は1文字も減らない**。落とさないと shlex.split が
+        # 「末尾の孤立エスケープ」で ValueError を出し不要に degraded へ落ちる。
+        # **この分岐は下の汎用エスケープ分岐より前に置かなければならない**
+        # （後ろに置くと `\`+改行が対として消費され、区切りが消える）
+        if c == "\\" and i + 1 < n and command[i + 1] == "\n":
+            i += 1
+            continue
+        # 改行はステートメント区切り。前処理で `;` へ置換する方式だと直前の
+        # バックスラッシュに `;` がエスケープされて区切りが消えるため、
+        # **走査の中で扱う必要がある**（順序・flush の位置は OPERATOR_CHARS
+        # 分岐と同一。印トークンの位置も変わらない）
+        if c == "\n":
+            flush()
+            tokens.append(("op", ";"))
+            i += 1
+            continue
         if c == "\\" and i + 1 < n:
             buf.append(c)
             buf.append(command[i + 1])
@@ -1326,8 +1561,20 @@ def degraded_violation(command, cwd=""):
     cwd 追跡の初期値になる（置換の内側が degraded になった場合にも効かせる）。
     保護対象 cwd 下の書き込み判定は segment_violation / awk_violation の内側に
     あるため、degraded は cwd を渡すだけで同じ保護を得る（判定を複製しない）。
+
+    **command は find_violation が正規化した文字列**である（正常経路と degraded
+    経路が同じ行構造を見る）。LEGACY_STATEMENT_RE は正規化後も改行で無条件に
+    分割するため、旧版の判定要素は失われない（正規化が削除するのは「bash が
+    連結する `\\`+改行」だけであり、これは旧版が持っていなかった保護の追加）。
     """
-    if not mentions_guarded(command.split()):
+    # **関数レベルのゲートにも cwd を入れる。** 入れないと
+    # `cd tickets/active && ls `rm APP-001.md #'`` のように置換の内側だけが
+    # degraded へ落ちる経路（find_violation → subst_violation →
+    # find_violation(inner, depth+1, cwd) → lex の ValueError）で、
+    # ステートメント単位のゲートに到達する前に early return してしまう。
+    # 本関数のゲートは①（ここ）②LEGACY_REDIRECT_RE ③heredoc ④文単位ゲート
+    # ⑤segment/awk の5つで、cwd を見ないのは①だけであった
+    if not (cwd_is_guarded(cwd) or mentions_guarded(command.split())):
         return None
     for match in LEGACY_REDIRECT_RE.finditer(command):
         target = match.group(1)
@@ -1384,6 +1631,12 @@ def subst_violation(substs, index, depth, cwd):
 
 def find_violation(command, depth=0, cwd=""):
     """コマンド全体の違反理由を返す。問題なければ None。"""
+    # H4: 行継続の正規化は**ここで1回だけ**行い、正規化後の**同じ文字列**を
+    # lex() と degraded_violation() の双方へ渡す。両経路が異なる行構造を評価
+    # すると、正常経路が区切りを失う穴と degraded の「偶発的な安全網」が
+    # 同時に生まれる。置換の内側は正規化されずに substs へ入り、この関数の
+    # 再帰呼び出しで**内側の文脈として**改めて正規化される
+    command = normalize_line_continuations(command)
     try:
         tokens, substs = lex(command)
     except ValueError:

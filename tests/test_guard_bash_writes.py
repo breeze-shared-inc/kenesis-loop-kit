@@ -1430,6 +1430,172 @@ class TestGuardBashWrites(unittest.TestCase):
         )
         self.assertDeny(payload_cwd)
 
+    # --- KLK-010 Phase 12: 行継続の正規化を bash の字句規則へ一致させる
+    # （設計書 §3-2-1 LX-1〜LX-5・§4-2-2）。行継続の近似は bash と一致して
+    # いなければ**両方向へ倒れる**ため、deny 側（T-C7a/b/e/f/h）と allow 側
+    # （T-C7c/T-C7d(b)/T-C7g）を**対で**固定する。片方だけでは検出できない ---
+
+    def test_line_continuation_even_backslash_run_is_separator_deny(self):
+        # T-C7a: バックスラッシュが**偶数個**並ぶと、最後の `\` はリテラルの
+        # バックスラッシュであり続く改行は**制御演算子（区切り）**である。
+        # 無条件に `\`+改行 を削除する実装は後続コマンドの head を前の語へ
+        # 吸収させ、ALLOWED_HEADS 判定に使われる head が先頭の許可コマンドに
+        # なる（＝任意の読み取りコマンドに2文字足すだけで hook 全体が無効化
+        # される）。実機 bash は後続コマンドを実行してファイルを削除・改変する
+        for command in (
+            "echo x\\\\\nrm docs/SPEC.md",                 # 2個（偶数）
+            "ls \\\\\nrm docs/SPEC.md",
+            "echo x\\\\\\\\\nrm docs/SPEC.md",             # 4個（偶数）
+            "pwd\\\\\ntruncate -s 0 docs/SPEC.md",
+            "echo x\\\\\nsed -i 's/a/b/' tickets/active/APP-001.md",
+            "ls a\\\\\ncat b | tee docs/SPEC.md",
+        ):
+            with self.subTest(command=command):
+                self.assertDeny(command)
+
+    def test_line_continuation_after_comment_is_separator_deny(self):
+        # T-C7b: `#` コメントの内側では `\` は特別な意味を持たず、改行が
+        # コメントを終わらせる＝**区切り**である。コメントをモデル化せずに
+        # `\`+改行 を削除すると、ここでも後続コマンドの head が吸収される
+        for command in (
+            "cat README.md #\\\nsed -i 's/orig/pwned/' "
+            "tickets/active/APP-001.md",
+            "ls #x\\\nrm docs/SPEC.md",
+            "grep x README.md #\\\ncat y | tee docs/SPEC.md",
+            "echo x #\\\ntruncate -s 0 tickets/active/APP-001.md",
+        ):
+            with self.subTest(command=command):
+                self.assertDeny(command)
+
+    def test_line_continuation_odd_backslash_run_stays_allow(self):
+        # T-C7c: **二方向要求の固定点。** バックスラッシュが奇数個で終わる形は
+        # bash も行継続として連結する（後続コマンドは実行されない）。したがって
+        # deny は**誤り**であり、過剰deny側へ倒した実装をここで機械的に検出
+        # する。実機 bash で使い捨てディレクトリを用い「ファイルが残る」ことを
+        # 確認済み（1個・3個とも実行されない）
+        for command in (
+            "echo x\\\nrm docs/SPEC.md",                   # 1個（奇数）
+            "echo x\\\\\\\nrm docs/SPEC.md",               # 3個（奇数）
+            "ls \\\nrm tickets/active/APP-001.md",
+        ):
+            with self.subTest(command=command):
+                self.assertAllow(command)
+
+    def test_line_continuation_quote_kind_branches(self):
+        # T-C7d: クォート種別で bash の挙動が分岐する。`"…"` の内側では
+        # 行継続として削除されるが、`'…'` の内側では `\` も改行もリテラルで
+        # あり連結されない（bash が触るのは「改行を含む別名のファイル」で
+        # あって保護対象ではないため allow が正しい＝設計書 §4-9 許容分類9）
+        self.assertDeny('rm "tickets/acti\\\nve/APP-001.md"')
+        self.assertAllow("rm 'tickets/acti\\\nve/APP-001.md'")
+
+    def test_line_continuation_inside_substitution_is_command_context(self):
+        # T-C7e: コマンド置換の内側は**コマンド文脈へ戻る**ため、ダブル
+        # クォートの内側にあっても `#` はコメントになる。正規化が置換の内側へ
+        # 一律に適用されると、内側を再帰評価する前に区切りが失われる。
+        # 内側を無加工で残し、再帰の入口で内側の文脈として正規化することで
+        # 閉じる（文脈スタックを持たずに正しくなる）
+        self.assertDeny('cat "$(ls #\\\nrm docs/SPEC.md)"')
+        self.assertDeny("ls `ls #\\\nrm docs/SPEC.md`")
+
+    def test_hash_not_at_word_start_is_not_a_comment(self):
+        # T-C7f: `#` がコメントになるのは**クォート外で語頭に現れたとき**
+        # だけである。クォート内・語中・コマンド置換の直後の `#` をコメントと
+        # 誤検出すると、そこで行継続の適用が止まって保護対象パスが2語に割れ、
+        # 言及ゲートが偽になる（AC1「クォート内の `#` で特殊構文判定をしない」
+        # との整合の固定点でもある）
+        for command in (
+            "rm 'x#y' tickets/acti\\\nve/APP-001.md",
+            "rm a#b tickets/acti\\\nve/APP-001.md",
+            "rm $(echo x)#y tickets/acti\\\nve/APP-001.md",
+        ):
+            with self.subTest(command=command):
+                self.assertDeny(command)
+
+    def test_hash_modelling_does_not_break_everyday_reads(self):
+        # T-C7g: `#` のモデル化が日常の読み取りを誤denyしないことの固定
+        # （LX-3 の誤deny上限）
+        for command in (
+            "grep -c '#' tickets/active/APP-001.md",
+            "grep -n '#\\|x' tickets/active/APP-001.md",
+            "awk '{print}' tickets/active/APP-001.md # メモ",
+        ):
+            with self.subTest(command=command):
+                self.assertAllow(command)
+
+    def test_line_continuation_does_not_shift_comment_start_context(self):
+        # T-C7h: **正規化走査が「連結時に直前の文字を書き換えない」ことの
+        # 検出器。** bash は `\`+改行 を取り除いて前後を直接隣接させるため、
+        # 語頭判定に効くのは「削除前の直前の文字」である。連結時に直前の文字を
+        # 書き換える実装だと、続く `#` を語頭と認識できずコメントを見落とし、
+        # 2つ目の行継続まで連結して **allow に転じる**（C7 の再発）
+        self.assertDeny("echo a \\\n#c\\\nrm docs/SPEC.md")
+
+    def test_degraded_inside_substitution_under_guarded_cwd_deny(self):
+        # T-C8a: `degraded_violation` の**関数レベルゲート**が cwd を見ないと、
+        # 保護対象 cwd 下で「字句解析できない置換」を1つ挟むだけで全判定を
+        # 回避できる。到達経路は find_violation → subst_violation →
+        # find_violation(inner, depth+1, cwd) → lex の ValueError →
+        # degraded_violation(inner, cwd)。`_take_backtick` がクォート状態を
+        # 追わないのは bash と同じ仕様であり、修正すべきはゲートの側である。
+        # 実機 bash で実際に削除・上書きが起きることを確認済み
+        for command in (
+            "cd tickets/active && ls `rm APP-001.md #'`",
+            "cd tickets/active && ls `echo x > APP-001.md #'`",
+            "cd tickets/active && ls `sed -i 's/a/b/' APP-001.md #'`",
+            "cd tickets/active && ls `find . -delete #'`",
+            "cd tickets/active && ls `cp /tmp/e APP-001.md #'`",
+            "cd tickets/active && ls `truncate -s 0 APP-001.md #'`",
+            "cd tickets/active && ls `cat /tmp/e | tee APP-001.md #'`",
+            "cd tickets/active && echo `tee APP-001.md #'`",
+            "cd tickets/done && ls `rm APP-001.md #'`",
+            # $( ) の内側にバッククォートがあり、その中の引用符が不均衡な形。
+            # 置換の終端探索がバッククォート領域を読み飛ばさないと、対応する
+            # `)` を見失ってコマンド全体が degraded へ落ち、内側の `rm` が
+            # 空白分割で `ls` セグメントへ埋もれる（実機 bash は削除する）
+            "cd tickets/active && ls $(ls `rm APP-001.md #'`)",
+        ):
+            with self.subTest(command=command):
+                self.assertDeny(command)
+
+    def test_degraded_gate_still_returns_early_outside_guarded_cwd(self):
+        # T-C8b（対照）: C8 の修正が保護対象外へ波及しないことの固定。
+        # 保護対象への言及も保護対象 cwd も無い入力では、関数レベルゲートは
+        # 依然として early return しなければならない
+        self.assertAllow("cd /tmp && ls `rm x.md #'`")
+        self.assertAllow("ls `rm x.md #'`")
+
+    def test_normalized_command_is_shared_with_degraded_path(self):
+        # T-H4a: 正規化を find_violation の入口で1回だけ行い、正規化後の
+        # **同じ文字列**を lex() と degraded_violation() の双方へ渡す。
+        # 第5版は lex() だけが結合後を見て degraded は生の command を見ていた
+        # ため、同じ入力に対して2つの経路が異なる行構造を評価していた。
+        # 正規化後は degraded でも `$'` が隣接して ANSI_QUOTE_RE に一致し、
+        # 「判定不能」という**意図された理由**で deny になる（既存の回帰ガード
+        # test_degraded_line_split_between_dollar_and_quote_still_deny は
+        # 理由文字列を assert していないため無変更で pass する）
+        self.assertDeny(
+            "awk $\\\n'BEGIN{x=\"foo\\x22system(\\x22rm "
+            "tickets/active/APP-001.md\\x22)\\x22\"}' #'")
+        self.assertDeny(
+            "cd tickets/active && awk $\\\n'BEGIN{x=\"foo\\x22system(\\x22rm "
+            "APP-001.md\\x22)\\x22\"}' #'")
+
+    def test_multiline_awk_program_stays_allow(self):
+        # 生の改行（`\`+改行 ではない）は awk では `;` と同じ**文の終端**で
+        # ある。行構造の走査化にあたり、クォート内の改行が `;` へ置換されなく
+        # なるため、AW-7 の許可文字集合へ改行を明示収載していないと複数行の
+        # 読み取り awk が新規に誤denyになる（設計書 §6 R33 の列挙外＝V-12(c)
+        # のブロッカー）。両方向を固定する
+        self.assertAllow(
+            "awk 'BEGIN{FS=\":\"}\n{print $2}' tickets/active/APP-001.md")
+        self.assertAllow(
+            "awk '\nNR>1 {\n  print $1\n}\n' tickets/active/APP-001.md")
+        self.assertDeny(
+            "awk '{\nprint > \"docs/SPEC.md\"\n}' in.txt")
+        self.assertDeny(
+            "awk 'BEGIN{\nsystem(\"rm docs/SPEC.md\")\n}'")
+
 
 if __name__ == "__main__":
     unittest.main()
