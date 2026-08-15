@@ -2044,6 +2044,101 @@ class TestGuardBashWrites(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertAllow(command)
 
+    # --- tester round12（C10 修正の検証・実装メモ「残存リスク1」の裏取り）:
+    # `;`／改行／`&&`／`}`（トップレベルのルール境界）など、awk の文法上
+    # **新しい文・新しいオペランド位置**を作るトークンを挟んで
+    # 「閉じた正規表現」と「除算に見える連鎖」が隣り合う形は allow のまま
+    # であることを固定する。C10 が閉じたのは「閉じた正規表現の**直後**の
+    # `/`」だけであり、これらの境界トークンを挟む形は元々
+    # `AWK_OPERAND_END_CHARS`／`prev_regex` の別経路で「新しい文・新しい
+    # オペランド」と正しく解釈されるため、awk 側の解釈と一致した上での
+    # allow である。使い捨てディレクトリで実機 GNU Awk 5.2.1 により
+    # 直接確認済み（tester round12・victim.txt を対象に実行）:
+    # `;`／改行／`&&`／`}` のいずれの境界でも rc=0 でファイルは無傷
+    # （`system(...)` は実行されない。統計的な掃引として38種の境界文字・
+    # 演算子を追加で試したが allow かつ「実機が保護対象へ到達する」形は
+    # 0件だった）。**この allow を deny 側へ寄せる変更（例: `prev_regex` を
+    # `;` や改行でリセットしない）は、`awk '/x/ ; /y/ {print}' T` のような
+    # 日常の複文読み取りを過剰denyへ倒すため避けること。**
+    def test_awk_regex_division_chain_across_statement_boundary_stays_allow(self):
+        for command in (
+            # `;` 文区切り（直後の `/` は awk の文法上つねに新しい文の
+            # 先頭＝正規表現であり、除算に読める余地が無い）
+            'awk \'BEGIN{/x/ ; / system("rm SPEC.md") / 1}\'',
+            'cd tickets/active && awk \'BEGIN{/x/ ; '
+            '/ system("rm APP-001.md") / 1}\'',
+            # 改行（文終端。C10 修正が明示的に prev_regex をリセットする形）
+            'awk \'BEGIN{/x/\n/ system("rm SPEC.md") / 1}\'',
+            # `&&`（二項演算子の右辺＝新オペランド位置）
+            'awk \'BEGIN{/x/ && / system("rm SPEC.md") / 1}\'',
+            # `}`（トップレベルのルール境界。1つ目のパターン・アクション対の
+            # 終端の直後は新しいルール＝パターン位置）
+            'awk \'BEGIN{/x/}\n/ system("rm SPEC.md") / 1\'',
+        ):
+            with self.subTest(command=command):
+                self.assertAllow(command)
+
+    # --- tester round12（実装メモ「残存リスク2」の裏取り）: awk プログラム
+    # *本文*（文字列・正規表現の外側）に現れる `\`＋改行（gawk 独自の行継続）
+    # は実機 gawk が実際に `system()` を実行してしまう形だが（使い捨て
+    # ディレクトリで実測: `gawk -f prog.awk` は victim.txt を削除した上で
+    # division by zero により rc=2 で fatal 終了。副作用は既に発生済み）、
+    # 本 hook が deny するのは `prev_regex` の状態機械が正しく境界を
+    # 見分けているからでは**ない**（`awk_strip_literals` 単体を呼び出すと
+    # `system(...)` は現に正規表現として除去され尽くす）。deny の実体は
+    # **AW-7 の許可文字集合 `AWK_SAFE_PROGRAM_CHARS` に `\` が無いこと**の
+    # 一点に依存している。このテストは実装メモが指摘する
+    # 「`AWK_SAFE_PROGRAM_CHARS` へ `\` を足すと同型の穴が開く」という
+    # 懸念のカナリアであり、将来 `\` を許可文字集合へ追加する変更が入ったら
+    # 即座に失敗する。
+    def test_awk_program_level_backslash_continuation_denies_via_char_whitelist(
+            self):
+        out = self.assertDeny(
+            'awk \'BEGIN{/x/\\\n/ system("rm SPEC.md") / 1}\'')
+        self.assertIn(
+            "許可されていない文字", out.get("permissionDecisionReason", ""))
+
+    # --- tester round12: 正規表現と除算が同居する日常の読み取り awk を
+    # 追加で固定する（T-C10b の拡張。tester への委譲プロンプト項目3
+    # 「日常操作のケースを自分で追加する」に対応）。いずれも system 等の
+    # 危険様パターンを含まない素の読み取りである。
+    def test_awk_daily_reads_combining_regex_and_division_stay_allow(self):
+        for command in (
+            # コメント行をスキップしてから比率を計算する日常形
+            "awk '/^#/{next} {print $1/$2}' tickets/active/APP-001.md",
+            # フィールド区切りを `/` にした比率計算（AWL-2 と無関係な `-F/`）
+            "awk -F/ '{print $2/$3}' tickets/active/APP-001.md",
+            # 正規表現内のエスケープされた `/`（分数表記 `3/4` を検出する形）
+            "awk '{print ($0 ~ /[0-9]+\\/[0-9]+/)}' tickets/active/APP-001.md",
+            # 複数行プログラム: パターン行のあとで比率を計算する日常形
+            "awk 'BEGIN{FS=\"/\"}\n/^Total/{t=$2}\n{r=$1/t; print r}'"
+            " tickets/active/APP-001.md",
+        ):
+            with self.subTest(command=command):
+                self.assertAllow(command)
+
+    # --- tester round12: 設計書 docs/designs/KLK-010.md 878行目・3107行目
+    # （§3-6 D11／§6 R36 ②）が明示する「受容済みの誤deny」の代表形を固定する。
+    # `div_seen` が真の行で正規表現除去を試みる位置は、`ambiguous()` の
+    # 探索対象に自分自身の `/` を含めるため常に None（判定不能）になる
+    # **設計上の意図した保守側の縮退**であり、バグではない
+    # （設計書の言葉で「意図した保守側の縮退」）。本テストは tester が
+    # daily-read 探索で独立にこの誤denyを再現し、設計の記述・R36 の分類
+    # （新規誤deny3種類のうちの②）と一致することを確認した上で、
+    # 今回の C10 修正（`prev_regex` の導入）でこの既知の誤denyバケットが
+    # 意図せず広がっていないことを固定する回帰ガードである。
+    def test_awk_division_then_regex_same_line_known_misdeny_r36_2(self):
+        for command in (
+            # 設計書 878/3107行目の正準形
+            "awk '{if ($1/$2 > 0.5 && /foo/) print}' tickets/active/APP-001.md",
+            # tester が daily-read 探索で見つけた同型（除算のあとで
+            # regex を条件式に使う一行形）
+            "awk '{ratio=$1/$2; if (ratio ~ /^[0-9]/) print ratio}'"
+            " tickets/active/APP-001.md",
+        ):
+            with self.subTest(command=command):
+                self.assertDeny(command)
+
 
 if __name__ == "__main__":
     unittest.main()
