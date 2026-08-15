@@ -235,6 +235,22 @@ LEGACY_DENY_COMMANDS = [
     "ls & sed -i 's/a/b/' tickets/active/APP-001.md #'",
     "ls & truncate -s 0 docs/SPEC.md #'",
     "cd tickets/active & rm APP-001.md #'",
+    # --- C10: 正規表現リテラルが閉じた直後の `/` は awk では必ず除算だが、
+    # `prev` に残るのは `/` の1文字だけで AWK_OPERAND_END_CHARS に無いため、
+    # AWL-2 の正規表現除去分岐へ再突入し「2つ目〜3つ目の `/`」（＝awk が
+    # 実行する式そのもの）が丸ごとリテラルとして消えていた。**この経路は
+    # 除算として据え置く分岐を通らないため div_seen が立たず AWL-4 の
+    # 曖昧ガードは一度も発火しない。** 対象は `/` を含まないベース名に限る
+    # （パス中の `/` があると鎖がそこで切れて `system(` が残るため）。
+    # tester round11 が固定した4形（別テスト T-C10a）に加え、**同一根因で
+    # 同時に閉じた3形**を収載する。実機 gawk 5.2.1 が victim を実際に削除する
+    # ことを確認済み（`system()` の副作用は式評価中に発生し、その後
+    # division by zero で awk 自体は異常終了する）。3件目（間接呼び出し）は
+    # **old=allow だが維持規律3・4「本改訂で塞いだ穴」に基づく収載** ---
+    "awk 'BEGIN{// / system(\"rm SPEC.md\") / 1}'",
+    "awk 'BEGIN{/x// system(\"rm SPEC.md\") / 1}'",
+    "awk 'BEGIN{f=\"system\"; /x/ / @f(\"rm SPEC.md\") / 1}'",
+    "cd tickets/active && awk 'BEGIN{// / system(\"rm APP-001.md\") / 1}'",
 ]
 
 # 設計書 docs/designs/KLK-010.md §3-9 の書き込みベクタ棚卸し表と、実装の
@@ -1995,6 +2011,38 @@ class TestGuardBashWrites(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 self.assertDeny(command)
+
+    # --- T-C10b（allow 固定・T-C10a＝直前の
+    # test_awk_chained_division_after_regex_bypasses_awl4_deny と対をなす）:
+    # C10 の修正は
+    # 「閉じた正規表現の直後の `/` を除算として据え置く」＝**除去しない**
+    # 方向の変更であり、除去しないことは判定対象テキストが増えるだけなので
+    # deny 方向にしか倒れない。だからこそ**過剰denyへ倒れていないこと**を
+    # 対で固定する必要がある（片方だけでは検出できない）。
+    # ここに挙げた形は正規表現リテラルと除算が同居する日常の読み取りであり、
+    # いずれも実機 gawk が正常に読み取りを行うだけで何も書き込まない。
+    # **prev_regex を「改行でリセットしない」実装や、AWK_OPERAND_END_CHARS へ
+    # `/` を足して除算の直後まで除算と読む実装にすると、この集合の一部が
+    # deny へ転じる**（前者は複数行パターンの2件目、後者は AWL-4 の
+    # 誤deny上限＝INV-AWKLEX-12 の周辺）。
+    def test_awk_regex_followed_by_division_reads_stay_allow(self):
+        for command in (
+            # 閉じた正規表現の直後が除算（C10 の修正が直接触れる形）
+            "awk '/x/ / 2 {print}' tickets/active/APP-001.md",
+            "awk '/a/ {print $1/2}' tickets/active/APP-001.md",
+            "cd tickets/active && awk '/a/ {print $1/2}' APP-001.md",
+            # 正規表現・コメント・文字列と除算の同居（AWL-2／3／4 の非発火）
+            "awk '{print $1/2, $3/4, \"ratio\"}' tickets/active/APP-001.md",
+            "awk '/#/ {print}' tickets/active/APP-001.md",
+            "awk '{print \"#\"}' tickets/active/APP-001.md",
+            "awk '{gsub(/a/,\"b\"); print}' tickets/active/APP-001.md",
+            "awk '/a/ && /b/ {print}' tickets/active/APP-001.md",
+            # 改行で prev_regex がリセットされること（複数行パターン）
+            "awk '/a/ {print}\n/b/ {print}' tickets/active/APP-001.md",
+            "awk 'BEGIN{FS=\"/\"} {print $2}' tickets/active/APP-001.md",
+        ):
+            with self.subTest(command=command):
+                self.assertAllow(command)
 
 
 if __name__ == "__main__":
