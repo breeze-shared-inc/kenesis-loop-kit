@@ -100,12 +100,111 @@ LEGACY_DENY_COMMANDS = [
     "cd tickets/active && ls $(rm APP-001.md)",
     "cd tickets/active && ls `rm APP-001.md`",
     "cd tickets/active && cat <(rm APP-001.md)",
+    # --- C5: system() 以外の外部コマンド実行経路（AW-7・プログラム本文の
+    # ホワイトリスト）。`"cmd" | getline` と `|& getline` は print/printf を
+    # 伴わないため AW-3 に一致せず、cwd 保護下ではリテラルパスも現れないため
+    # AW-1 も発火しなかった。実機 gawk で実際にファイルを削除・改変できる
+    # ことを使い捨てディレクトリで確認済み ---
+    "cd tickets/active && awk 'BEGIN{\"rm APP-001.md\" | getline x}'",
+    "cd tickets/done && "
+    "awk 'BEGIN{\"truncate -s 0 APP-001.md\" | getline x}'",
+    "cd tickets/active && awk 'BEGIN{\"rm APP-001.md\" |& getline x}'",
+    "awk 'BEGIN{\"rm tickets/active/APP-001.md\" | getline}'",
+    "awk 'BEGIN{while((\"ls\" | getline l)>0) print l}' "
+    "tickets/active/APP-001.md",
+    "awk 'BEGIN{print \"x\" |& \"cat\"}' tickets/active/APP-001.md",
+    # --- AW-7: 呼び出し名のホワイトリスト（組み込み名と `(` の間の空白形・
+    # 未知の関数名）---
+    "awk 'BEGIN{system (\"rm docs/SPEC.md\")}'",
+    "awk 'BEGIN{xyzzy(\"rm docs/SPEC.md\")}'",
+    # --- AW-7: リテラル除去の健全性（S1）。2パス実装だと allow に転じる形 ---
+    "awk '/\"/ {system(\"rm docs/SPEC.md\")}' in.txt",
+    "awk 'BEGIN{x=\"(/a\"; system(\"rm /docs/SPEC.md\")}'",
+    "awk 'BEGIN{x=1/2; system(\"rm docs/SPEC.md\")/3}'",
     # --- 旧版でも allow だったが本改訂で閉じた形（維持規律3が許容する追加） ---
     "sort -o tickets/active/APP-001.md in.md",
     "sort --output=docs/SPEC.md x.md",
     "uniq in.md tickets/active/APP-001.md",
     "find tickets/active -name '*.md' -fprint0 /tmp/x",
 ]
+
+# 設計書 docs/designs/KLK-010.md §3-9 の書き込みベクタ棚卸し表と、実装の
+# 対応を機械的に固定する（§3-11・原則 P5）。**表に構文を1行足したら、
+# ここへ1件以上足す。** 第3版までは表が `"cmd" | getline` と `|&` を
+# 列挙していたのに規則もテストも存在せず、それが4回目の穴（C5）になった。
+# 「表に書いてあること」は防御ではなく、実装とテストへの写像があって初めて
+# 防御になる。
+#
+# LEGACY_DENY_COMMANDS が「旧版が deny していた集合を守る」ものであるのに
+# 対し、本リストは「棚卸し表の各セルが実装されていることを守る」もの
+# （目的が異なるため統合しない）。期待値 "allow" の行は**意図的に未対応の
+# 穴**であり、塞いだ時点で "deny" へ変える（変更は意識的な行為になる）。
+INVENTORY_CASES = (
+    # --- awk のプログラム内構文（§3-9 ③列・§3-11 の写像表） ---
+    ("INV-AWK-01", "print/printf ... > >>（出力リダイレクト）",
+     "awk '{print > \"docs/SPEC.md\"}' x.md", "deny"),
+    ("INV-AWK-02", 'print ... | "cmd"（出力パイプ）',
+     "awk '{print | \"sort\"}' tickets/active/APP-001.md", "deny"),
+    ("INV-AWK-03", 'print ... |& "cmd"（コプロセス出力）',
+     "awk 'BEGIN{print \"x\" |& \"cat\"}' tickets/active/APP-001.md", "deny"),
+    ("INV-AWK-04", '"cmd" | getline（入力パイプ＝C5）',
+     "cd tickets/active && awk 'BEGIN{\"rm APP-001.md\" | getline x}'",
+     "deny"),
+    ("INV-AWK-05", '"cmd" |& getline（コプロセス入力＝C5）',
+     "cd tickets/active && awk 'BEGIN{\"rm APP-001.md\" |& getline x}'",
+     "deny"),
+    ("INV-AWK-06", 'system("...")',
+     "awk 'BEGIN{system(\"rm docs/SPEC.md\")}'", "deny"),
+    ("INV-AWK-07", 'system ("...")（組み込み名と ( の間の空白）',
+     "awk 'BEGIN{system (\"rm docs/SPEC.md\")}'", "deny"),
+    ("INV-AWK-08", '@f("...")（間接関数呼び出し）',
+     "awk 'BEGIN{f=\"system\"; @f(\"rm docs/SPEC.md\")}'", "deny"),
+    ("INV-AWK-09", '@ f("...")（@ 直後の空白）',
+     "awk 'BEGIN{f=\"system\"; @ f(\"rm docs/SPEC.md\")}'", "deny"),
+    ("INV-AWK-10", "@load / @include（拡張・ライブラリ読み込み）",
+     "awk '@load \"inplace\"; {print}' tickets/active/APP-001.md", "deny"),
+    ("INV-AWK-11", "@namespace（gawk 5 の名前空間指令・誤deny側）",
+     "awk '@namespace \"util\"; {print $1}' tickets/active/APP-001.md",
+     "deny"),
+    ("INV-AWK-12", "未収載の関数呼び出し（未知＝deny の機械的既定）",
+     "awk 'BEGIN{xyzzy(\"rm docs/SPEC.md\")}'", "deny"),
+    ("INV-AWK-13", "許可文字集合外の文字（バックスラッシュ等）",
+     "awk 'BEGIN{t=1 \\ 2}' tickets/active/APP-001.md", "deny"),
+    ("INV-AWK-14", "ENVIRON / PROCINFO 経由の出力先間接参照",
+     "awk '{print > ENVIRON[\"O\"]}' tickets/active/APP-001.md", "deny"),
+    ("INV-AWK-15", "変数束縛経由の出力先（-v f=... / 位置引数 f=...）",
+     "awk -v f=docs/SPEC.md '{print > f}' in.txt", "deny"),
+    ("INV-AWK-16", 'getline < "FILE"（| を伴わない読み取り・意図的に allow）',
+     "awk 'BEGIN{getline l < \"tickets/active/APP-001.md\"; print l}'",
+     "allow"),
+    ("INV-AWK-17", "ユーザー定義関数の宣言と呼び出し",
+     "awk 'function p(x){print x} {p($1)}' tickets/active/APP-001.md",
+     "allow"),
+    ("INV-AWK-18", "比較演算子の >（AW-7 の順序条件）",
+     "awk 'NR>1 {print}' tickets/active/APP-001.md", "allow"),
+    ("INV-AWK-19", "文字列／正規表現リテラル内の @ ・| ・system(（M11）",
+     "awk 'BEGIN{print \"contact: a@b (see docs)\"}' "
+     "tickets/active/APP-001.md", "allow"),
+    ("INV-AWK-20", "プログラム以外のオペランド中の system(（M12）",
+     "awk '{print}' 'system(1).md' tickets/active/APP-001.md", "allow"),
+    # --- sed のプログラム内構文（§3-9 ③列。この次元は第4版でも
+    # ブラックリストのまま＝設計書 §6 R25） ---
+    ("INV-SED-01", "s/a/b/w FILE",
+     "sed 's/a/b/w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-02", "/re/W FILE", "sed '/x/W docs/SPEC.md' in.md", "deny"),
+    ("INV-SED-03", "-i 全表記", "sed -i 's/a/b/' tickets/active/APP-001.md",
+     "deny"),
+    ("INV-SED-04", "保護対象 cwd 下の w REL",
+     "cd tickets/active && sed 's/a/b/w APP-001.md' in.md", "deny"),
+    ("INV-SED-05", "-f SCRIPT（プログラム不可視・**未対応**・別チケット）",
+     "sed -f script.sed tickets/active/APP-001.md", "allow"),
+    ("INV-SED-06", "GNU sed の s///e（**未対応**・別チケット）",
+     "sed 's/a/b/e' tickets/active/APP-001.md", "allow"),
+    ("INV-SED-07", "GNU sed の e コマンド（**未対応**・別チケット）",
+     "sed '1e cat /etc/hosts' tickets/active/APP-001.md", "allow"),
+    ("INV-SED-08", "-n '1,5p'（読み取り・意図的に allow）",
+     "sed -n '1,5p' tickets/active/APP-001.md", "allow"),
+)
 
 
 class TestGuardBashWrites(unittest.TestCase):
@@ -1020,6 +1119,21 @@ class TestGuardBashWrites(unittest.TestCase):
         for command in LEGACY_DENY_COMMANDS:
             with self.subTest(command=command):
                 self.assertDeny(command)
+
+    # --- KLK-010 Phase 9: 棚卸し表と実装の機械的対応（P5・設計書§3-11） ---
+
+    def test_inventory_cases_match_expected_decisions(self):
+        # T-INVENTORY: 設計書 §3-9 の書き込みベクタ棚卸し表の各構文が、
+        # 実装で期待どおりに判定されることを固定する。「表には書いてあるが
+        # 実装もテストも無い」状態（C5 の根因）を機械的に検出する。
+        # 期待値 "allow" の行は意図的に未対応の穴であり、コード上で可視に
+        # しておくためのもの（塞いだら "deny" へ変える）
+        for inventory_id, syntax, command, expected in INVENTORY_CASES:
+            with self.subTest(id=inventory_id, syntax=syntax):
+                if expected == "deny":
+                    self.assertDeny(command)
+                else:
+                    self.assertAllow(command)
 
 
 if __name__ == "__main__":
