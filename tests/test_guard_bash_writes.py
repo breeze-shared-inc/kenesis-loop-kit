@@ -1086,6 +1086,58 @@ class TestGuardBashWrites(unittest.TestCase):
         # 未閉じの文字列リテラル（判定不能＝deny）
         self.assertDeny("awk 'BEGIN{print \"unterminated}' docs/SPEC.md")
 
+    # --- KLK-010 tester（Phase 8・9 再検証）差し戻し: $'...'（ANSI-C クォート）
+    # の hex エスケープ（\xHH）による AW-7 全面バイパス（Critical・実機実証） ---
+    #
+    # 根因: lex() は `$'...'` を素の `'...'` と同一に扱い、内容をそのまま
+    # コピーする（エスケープを解釈しない）。一方 awk_strip_literals() は
+    # 文字列リテラルの中で `\X`（バックスラッシュ+任意の1文字）を「1個の
+    # エスケープ済み文字」とみなして無条件に読み飛ばす（awk 自身の
+    # エスケープ規則の近似）。この2つの独立した「素朴な近似」が組み合わさると、
+    # 実際の bash が `$'...'` を評価する際に `\x22` を実際の `"` へ、
+    # `\x7c` を実際の `|` へデコードすることを考慮しないまま、
+    # hook 側は「バックスラッシュ+次の1文字」をまとめて文字列内へ
+    # 読み飛ばしてしまう。その結果、hook から見ると全体が1つの巨大な
+    # 文字列リテラル（`""` へ丸ごと除去され安全）に見えるが、実際に bash が
+    # `\x22` を `"` へ復号すると、**bash 側で文字列が途中で閉じ**、
+    # `system(...)` や `"cmd" | getline` が**実際のプログラムでは文字列の
+    # 外＝実行されるコード**になる。許可文字集合に無い `@`・`|` も、
+    # 同じ理由でリテラル内に隠れているとみなされ検査対象から漏れる。
+    #
+    # 本ホスト（GNU Awk 5.2.1）の使い捨てディレクトリで実機検証済み:
+    #   bash -c 'gawk $'"'"'BEGIN{x="foo\x22system(\x22rm F\x22)\x22"}'"'"''
+    #   → 実際に F を削除する（EXIT 0）
+    #   bash -c 'gawk $'"'"'BEGIN{x="foo\x22(\x22rm F\x22\x7cgetline x)\x22"}'"'"''
+    #   → 実際に F を削除する（EXIT 0・C5 と同じ入力パイプ経路が再現する）
+    # いずれも hook はコード変更なしで allow を返す（本テストが実証）。
+    # docstring・設計書は「$'...' は shlex が bash と同一に解釈しないが
+    # 語として1トークンに収まるため判定は保守側（deny 方向）へ倒れる」と
+    # 記載しているが、本ケースにおいてその主張は成立しない
+    # （allow 方向に倒れ、かつ実機で実行される）。
+    def test_ansi_c_quoted_awk_program_system_call_bypasses_aw7_deny(self):
+        self.assertDeny(
+            "awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+            "tickets/active/APP-001.md\\x22)\\x22\"}'")
+        self.assertDeny(
+            "cd tickets/active && "
+            "awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+            "APP-001.md\\x22)\\x22\"}'")
+        self.assertDeny(
+            "awk $'BEGIN{x=\"foo\\x22system(\\x22rm "
+            "docs/SPEC.md\\x22)\\x22\"}'")
+
+    def test_ansi_c_quoted_awk_program_pipe_getline_bypasses_aw7_deny(self):
+        # C5（"cmd" | getline）が $'...' の hex エスケープ経由で再び開く形。
+        # `\x7c` は許可文字集合に無い `|` へ復号されるが、hook 側からは
+        # 依然として「文字列リテラルの中の1エスケープ文字」にしか見えない
+        self.assertDeny(
+            "awk $'BEGIN{x=\"foo\\x22(\\x22rm "
+            "tickets/active/APP-001.md\\x22\\x7cgetline x)\\x22\"}'")
+        self.assertDeny(
+            "cd tickets/active && "
+            "awk $'BEGIN{x=\"foo\\x22(\\x22rm "
+            "APP-001.md\\x22\\x7cgetline x)\\x22\"}'")
+
     def test_awk_everyday_read_programs_allow(self):
         # T-AW7OK: AW-7 が日常の読み取り awk を誤denyしないことの固定
         # （第4版で最重要の allow 固定。設計書 §3-6 D8 の16形・§4-5-3 の
