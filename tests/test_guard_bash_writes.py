@@ -1958,6 +1958,44 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertAllow("cat tickets/active/APP-001.md 2>&1 #'")
         self.assertAllow("ls & cat tickets/active/APP-001.md #'")
 
+    # --- tester round11（reviewer 4回目 rejected 後の検証）: AWL-4 の外側の穴。
+    # AWK_OPERAND_END_CHARS に `/` 自身（正規表現リテラルの終端文字）が
+    # 含まれていない。正規表現リテラル `/x/` が閉じた直後は awk 上は
+    # 「値（0/1）が確定した」＝オペランドの終端であり、続く `/` は正当な
+    # 除算演算子であるはずだが、`awk_strip_literals` の `prev` は `/` に
+    # なり、`AWK_OPERAND_END_CHARS` に `/` が無いため、この2つ目の `/` は
+    # 「除算として据え置く」（`div_seen = True`）分岐を通らず、AWL-2 の
+    # 正規表現除去分岐（`char == "/" and prev not in AWK_OPERAND_END_CHARS`）
+    # へ再突入する。同一行中に3つ目の `/` があり `;`／改行を跨がなければ、
+    # 2つ目と3つ目の `/` の間（= 実際には awk が実行する式そのもの。
+    # `system(...)` を含みうる）が「正規表現」として `//` に丸ごと除去
+    # される。この除去は `if closed: ...; continue` 経路を通るため
+    # **`div_seen` を一度も True にせず** AWL-4 の `ambiguous()` は
+    # `if not div_seen: return False` で必ず素通りする。したがって
+    # AWL-4（C9 で新設した曖昧ガード）はこの鎖（正規表現の直後に除算が
+    # 連続する形）を一切検出できない。C9 の13サブケース
+    # （INV-AWKLEX-01〜13・いずれも `#` コメントを起点とする）はこの経路を
+    # 1つもカバーしていない。
+    #
+    # 実機 GNU Awk 5.2.1 で確認済み（使い捨てディレクトリ・テストには
+    # 含めない）: `awk 'BEGIN{/x/ / system("rm victim.md") / 1}'` は
+    # `victim.md` を実際に削除したうえで `system()` の戻り値 0 による
+    # 「division by zero」で fatal 終了する（rc=2 だが削除は既に発生済み）。
+    # 対象を保護対象のベース名 `SPEC.md`（`/` を含まないため上の鎖が
+    # 途中で `"` にぶつからず成立する）にしても同じ経路で allow になる
+    # ことを本テストで固定する。旧版（merge-base 72ae7306）はこれらを
+    # すべて deny する（`awk` が ALLOWED_HEADS に無いため）ので
+    # old=deny -> new=allow の新規リグレッションである。
+    def test_awk_chained_division_after_regex_bypasses_awl4_deny(self):
+        for command in (
+            'awk \'BEGIN{/x/ / system("rm SPEC.md") / 1}\'',
+            'awk -e \'BEGIN{/x/ / system("rm SPEC.md") / 1}\'',
+            "awk --source='BEGIN{/x/ / system(\"rm SPEC.md\") / 1}'",
+            'cd tickets/active && awk \'BEGIN{/x/ / system("rm APP-001.md") / 1}\'',
+        ):
+            with self.subTest(command=command):
+                self.assertDeny(command)
+
 
 if __name__ == "__main__":
     unittest.main()
