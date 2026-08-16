@@ -576,9 +576,24 @@ class TestGuardBashWrites(unittest.TestCase):
     # --- KLK-004: docs/reports/{ID}/ は保護対象外（is_ticket()の境界と同型） ---
 
     def test_docs_reports_path_not_mentioned_as_guarded(self):
-        # mentions_guarded() が False を返す＝チケット・SPEC.mdと同じ保護は掛からない
+        # mentions_guarded() は KLK-010 Phase 1 (4ae9f61) で「事前分割済みの語のリスト」を
+        # 受け取る契約へ変更された（旧実装は内部で command.split() していたため生の
+        # コマンド文字列を渡しても正しく動いた）。生の文字列をそのまま渡すと Python が
+        # 文字単位でイテレートし、どんな入力でも常に False を返してしまう（偽陰性）ため、
+        # 呼び出し規約どおり事前分割済みのトークン列で呼び出す。
         self.assertFalse(
-            guard.mentions_guarded("rm docs/reports/KLK-004/investigation.md"))
+            guard.mentions_guarded(
+                ["rm", "docs/reports/KLK-004/investigation.md"]))
+
+    def test_mentions_guarded_raw_string_call_is_a_false_negative_trap(self):
+        # 上のテストの呼び方が「たまたま常にFalseになる壊れた呼び方」ではないことの
+        # 対照実験。同じ raw-string 呼び出し方（文字単位イテレート）で本来 True になる
+        # べき保護対象パス（tickets/active/ 配下）を渡しても、文字単位分割では
+        # is_guarded_token に完全なパスが渡らないため False になってしまうことを示す。
+        guarded_word = "tickets/" + "active/APP-001.md"
+        self.assertFalse(guard.mentions_guarded("rm " + guarded_word))
+        # 正しい呼び方（事前分割済みトークン列）であれば True になる
+        self.assertTrue(guard.mentions_guarded(["rm", guarded_word]))
 
     def test_docs_reports_rm_allow(self):
         # ホワイトリスト外の先頭コマンド（rm）でも docs/reports/ 配下は非対象のため deny されない
