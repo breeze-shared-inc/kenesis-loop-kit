@@ -158,7 +158,8 @@ bash と一致させる正規化（L0）を置く。
 
 保護対象パスの判定（guarded_paths / is_guarded_token）は _ticket_lib.is_ticket とは
 **意図的に基準が異なる**。is_ticket は「Write/Edit の対象ファイルが状態検証対象の
-実チケットか」を判定する厳密判定（絶対パス・前後スラッシュ・.md 拡張子を要求）である
+実チケットか」を判定する厳密判定（パスを正規化したうえで tickets/active|done/ 配下・
+.md 拡張子を要求し、_index.md と Templates/ を除外する。相対形も受け付ける）である
 のに対し、本 hook が必要とするのは「コマンド文字列の断片が保護対象に言及しているか」
 という再現率優先の判定（相対パス・ディレクトリ指定・引用符やコードの中に埋もれた
 パスまで拾う）である。統一すると `ls tickets/active/` や `docs/SPEC.md` を取りこぼす
@@ -310,7 +311,6 @@ degraded_violation へ落とす。degraded は旧版の判定要素（全体の�
 閉じているコマンド置換・バッククォート・プロセス置換の境界を抽出し、正常経路
 と同じ subst_violation／find_violation へ回す）も持つ。
 """
-import json
 import os
 import re
 import shlex
@@ -1979,15 +1979,16 @@ def find_violation(command, depth=0, cwd=""):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    # 入力型の正規化は hook 境界（main）で行う（KLK-012 §3 D5）。非 dict の
+    # payload / tool_input、非 str の command はいずれも fail-open（allow）
+    data = lib.read_hook_payload()
+    if data is None:
         allow()
 
     if data.get("tool_name") != "Bash":
         allow()
-    command = (data.get("tool_input") or {}).get("command", "")
-    if not command:
+    command = lib.as_dict(data.get("tool_input")).get("command")
+    if not isinstance(command, str) or not command:
         allow()
 
     try:

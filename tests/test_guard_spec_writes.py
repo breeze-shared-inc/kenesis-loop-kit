@@ -64,6 +64,20 @@ class TestGuardSpecWrites(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIsNone(_util.hook_output(out))
 
+    # --- KLK-012 AC5: 非 dict 入力でクラッシュしない ---
+
+    def test_non_dict_stdin_allow(self):
+        rc, out, _ = _util.run_script(_util.GUARD, "[]")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "")
+
+    def test_non_dict_tool_input_allow(self):
+        self.assertAllow({"tool_name": "Write", "tool_input": []})
+
+    def test_non_str_file_path_allow(self):
+        self.assertAllow({"tool_name": "Write",
+                          "tool_input": {"file_path": 123}})
+
 
 if __name__ == "__main__":
     unittest.main()

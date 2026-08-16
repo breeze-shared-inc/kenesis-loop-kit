@@ -31,23 +31,27 @@ import _ticket_lib as lib  # noqa: E402
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    # 入力型の正規化は hook 境界（main）で行う（KLK-012 §3 D5）。
+    # 非 dict の payload / tool_input、非 str の file_path・cwd はいずれも
+    # fail-open（何もせず exit 0）
+    data = lib.read_hook_payload()
+    if data is None:
         sys.exit(0)
 
     if data.get("tool_name") not in ("Write", "Edit"):
         sys.exit(0)
 
-    tool_input = data.get("tool_input") or {}
-    path = tool_input.get("file_path", "")
-    if not path or not lib.is_ticket(path):
+    tool_input = lib.as_dict(data.get("tool_input"))
+    path = tool_input.get("file_path")
+    if not isinstance(path, str) or not path or not lib.is_ticket(path):
         sys.exit(0)
 
     # tickets/ ディレクトリはチケットパスから導出する（cwd はフォールバック）
     tickets_dir = lib.tickets_dir_for(path)
     if not tickets_dir:
-        cwd = data.get("cwd") or os.getcwd()
+        cwd = data.get("cwd")
+        if not isinstance(cwd, str) or not cwd:
+            cwd = os.getcwd()
         tickets_dir = os.path.join(cwd, "tickets")
     metrics_path = os.path.join(tickets_dir, ".metrics.jsonl")
     state_path = os.path.join(tickets_dir, ".metrics_state.json")

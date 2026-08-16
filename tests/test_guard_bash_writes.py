@@ -737,6 +737,22 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIsNone(_util.hook_output(out))
 
+    # --- KLK-012 AC5: 非 dict 入力でクラッシュしない ---
+
+    def test_non_dict_stdin_allow(self):
+        rc, out, _ = _util.run_script(_util.GUARD_BASH, "[]")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "")
+
+    def test_non_dict_tool_input_allow(self):
+        out = self.run_guard({"tool_name": "Bash", "tool_input": []})
+        self.assertIsNone(out)
+
+    def test_non_str_command_allow(self):
+        out = self.run_guard({"tool_name": "Bash",
+                              "tool_input": {"command": 123}})
+        self.assertIsNone(out)
+
     # --- KLK-010: クォート内の演算子で誤denyしない（AC1・AC2） ---
 
     def test_regex_alternation_in_quotes_allow(self):

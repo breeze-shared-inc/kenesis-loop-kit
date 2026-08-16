@@ -48,10 +48,27 @@ def human(seconds):
 
 
 def parse_ts(value):
+    """ISO8601 文字列を tz-aware な datetime として返す（解析不能なら None）。
+
+    naive な値（record_metrics.py が記録する現行形式）はローカルタイムゾーンと
+    みなして aware 化する。これにより tz-aware な ts が1件混入しても
+    naive との減算で TypeError にならない（KLK-012 AC3・§3 D7）。
+    """
     try:
-        return datetime.datetime.fromisoformat(value)
+        dt = datetime.datetime.fromisoformat(value)
     except Exception:
         return None
+    return dt if dt.tzinfo is not None else dt.astimezone()
+
+
+def is_status_event(ev):
+    """イベントが status を表すか（created / transition）。
+
+    retry_reset（record_metrics.py が from_counts/to_counts のみで記録する
+    リトライ予算リセット）は status を伴わないため False。`to` の有無でも
+    判定し、将来 status を持たないイベント種別が増えても巻き込まない。
+    """
+    return ev.get("type") != "retry_reset" and ev.get("to") is not None
 
 
 def load_events(path, filter_str):
@@ -94,7 +111,7 @@ def main():
     # チケットごとに時系列で整理（読み込み・グルーピングは _ticket_lib と共有）
     by_ticket = lib.group_events_by_ticket(events)
 
-    now = datetime.datetime.now()
+    now = datetime.datetime.now().astimezone()
     cycle_times = []          # (ticket, seconds)
     dwell_totals = {}         # status -> [seconds,...]
     rollbacks = {}            # "from→to" -> count（実装ループ内の差し戻し）
@@ -105,6 +122,14 @@ def main():
     in_progress = []          # (ticket, status, age_seconds)
 
     for ticket, evs in by_ticket.items():
+        # status を伴わないイベント（retry_reset）を除外してから集計する。
+        # これにより (i) 末尾 retry_reset による「現在ステータス None」の
+        # 二重計上、(ii) 直近 status イベントの取りこぼし、(iii) 同一 ts の
+        # retry_reset が作る 0 秒の滞留ノイズが同時に消える（KLK-012 §3 D2）
+        evs = [ev for ev in evs if is_status_event(ev)]
+        if not evs:
+            continue  # status イベントが1件も無いチケットは集計対象外
+
         first_ts = parse_ts(evs[0].get("ts"))
         done_ts = None
 

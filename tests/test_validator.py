@@ -125,6 +125,49 @@ class TestValidator(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIsNone(_util.hook_output(out))
 
+    # --- KLK-012 AC1: 相対パスでも状態検証が働く ---
+
+    def test_relative_path_illegal_transition_deny(self):
+        # 従来は is_ticket が False になり検証が丸ごと飛んでいた
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
+        rel = os.path.join("tickets", "active", "APP-001.md")
+        self.assertDeny(edit_payload(rel, "status: design_done",
+                                     "status: done"))
+
+    def test_relative_path_legal_transition_allow(self):
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
+        rel = os.path.join("tickets", "active", "APP-001.md")
+        self.assertAllow(edit_payload(rel, "status: design_done",
+                                      "status: implementation_done"))
+
+    def test_relative_path_missing_file_write_allow(self):
+        # 相対パスが hook プロセスの cwd で解決できない → 「新規作成」と断定せず
+        # 素通りさせる（§3 D6。AC1 が新たな誤 deny を生まないための fail-open）
+        rel = os.path.join("tickets", "active", "APP-777.md")
+        self.assertAllow(write_payload(
+            rel, _util.ticket(status="done", tid="APP-777")))
+
+    def test_absolute_path_missing_file_write_still_deny(self):
+        # 絶対パスで実体が無い場合は従来どおり新規作成として扱う（曖昧さが無い）
+        path = os.path.join(self.cwd, "tickets", "active", "APP-778.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.assertDeny(write_payload(
+            path, _util.ticket(status="done", tid="APP-778")))
+
+    # --- KLK-012 AC5: 非 dict 入力でクラッシュしない ---
+
+    def test_non_dict_stdin_allow(self):
+        rc, out, _ = _util.run_script(_util.VALIDATOR, "[]", cwd=self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "")
+
+    def test_non_dict_tool_input_allow(self):
+        self.assertAllow({"tool_name": "Write", "tool_input": []})
+
+    def test_non_str_file_path_allow(self):
+        self.assertAllow({"tool_name": "Write",
+                          "tool_input": {"file_path": 123}})
+
     # --- サイドカー（.metrics_state.json）を prior の正とする検証 ---
 
     def test_drift_restore_to_observed_allow(self):

@@ -101,6 +101,30 @@ class TestLoopIntegrity(unittest.TestCase):
             f.write("# KLK-004 investigation\n\n生成: investigator（代筆: orchestrator） / 最終更新: 2026-07-19\n")
         self.assertIsNone(self.run_stop())
 
+    # --- KLK-012 AC5: 非 dict 入力でクラッシュしない ---
+
+    def test_non_dict_stdin_allows_stop(self):
+        _util.write_ticket(self.cwd, "APP-001.md", status="bogus")
+        rc, out, _ = _util.run_script(_util.INTEGRITY, "[]", cwd=self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "")  # block しない（fail-open）
+
+    def test_broken_stdin_allows_stop(self):
+        rc, out, _ = _util.run_script(_util.INTEGRITY, "not json", cwd=self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "")
+
+    def test_non_str_cwd_falls_back_to_process_cwd(self):
+        # 非 str の cwd は os.getcwd() へフォールバックし、検査は従来どおり働く
+        _util.write_ticket(self.cwd, "APP-001.md", status="bogus")
+        payload = {"hook_event_name": "Stop", "cwd": 123,
+                   "stop_hook_active": False}
+        rc, out, _ = _util.run_script(_util.INTEGRITY, payload, cwd=self.cwd)
+        self.assertEqual(rc, 0)
+        blocked = _util.top_level_output(out)
+        self.assertIsNotNone(blocked, "expected block")
+        self.assertEqual(blocked.get("decision"), "block")
+
     # --- L3: 差し戻し履歴の照合 ---
 
     def test_rollback_reconcile_mismatch_blocks(self):

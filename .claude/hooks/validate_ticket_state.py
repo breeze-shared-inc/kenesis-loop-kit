@@ -29,7 +29,6 @@ fail-open: 内部エラー（IO・パース不能など）では allow。
 fail-closed: 検知した違反のみ deny。
 """
 import glob
-import json
 import os
 import sys
 
@@ -61,8 +60,14 @@ def reconstruct(tool, tool_input, path):
     対象外・再構成不能なら ALLOW を返す（素通り）。"""
     if tool == "Write":
         new_content = tool_input.get("content", "")
-        prior_text = read_file(path) if os.path.exists(path) else None
-        return new_content, prior_text
+        if os.path.exists(path):
+            return new_content, read_file(path)
+        if not os.path.isabs(path):
+            # 相対パスが hook プロセスの cwd で解決できない。実際の書き込み先が
+            # 別ディレクトリの可能性があるため「新規作成」と断定せず素通りさせる
+            # （検知した違反のみ deny する fail-open 方針。KLK-012 §3 D6）
+            return ALLOW
+        return new_content, None
 
     if tool == "Edit":
         if not os.path.exists(path):
@@ -185,15 +190,17 @@ def merge_retry_floor(prior_fm, record):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    # 入力型の正規化は hook 境界（main）で行い、判定関数（lib.is_ticket）は
+    # str を前提とする（KLK-012 §3 D5）。非 dict の payload / tool_input、
+    # 非 str の file_path はいずれも fail-open（allow）で素通りさせる
+    data = lib.read_hook_payload()
+    if data is None:
         allow()
 
     tool = data.get("tool_name", "")
-    tool_input = data.get("tool_input") or {}
-    path = tool_input.get("file_path", "")
-    if not path or not lib.is_ticket(path):
+    tool_input = lib.as_dict(data.get("tool_input"))
+    path = tool_input.get("file_path")
+    if not isinstance(path, str) or not path or not lib.is_ticket(path):
         allow()
 
     try:

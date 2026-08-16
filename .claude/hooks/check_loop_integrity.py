@@ -153,15 +153,18 @@ def check_done_ticket_drift(path, state):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    # 入力型の正規化は hook 境界（main）で行う（KLK-012 §3 D5）。
+    # 非 dict の payload・非 str の cwd はいずれも fail-open
+    data = lib.read_hook_payload()
+    if data is None:
         sys.exit(0)
 
     if data.get("stop_hook_active"):
         sys.exit(0)  # 直前が Stop hook 由来の継続なら再ブロックしない
 
-    cwd = data.get("cwd") or os.getcwd()
+    cwd = data.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        cwd = os.getcwd()
     active_dir = os.path.join(cwd, "tickets", "active")
     done_dir = os.path.join(cwd, "tickets", "done")
     if not os.path.isdir(active_dir):
