@@ -625,6 +625,47 @@ class TestGuardBashWrites(unittest.TestCase):
             "FOO=bar python3 .claude/skills/spec-interview/scripts/"
             "check_spec_structure.py docs/SPEC.md")
 
+    # KLK-013 tester能動検証: 上記の書き換え（head_args()の最初の語だけを見る）は
+    # is_assignment_word() によるフィルタを head_args()[0] 自体には適用しない。
+    # このため「NAME=」を空白なしで READONLY_SCRIPTS の実パスへ直接連結した語」は、
+    # 代入語としてスキップされず、かつ os.path.normpath(...).endswith(READONLY_SCRIPTS)
+    # が単純な文字列サフィックス一致であるために誤って一致してしまい、allowになる
+    # （実際に python3 が開こうとするファイルは「x=.claude/.../check_spec_structure.py」
+    # という別名であり、本物の READONLY_SCRIPTS ではない＝本チケットの脅威モデルと同型）。
+    # merge-base（2963be8）の旧実装ではこの語が is_assignment_word() でスキップされ、
+    # 後続に実スクリプト語が無いため deny だった（旧=deny・新=allow の回帰。AC3違反）。
+    # 検出器: is_readonly_script_call()（本チケットの修正対象そのもの）。
+    def test_disguised_env_assignment_glued_to_readonly_script_deny(self):
+        # 空白を除いた「x=<READONLY_SCRIPT>」1語。旧実装は is_assignment_word() で
+        # この1語ごとスキップし後続に一致する語が無いため deny だったが、新実装は
+        # head_args()[0] をそのまま endswith(READONLY_SCRIPTS) 判定するため、
+        # 語全体の末尾が READONLY_SCRIPTS と文字列一致してしまい allow に回帰する。
+        self.assertDeny(
+            "python3 x=.claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_env_assignment_glued_alt_name_deny(self):
+        # 変数名・区切りを変えた同型（y=z...）。単発の偶然ではないことの裏取り。
+        self.assertDeny(
+            "python3 y=z.claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_three_env_assignments_after_interpreter_deny(self):
+        # 代入語風の語が3連続（implementerの2連続テストの境界を1段先へ）。
+        # 新実装は head_args()[0] のみを見るため N の数に関わらずdenyのはずだが、
+        # 将来 head_args() 自体が変わった際の回帰検知として固定する。
+        self.assertDeny(
+            "python3 a=1 b=2 c=3 .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_env_assignment_then_flag_deny(self):
+        # 代入語風の語の直後にさらにフラグが来る形。head_args()[0] が代入語風でも
+        # 単に一致しない語として deny されることの裏取り（-c 等の別経路と合成されても
+        # 壊れないことの確認）。
+        self.assertDeny(
+            "python3 x=y -u .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
     # --- fail-open ---
 
     def test_non_bash_tool_allow(self):
