@@ -1,4 +1,5 @@
 """_ticket_lib.py の単体テスト（検証ルールの中核）"""
+import io
 import os
 import sys
 import unittest
@@ -8,6 +9,11 @@ import _util  # noqa: E402
 
 sys.path.insert(0, _util.HOOKS)
 import _ticket_lib as lib  # noqa: E402
+
+
+def frontmatter(*lines):
+    """frontmatter だけを持つ最小のチケット本文を組み立てる（パーサのテスト用）。"""
+    return "---\n" + "\n".join(lines) + "\n---\n\n# body\n"
 
 
 class TestParsing(unittest.TestCase):
@@ -33,10 +39,75 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(table["reviewer_to_implementer"], 1)
         self.assertEqual(table["reviewer_to_investigator"], 0)
 
+    # --- KLK-012 AC4: クォート外インラインコメントの除去 ---
+
+    def test_inline_comment_stripped_from_status(self):
+        fm = lib.parse_frontmatter(frontmatter("status: todo # 未着手"))
+        self.assertEqual(fm["status"], "todo")
+
+    def test_hash_inside_quotes_preserved(self):
+        # over-strip の回帰ガード（現状すでに正しい挙動を壊さないこと）
+        fm = lib.parse_frontmatter(frontmatter('title: "issue #123 fix"'))
+        self.assertEqual(fm["title"], "issue #123 fix")
+
+    def test_hash_inside_single_quotes_preserved(self):
+        fm = lib.parse_frontmatter(frontmatter("title: 'issue #123 fix'"))
+        self.assertEqual(fm["title"], "issue #123 fix")
+
+    def test_quoted_value_with_trailing_comment(self):
+        # コメントを先に除去することで _unquote の既存条件が満たされる
+        fm = lib.parse_frontmatter(
+            frontmatter('title: "issue #123 fix" # trailing comment'))
+        self.assertEqual(fm["title"], "issue #123 fix")
+
+    def test_comment_only_value_opens_nested_map(self):
+        fm = lib.parse_frontmatter(frontmatter(
+            "retry_counts: # コメント",
+            "  tester_to_implementer: 0",
+            "  reviewer_to_implementer: 1",
+            "  reviewer_to_investigator: 0",
+        ))
+        self.assertIsInstance(fm["retry_counts"], dict)
+        self.assertEqual(fm["retry_counts"]["tester_to_implementer"], "0")
+        self.assertEqual(fm["retry_counts"]["reviewer_to_implementer"], "1")
+        self.assertEqual(fm["retry_counts"]["reviewer_to_investigator"], "0")
+
+    def test_nested_value_trailing_comment_stripped(self):
+        fm = lib.parse_frontmatter(frontmatter(
+            "retry_counts:",
+            "  tester_to_implementer: 1 # note",
+        ))
+        self.assertEqual(fm["retry_counts"]["tester_to_implementer"], "1")
+
+    def test_hash_without_preceding_space_preserved(self):
+        fm = lib.parse_frontmatter(frontmatter("title: C#sharp"))
+        self.assertEqual(fm["title"], "C#sharp")
+
+    def test_unclosed_quote_not_stripped(self):
+        # 壊れた入力では「除去しすぎない」安全側へ倒れる
+        fm = lib.parse_frontmatter(frontmatter('title: "a # b'))
+        self.assertEqual(fm["title"], '"a # b')
+
+    def test_leading_comment_lines_ignored(self):
+        fm = lib.parse_frontmatter(frontmatter(
+            "# 行頭コメント",
+            "status: todo",
+        ))
+        self.assertEqual(fm, {"status": "todo"})
+
+    def test_standard_ticket_unchanged_by_comment_stripping(self):
+        # AC4 回帰: コメントを含まない標準チケットの解釈は不変
+        fm = lib.parse_frontmatter(_util.ticket(status="test_passed", tti=2))
+        self.assertEqual(fm["status"], "test_passed")
+        self.assertEqual(fm["title"], "t")
+        self.assertEqual(fm["retry_counts"]["tester_to_implementer"], "2")
+        self.assertEqual(lib.validate_schema(fm), [])
+
 
 class TestIsTicket(unittest.TestCase):
     """KLK-004: docs/reports/{ID}/{phase}.md が is_ticket() の対象外であることを検証する
-    （tickets/active|done/*.md のみを実チケット扱いする既存境界は変えない）。"""
+    （tickets/active|done/*.md のみを実チケット扱いする既存境界は変えない）。
+    KLK-012 AC1: 正規化と相対形の受理を追加する（絶対形の既存判定は不変）。"""
 
     def test_docs_reports_path_not_a_ticket(self):
         self.assertFalse(
@@ -49,6 +120,71 @@ class TestIsTicket(unittest.TestCase):
 
     def test_ticket_active_path_still_a_ticket(self):
         self.assertTrue(lib.is_ticket("/repo/tickets/active/KLK-004.md"))
+
+    # --- KLK-012 AC1 ---
+
+    def test_absolute_paths_still_tickets(self):
+        self.assertTrue(lib.is_ticket("/repo/tickets/active/APP-001.md"))
+        self.assertTrue(lib.is_ticket("/repo/tickets/done/APP-001.md"))
+
+    def test_relative_active_path_is_ticket(self):
+        # AC1 の中心ケース: 先頭スラッシュ無しでも取りこぼさない
+        self.assertTrue(lib.is_ticket("tickets/active/APP-001.md"))
+
+    def test_relative_done_path_is_ticket(self):
+        self.assertTrue(lib.is_ticket("tickets/done/APP-001.md"))
+
+    def test_dot_prefixed_relative_path_is_ticket(self):
+        self.assertTrue(lib.is_ticket("./tickets/active/APP-001.md"))
+
+    def test_subdirectory_under_active_is_ticket(self):
+        self.assertTrue(lib.is_ticket("tickets/active/sub/APP-001.md"))
+
+    def test_traversal_into_tickets_is_ticket(self):
+        self.assertTrue(lib.is_ticket("x/../tickets/active/APP-001.md"))
+
+    def test_traversal_out_of_tickets_is_not_ticket(self):
+        # 従来は誤って True（チケットでないファイルへ検証をかけていた）
+        self.assertFalse(lib.is_ticket("/repo/tickets/active/../../evil.md"))
+
+    def test_component_boundary_false_positives(self):
+        self.assertFalse(lib.is_ticket("mytickets/active/APP-001.md"))
+        self.assertFalse(lib.is_ticket("docs/tickets_active/x.md"))
+
+    def test_templates_excluded(self):
+        self.assertFalse(lib.is_ticket("tickets/active/Templates/ticket.md"))
+        self.assertFalse(lib.is_ticket("/repo/tickets/Templates/t.md"))
+
+    def test_index_excluded(self):
+        self.assertFalse(lib.is_ticket("tickets/active/_index.md"))
+
+    def test_non_markdown_excluded(self):
+        self.assertFalse(lib.is_ticket("tickets/active/APP-001.txt"))
+
+    def test_backslash_separators_still_supported(self):
+        self.assertTrue(lib.is_ticket(r"C:\repo\tickets\active\APP-001.md"))
+
+
+class TestPayloadHelpers(unittest.TestCase):
+    """KLK-012 AC5: hook 入口の入力型正規化ヘルパ"""
+
+    def test_dict_payload_returned(self):
+        self.assertEqual(
+            lib.read_hook_payload(io.StringIO('{"a": 1}')), {"a": 1})
+
+    def test_non_dict_json_returns_none(self):
+        for raw in ("[]", '"x"', "3", "null"):
+            self.assertIsNone(lib.read_hook_payload(io.StringIO(raw)), raw)
+
+    def test_broken_json_returns_none(self):
+        self.assertIsNone(lib.read_hook_payload(io.StringIO("not json")))
+
+    def test_as_dict_passthrough_and_normalization(self):
+        self.assertEqual(lib.as_dict({"a": 1}), {"a": 1})
+        self.assertEqual(lib.as_dict([]), {})
+        self.assertEqual(lib.as_dict(None), {})
+        self.assertEqual(lib.as_dict("x"), {})
+        self.assertEqual(lib.as_dict(3), {})
 
 
 class TestSchema(unittest.TestCase):

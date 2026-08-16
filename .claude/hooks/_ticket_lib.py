@@ -94,17 +94,46 @@ def tickets_dir_for(ticket_path):
     return None
 
 
+def _normalize_path(path):
+    """判定用のパス正規化（cwd 非依存の純字句正規化）。
+
+    バックスラッシュ区切りをスラッシュへ寄せ、`.` / `..` / 重複スラッシュを畳む。
+    相対形は相対のまま返す（os.path.abspath は使わない = プロセスの作業
+    ディレクトリに依存させないため。docs/designs/KLK-012.md §3 D1）。
+    """
+    n = os.path.normpath(path.replace("\\", "/"))
+    return n.replace("\\", "/")  # Windows の normpath が '/' を '\' へ戻すため
+
+
+def _under_dir(n, marker):
+    """正規化済みパス n が marker（例 "tickets/active/"）配下を指すか。
+    先頭一致（相対形）と '/' 直後の一致（絶対形・サブパス）の両方を認める
+    = パスコンポーネント境界での一致。'mytickets/active/X.md' は一致しない。"""
+    return n.startswith(marker) or ("/" + marker) in n
+
+
 def is_ticket(path):
     """path が状態検証対象の実チケット（tickets/active|done/*.md）か。
-    テンプレート（/Templates/）とダッシュボード（_index.md）は対象外。"""
-    n = path.replace("\\", "/")
+
+    テンプレート（/Templates/）とダッシュボード（_index.md）は対象外。
+    パスは _normalize_path で正規化したうえで、絶対形と相対形（先頭スラッシュ
+    無し）の双方を受け付ける（KLK-012 AC1）。
+
+    guard_bash_writes.py 側の保護対象判定（_is_guarded_path / is_guarded_token）
+    とは目的が異なるため基準は統一していない（KLK-010 D2。統一可否の再評価は
+    KLK-020）。相対形のチケットパスでは tickets_dir_for が None を返すため、
+    サイドカー由来の prior と in_progress ゲートは fail-open で効かない
+    （KLK-012 §3 D3・§6 R10）。判定は str を前提とし、型の正規化は各 hook の
+    main() 側で行う（KLK-012 §3 D5）。
+    """
+    n = _normalize_path(path)
     if "/Templates/" in n:
         return False
     if os.path.basename(n) == "_index.md":
         return False
     if not n.endswith(".md"):
         return False
-    return ("/tickets/active/" in n) or ("/tickets/done/" in n)
+    return _under_dir(n, "tickets/active/") or _under_dir(n, "tickets/done/")
 
 
 def emit_pretooluse_decision(decision, reason):
@@ -168,6 +197,27 @@ def group_events_by_ticket(events):
     return by_ticket
 
 
+def _strip_comment(value):
+    """クォート外の `#` 以降をコメントとして除去する（YAML のコメント規則の近似）。
+
+    `#` がコメントを開始するのは「値の先頭」または「空白（スペース/タブ）の
+    直後」に現れ、かつクォートの外側にある場合のみ。クォート内の `#`
+    （`title: "issue #123 fix"`）と、空白を伴わない `#`（`title: C#`）は保持する。
+    クォートが閉じていない値では除去を行わない（除去しすぎ = 値の破壊を避ける
+    安全側。走査がクォート状態のまま終端に達するので分岐は不要）。
+    """
+    quote = None
+    for i, ch in enumerate(value):
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "#" and (i == 0 or value[i - 1] in (" ", "\t")):
+            return value[:i].rstrip()
+    return value
+
+
 def _unquote(value):
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
@@ -200,7 +250,8 @@ def parse_frontmatter(text):
         if raw[0] in (" ", "\t"):  # 直前のマッピングキー配下
             if current_map is not None and ":" in raw:
                 key, _, val = raw.strip().partition(":")
-                data[current_map][key.strip()] = _unquote(val)
+                data[current_map][key.strip()] = _unquote(
+                    _strip_comment(val.strip()))
             continue
         current_map = None
         if ":" not in raw:
@@ -208,6 +259,7 @@ def parse_frontmatter(text):
         key, _, val = raw.partition(":")
         key = key.strip()
         val = val.strip()
+        val = _strip_comment(val)
         if val == "":
             data[key] = {}
             current_map = key
@@ -411,3 +463,24 @@ def reconcile_rollbacks(retry_counts, events):
                 % (frm, to, key, counter, base + n, suffix)
             )
     return errors
+
+
+def read_hook_payload(stream=None):
+    """hook の stdin から JSON payload を dict として読む。
+
+    JSON として不正な場合と、妥当な JSON だが dict でない場合（配列・文字列・
+    数値・null）の両方で None を返す。呼び出し側は None を fail-open として
+    扱う（PreToolUse 系は allow、PostToolUse / Stop 系は exit 0）。
+    stream はテスト用（未指定なら sys.stdin）。
+    """
+    try:
+        data = json.load(sys.stdin if stream is None else stream)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def as_dict(value):
+    """dict ならそのまま、それ以外（None・配列・スカラー）は空 dict を返す。
+    hook 入口で tool_input 等の型を正規化するために使う。"""
+    return value if isinstance(value, dict) else {}
