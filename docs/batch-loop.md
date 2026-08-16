@@ -5,6 +5,20 @@
 > **実行はセッション外・ターミナルから**: `python3 scripts/batch_loop.py {ID-1} {ID-2} ...`
 > Claude Codeセッション内の `/batch-loop {ID-1} {ID-2} ...` は**プリフライト検証（--dry-run）と実行コマンドラインの提示のみ**を行い、バッチ本体は起動しません（定義: `.claude/commands/batch-loop.md`）。設計の詳細は `docs/designs/KLK-001.md` を参照。
 
+## 使い分け指針（外部駆動 / セッション内）
+
+対話セッション内で複数チケットを見守りながら連続実行したい場合は、対をなすコマンド `/batch-loop-inline`（セッション内バッチ・旧方式復旧。ガイド: `docs/batch-loop-inline.md`）を使う。両者は別々のスラッシュコマンド・別々のドキュメントとして共存する（KLK-007）。
+
+| 判断基準 | `/batch-loop`（外部駆動・本ガイド） | `/batch-loop-inline`（セッション内） |
+|---|---|---|
+| バッチ件数 | 制限なし。多数件でも安全（セッション使い捨てでトークン累積なし） | 少数（目安2〜3件）を推奨。件数が増えるほど同一セッションにレポートが蓄積しコスト増 |
+| トークン累積 | なし（チケットごとに新規セッション） | あり（セッション内に全チケットのサブエージェントレポートが蓄積） |
+| 人間監視の要否 | 不要（無人実行可能。ヘッドレスでは`ask`は自動deny、応答不能な場面はチケットをblocked化して停止） | 必要（対話セッションが前提）。AskUserQuestion等の人間判断が必要になりそうなチケットに強い |
+| 実行環境 | ターミナルでのPythonスクリプト実行が必要 | Claude Codeの対話セッション内で完結（追加のターミナル操作不要） |
+| 進捗の可視性 | ターミナル標準出力でリアルタイム表示（stream-json化・KLK-007） | セッションの通常の応答としてリアルタイムに見える |
+| 差し戻し発生時の挙動 | チケット完了時に停止・報告。`--continue-on-rework`で緩和可 | チケット完了時に停止・報告し、再承認を待つ（対話でその場に確認できる） |
+| 推奨用途 | 既定。多数件・長時間・無人実行したい場合 | 少数件をその場で見守りながら進めたい場合、対話的判断が挟まりそうな場合 |
+
 ## なぜ外部駆動か（1チケット=1セッション）
 
 旧方式（単一セッションへバッチ事前承認テンプレートを送り、orchestratorが同一セッション内で連続実行する）では、全チケットの investigator〜reviewer のサブエージェントレポートがメインスレッドのコンテキストへ蓄積し、後続チケットほどトークン消費が累積する。本Kitは状態をチケットファイルへ外部化済みのため、セッションをチケット単位で使い捨てにしてもループは成立する。駆動スクリプトがセッションの境界でチケットファイルの状態を検査し、前進・停止を判定する。
@@ -20,13 +34,17 @@ python3 scripts/batch_loop.py --allow-missing-spec KLK-001 KLK-002
 
 # プリフライトのみ（/batch-loop コマンドが代行実行するのもこれ）
 python3 scripts/batch_loop.py --dry-run APP-001 APP-002
+
+# 実行権限が付与されているため、シバン経由でも起動できる（Windows等シバン非対応環境では
+# 上記の python3 scripts/batch_loop.py {ID...} を使うこと）
+./scripts/batch_loop.py APP-001 APP-002
 ```
 
 実行フロー:
 
 1. **プリフライトP1〜P9**（下表）— 全件検査し、違反があれば一括表示して開始しない
 2. **承認サマリ（y/N）** — 対象チケット・実行順・権限モード・ガード値・停止条件を表示する。**このy/N応答が従来のバッチ事前承認の実体**（`--yes` でスキップ可）
-3. チケットごとに `claude -p "/start-loop {ID}" --permission-mode acceptEdits --max-turns 200 --add-dir ../{リポジトリ名}.wt` を新規セッションとして起動する（標準入出力は継承・ターミナルでライブ監視できる）。`--add-dir` はorchestratorが作成するコード作業用worktree（docs/worktree-policy.md）への書き込み許可で、配置先ディレクトリはスクリプトが起動前に作成する。駆動プロンプトには「このセッションで処理するのは {ID} の1件のみ」を明示し、バッチの事前承認はセッションへ**与えない**
+3. チケットごとに `claude -p "/start-loop {ID}" --permission-mode acceptEdits --output-format stream-json --verbose --include-partial-messages --forward-subagent-text --max-turns 200 --add-dir ../{リポジトリ名}.wt` を新規セッションとして起動する。stdinは閉じ（`DEVNULL`）、stdoutはパイプで受けてJSONLを逐次パースし、人間可読な進捗（assistantテキストデルタ・tool_use・tool_result・サブエージェント進捗）としてターミナルへリアルタイム表示する（stderrは継承のまま）。表示のパース失敗は境界判定・終了コードに影響しない（KLK-007）。`--add-dir` はorchestratorが作成するコード作業用worktree（docs/worktree-policy.md）への書き込み許可で、配置先ディレクトリはスクリプトが起動前に作成する。駆動プロンプトには「このセッションで処理するのは {ID} の1件のみ」を明示し、バッチの事前承認はセッションへ**与えない**
 4. セッション終了ごとに**境界判定1〜7**（下表）— 正常完了時のみ次チケットへ進み、最終チケット後は必ず停止する
 
 ### フラグ
@@ -105,6 +123,16 @@ python3 scripts/batch_loop.py --dry-run APP-001 APP-002
 - **1セッション1チケット限定（V-4実測・縮約版）**: 駆動プロンプトの1件限定指示は縮約スケールで遵守を確認済み。本物のフルループ（investigator〜reviewer）での確認は未実施のため、**初回の実運用バッチは人間監視下のパイロット実行**と位置づけること
 - **`--max-turns` は隠しオプション**: v2.1.215の `--help` に掲載されていないが機能する（既定200で使用）。将来のCLIで削除された場合、未知オプションはAPI呼び出し前に exit 1 となるため、バッチは初回セッションの境界判定1で**API消費なしに即停止**する（fail-closed）。その場合は `--max-turns 0`（無効化）で回避し、`--max-budget-usd`・`--timeout-min` を代替ガードにする
 
+### stream-json下の追加実測（VS-1・VS-2・KLK-007 2026-07-20・claude CLI v2.1.215）
+
+KLK-007で `--output-format stream-json --verbose --include-partial-messages --forward-subagent-text` を常時付加する変更を入れたため、上記V-1・V-3（text出力下の実測）がstream-json下でも同一かをダミープロジェクトで再検証した（VS-1）。あわせて `--forward-subagent-text` の実イベント列を単発Task委譲で実測した（VS-2）。
+
+- **askの自動deny・stream-json下でも同一（VS-1）**: PreToolUse hookの `ask` はstream-json下でも従来どおり**ツール実行拒否に自動変換**される。deny時は `user` イベント内 `tool_result`（`is_error: true`）としてhookの拒否理由がそのままcontentに現れる。ハングせず、セッションは正常終了（exit 0）した
+- **Stop hookのblockもstream-json下で発火（VS-1）**: `decision: "block"` を返すStop hookにより、モデルへ `Stop hook feedback: {reason}` という合成 `user` イベントが差し込まれ、継続を強制できることを確認した（`num_turns` が1→3へ増加）。あわせて `system` イベント（`subtype: "notification"`, `key: "stop-hook-error"`）が1件追加で流れることを観測したが、block自体は機能しており（合成フィードバックの配信・継続実行を実測で確認）、セッションは最終的に正常終了（exit 0）した。この通知イベントの正確な意味論はCLI内部実装に依存し未確認だが、`render_event()` は未知のsubtypeとして無視するだけなので表示・境界判定への影響はない
+- **`render_event()` の防御的パースを実データで検証**: VS-1（上記deny・block誘発シナリオ）とVS-2（下記）で得た生JSONL（計131行）を `render_event()` に通し、例外が一件も発生しないことを確認した（AC1「表示ロジックの失敗は境界判定・終了コードに影響しない」の裏付け）
+- **`--forward-subagent-text` の実イベント列（VS-2）**: 単発のTask委譲（`general-purpose` サブエージェントへの最小プロンプト）で実測したところ、サブエージェントのライフサイクルは `type: "task_started"` のようなトップレベルtypeではなく、**`type: "system"`, `subtype: "task_started"` / `"task_updated"` / `"task_notification"`** として届くことを確認した（設計書§4-1確定diffの想定と異なる）。サブエージェント自身の発言は `type: "assistant"`/`"user"` に `parent_tool_use_id`・`subagent_type` を伴って流れ、既存の assistant/user 分岐でそのまま拾える。この差異を踏まえ `render_event()` の `system` 分岐へ `task_started`（開始・description/prompt表示）・`task_notification`（完了・summary表示）の校正を実施した（コミット済み。`task_updated` は進行中パッチのみで表示価値が低いため未対応のまま無視）
+- **測定方法の注記**: VS-1・VS-2とも、実運用の `/start-loop` 全体を回すコストは避け、最小限のダミーhook・単発Task委譲による軽量プローブで代替した。境界判定はいずれの実測でもファイル状態にのみ基づくため、この軽量化は安全側構成の前提（設計書§4-2）を損なわない
+
 ## 制約・注意点
 
 - **実行中は同じリポジトリで対話セッションや別バッチを開かない** — 二重ライター防止。駆動スクリプト自体は `tickets/` へ一切書き込まない読み取り専用（単一ライター原則の維持）だが、並行セッションがチケットへ書き込むと範囲外変更・スナップショット差分として停止する
@@ -116,4 +144,4 @@ python3 scripts/batch_loop.py --dry-run APP-001 APP-002
 
 ## 旧方式（セッション内手動テンプレート）について
 
-旧方式 — 単一セッションへ「バッチ連続実行の事前承認」テンプレートを送り、orchestratorが同一セッション内で連続ループする — は、orchestratorの規範（改善ループ判断テーブルの人間判断を事前承認で充足する）上は引き続き成立するが、サブエージェントレポートの蓄積により後続チケットほどトークン消費が累積するため**非推奨**とする。旧テンプレートが必要な場合はGitヒストリ（v1.7.0以前の本ファイル）を参照。
+旧方式 — 単一セッションへ「バッチ連続実行の事前承認」テンプレートを送り、orchestratorが同一セッション内で連続ループする — は、`/batch-loop-inline` として復旧された（KLK-007）。差し戻し検知の粒度を「即停止」から本ガイドと同じ「チケット境界での停止」へ変更したうえで、現行ポリシー（`docs/worktree-policy.md` のworktree分離・KLK-002のモデル割当）と整合させている。詳細・事前承認テンプレートの正・使い分け指針は `docs/batch-loop-inline.md` を参照。サブエージェントレポートが同一セッションに蓄積するため、少数件（目安2〜3件）での利用を推奨する。
