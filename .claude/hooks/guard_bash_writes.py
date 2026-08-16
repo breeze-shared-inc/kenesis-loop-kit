@@ -261,9 +261,6 @@ bash と一致させる正規化（L0）を置く。
     既に同じ判定を行っている**（degraded との非対称を解消する方向）。
   - ホワイトリスト収載コマンドのうち次の書き込み／実行経路は**未対応**である。
     いずれも本 hook の導入当初から存在する穴で、別チケットで扱う:
-    `python3 IDENTIFIER=VALUE <READONLY_SCRIPT> ...` による READONLY_SCRIPTS の
-    許可経路の偽装（python3 が実行するのは `IDENTIFIER=VALUE` という名前の
-    ファイルであり、**任意コード実行**に到達しうる。深刻度が最も高い）、
     `sed -f SCRIPT`（外部スクリプトでプログラムが不可視）、GNU sed の `e`
     フラグ・`e` コマンド（**任意コマンド実行**）、
     `sort --compress-program=PROG`（外部プログラム実行）、
@@ -1112,18 +1109,24 @@ def head_args(words):
 
 def is_readonly_script_call(words):
     """`python3 <READONLY_SCRIPTS> <args>` の形か。
-    スクリプトパスの前にフラグがある形(-c/-m 等の別実行経路)は不許可。"""
-    seen_interp = False
-    for word in words:
-        if is_assignment_word(word):
-            continue  # FOO=bar 形式の前置き
-        if not seen_interp:
-            seen_interp = True  # インタプリタ本体
-            continue
-        if word.startswith("-"):
-            return False
-        return os.path.normpath(word).endswith(READONLY_SCRIPTS)
-    return False
+
+    スクリプトパスの前にフラグがある形（`-c`/`-m` 等の別実行経路）は不許可。
+    先頭コマンド（python3/python 本体）より後ろの最初の語だけをスクリプト
+    候補として見る（head_args と同じ経路）。bash の環境変数代入前置きは
+    **先頭コマンドより前**にしか現れないため、先頭コマンドより後ろに現れる
+    `NAME=VALUE` は代入ではなく python3 への引数（＝実行対象スクリプトの
+    候補）である。これを無条件でスキップしていたことが本チケット（KLK-013）
+    の脆弱性の原因だった（`python3 x=y <READONLY_SCRIPT> ...` は実際には
+    `x=y` というファイルを実行するのに、`x=y` を読み飛ばして
+    `<READONLY_SCRIPT>` を見てしまい allow になっていた）。
+    """
+    args = head_args(words)
+    if not args:
+        return False
+    first = args[0]
+    if first.startswith("-"):
+        return False
+    return os.path.normpath(first).endswith(READONLY_SCRIPTS)
 
 
 def cwd_is_guarded(cwd):
