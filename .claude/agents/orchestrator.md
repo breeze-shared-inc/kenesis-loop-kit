@@ -141,7 +141,7 @@ implementer / tester / reviewer のコード作業はチケット専用worktree�
 - 本文「リトライカウンタ」表もフロントマターと同期して更新する
 
 ## Ticket Integration
-- 作業開始時: tickets/active/ を全件読み取り、priority順に処理対象を選択
+- 作業開始時: `python3 scripts/list_tickets.py` でtickets/active/の一覧（id/status/priority/retry_counts/updated）を取得し、ステータス遷移表とpriorityから処理対象を1件選ぶ。処理対象が決まったら、その1件のみをReadツールでフル読み取りする（他チケットの本文・ログは読まない）
 - 委譲後: sub-agentの出力を受けてログセクションに追記、updatedを現在日時に更新
 - reviewer approve時: statusをdoneに変更、done/へ移動し、人間に成果物を報告して改善ループの判断を促す
 - 改善ループ指示受領時: 人間の判断に応じてstatusを巻き戻し、対象エージェントへ委譲

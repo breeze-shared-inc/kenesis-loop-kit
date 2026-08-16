@@ -10,10 +10,10 @@
   権限モードがautoになっているか確認する。`.claude/settings.json` の `permissions.defaultMode` が `"auto"` 以外、または現在のセッションがautoモードでない場合は、人間に「Autoモードを有効化しないと、コマンド承認でループが頻繁に停止する」旨を伝え、有効化を促す（`defaultMode: "auto"` の設定、またはセッションのモード切替）。autoが有効になるまでループ本処理へ進まない。
 
 - [ ] **14日超blockedチケットの検出**
-  tickets/active/ の全チケットを読み取り、`status = blocked` かつ `updated` から14日以上経過しているチケットを一覧表示する。該当チケットがあれば `.claude/commands/triage.md` の手順（再開 / クローズ / 期限延長の三択を人間に確認）でトリアージしてからループへ進む。
+  `python3 scripts/list_tickets.py` の一覧（status・updated列）から `status = blocked` かつ `updated` から14日以上経過しているチケットを抽出する（個別チケットのフル読み取りは不要）。該当チケットがあれば `.claude/commands/triage.md` の手順（再開 / クローズ / 期限延長の三択を人間に確認）でトリアージしてからループへ進む。
 
 - [ ] **in_progress上限チェック**
-  `status` が `investigation_done` / `design_done` / `implementation_done` / `test_passed` のいずれかのチケット件数を集計する（blockedは数えない。積み上がりは14日トリアージが担当）。3件以上の場合は「既存チケットを完了またはcancelledにしてから新規着手してよいか」を人間に確認する。
+  `python3 scripts/list_tickets.py` の一覧（status列）から `investigation_done` / `design_done` / `implementation_done` / `test_passed` のいずれかのチケット件数を集計する（blockedは数えない。積み上がりは14日トリアージが担当）。3件以上の場合は「既存チケットを完了またはcancelledにしてから新規着手してよいか」を人間に確認する。
 
 - [ ] **done/件数チェック（アーカイブ提案）**
   tickets/done/ のチケット件数（.gitkeepを除く）を確認する。20件を超えている場合は `/archive` の実行（個人vaultの `Archives/{project}/` への移動）を人間に提案する。
@@ -23,7 +23,7 @@
 
 ## ループ実行手順
 
-1. tickets/active/ を全件読み取り、statusとpriorityを確認する
+1. `python3 scripts/list_tickets.py` の一覧でtickets/active/全件のstatusとpriorityを確認する（この時点では個別チケットのフル読み取りは行わない）
 2. **処理対象が0件の場合は原因に応じて分岐する**
    - **active/ が完全に0件（.gitkeepを除く）** → チケット不足なので、その旨を報告して `.claude/commands/plan-tickets.md` の手順を実行する（SPECからの分割・一括起票へ。done/ の有無で分岐しない — SPEC改訂後の差分起票や全REQカバー済みの判定は /plan-tickets のカバレッジ突き合わせが行う。SPEC.md が無い場合も /plan-tickets が `/spec-interview` へ誘導する）
    - **チケットはあるが全件が blocked / cancelled** → チケット不足ではなくブロッカー滞留なので、/plan-tickets へは進まない。blockedチケットの一覧とブロッカー内容を提示し、`/triage` またはブロッカー解消を人間に促して停止する
