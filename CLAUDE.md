@@ -18,6 +18,7 @@
 | `/plan-tickets` | SPECを基に開発をチケットへ分割し、承認を経て一括起票する | spec-path（省略可） |
 | `/start-loop` | ループを開始・再開する | チケットID（省略可） |
 | `/batch-loop` | 外部駆動バッチ（scripts/batch_loop.py・1チケット1セッション）のプリフライト検証と実行コマンドライン案内 | チケットID列（2件以上・実行順） |
+| `/batch-loop-inline` | セッション内バッチ（旧方式復旧・1セッションで複数チケットを連続実行）の事前承認と連続実行 | チケットID列（2件以上・実行順） |
 | `/new-ticket` | チケットを新規作成する | タイトル（必須） |
 | `/improvement-loop` | 改善ループを起動する | チケットID 差し戻し先（省略可） |
 | `/rollback` | 承認後に問題が発覚したチケットをロールバックする | チケットID（必須） コミットハッシュ（省略可） |
@@ -158,7 +159,7 @@ CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は�
 |---|---|---|---|
 | Autoモード起動時チェック | start-loop.md 起動時チェックリスト | orchestrator / start-loop | orchestrator.md Responsibilities |
 | 14日blockedトリアージ | triage.md | orchestrator / start-loop / /triage | orchestrator.md Responsibilities / start-loop.md 起動時チェックリスト |
-| in_progress上限3件・同一フェーズ並行1件 | orchestrator.md Responsibilities / Constraints | orchestrator + hook | start-loop.md 起動時チェックリスト / validate_ticket_state.py（着手時ask強制）・_ticket_lib.py IN_PROGRESS_LIMIT |
+| in_progress上限3件 | orchestrator.md Responsibilities | orchestrator + hook | start-loop.md 起動時チェックリスト / validate_ticket_state.py（着手時ask強制）・_ticket_lib.py IN_PROGRESS_LIMIT |
 | cancelledステータス | 本ファイル ステータス定義 / triage.md | orchestrator | orchestrator.md 委譲テーブル / tickets/_index.md クエリ / _ticket_lib.py VALID_STATUS |
 | リトライ上限（3/2/1） | orchestrator.md リトライカウンタ管理 | orchestrator + hook | _ticket_lib.py RETRY_CAPS（自動強制） |
 | リトライ予算のリセット（人間承認ask） | orchestrator.md リトライ予算のリセット | 人間 + hook | validate_ticket_state.py（減少をask） / record_metrics.py（retry_reset記録） / check_loop_integrity.py（L3エポック照合） |
@@ -172,15 +173,15 @@ CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は�
 | Git運用規約（ブランチ・コミット・機密確認） | implementer.md / tester.md Git Rules | implementer / tester | - |
 | worktree分離（implementer以降のコード作業・done時にdevelopへマージし削除・チケットはメインツリー一本化） | docs/worktree-policy.md | orchestrator + implementer / tester / reviewer | orchestrator.md worktreeライフサイクル管理 / implementer.md Git Rules 運用ルール / tester.md・reviewer.md / start-loop.md 起動時チェックリスト / batch_loop.py（--add-dir） / 本ファイル Git運用規約（ポインタ） |
 | ロールバック手順 | rollback.md | /rollback | _ticket_lib.py LEGAL_TRANSITIONS（done→implementation_done） |
-| バッチ連続実行の事前承認 | docs/batch-loop.md | 人間 + scripts/batch_loop.py（/batch-loopは検証・案内） | batch-loop.md 手順・Never / スクリプト承認プロンプト・停止条件 |
+| バッチ連続実行の事前承認 | docs/batch-loop.md（外部駆動）/ docs/batch-loop-inline.md（セッション内） | 人間 + scripts/batch_loop.py（外部駆動・/batch-loopは検証・案内）／ orchestrator（セッション内・/batch-loop-inline） | batch-loop.md 手順・Never・停止条件 / batch-loop-inline.md 手順・Never・停止条件 / orchestrator.md 改善ループテーブル直下の注記（バッチ実行時の代行範囲の明記） |
 | Kitからの切り離し（clone導入時の.git再初期化） | setup.md 手順1 | /setup | setup.md Never（.git削除の明示承認・Kit本体除外） |
 | リポジトリ可視性の.gitignoreプリセット | .gitignore.public / .private + setup.md 手順2 | /setup | - |
 | プロジェクト略称の確定 | 本ファイル チケットID採番 | /setup / new-ticket | setup.md 手順4 / new-ticket.md 手順1 |
-| チケットへのREQ/SCR/IF-ID明記（トレーサビリティ） | SPEC_TEMPLATE.md 冒頭規約 | /plan-tickets / architect | plan-tickets.md 手順5・Never / designs/_TEMPLATE.md §1コメント |
+| チケットへのREQ/SCR/IF-ID明記（トレーサビリティ） | SPEC_TEMPLATE.md 冒頭規約 | /plan-tickets / architect | plan-tickets.md 手順5 / designs/_TEMPLATE.md §1コメント |
 | NFR/EHカバレッジのチケット割当 | plan-tickets.md 手順3・4 | /plan-tickets | SPEC_TEMPLATE.md §7・§8コメント |
 | Phase分割の規律（AC非再定義・全ACカバー・粒度ガード） | designs/_TEMPLATE.md §4「実装Phase」コメント | architect | architect.md Ticket Integration・Never / reviewer.md Responsibilities / implementer.md Git Rules |
 | セキュリティ・機密情報の取り扱い | docs/security-policy.md | 各エージェント | implementer.md Git Rules（コミット前の機密確認） / designs/_TEMPLATE.md §4コメント |
-| エージェントのモデル割当（役割別の軽量化・見直しトリガー） | 各 `.claude/agents/*.md` の frontmatter `model` + 本文「## Model Assignment」節 | architect（設計）+ 人間（承認） | 各agents/*.md Model Assignment節（tester/investigator=sonnet、architect/reviewer/implementer=inherit維持） |
+| エージェントのモデル割当（役割別の軽量化・見直しトリガー） | `.claude/agents/*.md`（orchestrator.mdを除く5ファイル）の本文「## Model Assignment」節 + frontmatter `model`（sonnet割当時のみ記述） | architect（設計）+ 人間（承認） | agents/*.md Model Assignment節（tester/investigator=sonnet、architect/reviewer/implementer=inherit維持） |
 | CLAUDE.md＝インデックス＋共通定義の維持 | 本ファイル ポリシー管理の原則（再肥大化の防止） | CLAUDE.mdを編集する人間 / Claude | - |
 
 新しいポリシーを追加する際は、上記「再肥大化の防止」の2手順に従い、定義ファイルへの反映と本表の更新まで完了させること。

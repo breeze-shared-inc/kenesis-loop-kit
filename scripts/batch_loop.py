@@ -23,10 +23,13 @@
 """
 import argparse
 import glob
+import json
 import os
+import queue
 import re
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from collections import namedtuple
@@ -476,7 +479,9 @@ def suggest_command_line(args):
 
 
 # ---------------------------------------------------------------------------
-# セッション起動（cwd=リポジトリルート・標準入出力は継承・--bare は付けない）
+# セッション起動（cwd=リポジトリルート・--bare は付けない）
+# stdin は DEVNULL、stdout は PIPE でリアルタイム表示用に受ける、
+# stderr は従来どおり継承する（設計書 docs/designs/KLK-007.md §3-2・§4-1）
 # ---------------------------------------------------------------------------
 
 def build_prompt(tid, mode, allow_missing_spec):
@@ -493,7 +498,12 @@ def worktree_base(root):
 
 
 def build_claude_command(args, prompt, root):
-    cmd = [args.claude_cmd, "-p", prompt, "--permission-mode", args.permission_mode]
+    # stream-json + --verbose + --include-partial-messages + --forward-subagent-text
+    # は無条件で付加する（設計書§3-2・§4-1）。--verbose は -p + stream-json の
+    # 必須前提のため必ず一緒に渡す。境界判定はこれらの出力内容に一切依存しない
+    cmd = [args.claude_cmd, "-p", prompt, "--permission-mode", args.permission_mode,
+           "--output-format", "stream-json", "--verbose",
+           "--include-partial-messages", "--forward-subagent-text"]
     if args.max_turns:
         cmd += ["--max-turns", str(args.max_turns)]
     if args.max_budget_usd is not None:
@@ -502,6 +512,109 @@ def build_claude_command(args, prompt, root):
     # への書き込みを許可する（docs/worktree-policy.md「権限設定」）
     cmd += ["--add-dir", str(worktree_base(root))]
     return cmd
+
+
+# ---------------------------------------------------------------------------
+# stream-json レンダリング（表示専用。境界判定・合否判定には一切使わない。
+# JSONデコード失敗・未知のtype・レンダラー内部例外はいずれも「その行の表示を
+# スキップする」だけに留め、バッチの続行を妨げない。設計書§3-2・§4-1）
+# ---------------------------------------------------------------------------
+
+def _brief(value, limit=200):
+    """長い値を人間可読な範囲に切り詰める。"""
+    text = value if isinstance(value, str) else repr(value)
+    text = text.replace("\n", " ")
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def render_event(evt):
+    """stream-jsonの1行(dict)を人間可読な進捗表現へ変換する。
+    戻り値: 通常行(str) / 継続出力用("TEXT", text)タプル / 表示不要(None)。
+    未知のtype・構造は例外を出さずNoneを返す（防御的パース。境界判定はここに依存しない）。
+    サブエージェント（Task）系の分岐はVS-2実測（2026-07-20、単発Task委譲プローブ）に基づき
+    校正済み: 実際のイベントは type="task_started"等ではなく type="system",
+    subtype="task_started"/"task_notification" で届く（設計書§4-1確定diffの想定と異なり、
+    トップレベルtype一致・parent_tool_use_id保持のフォールバック分岐は現行APIでは
+    到達しないが、将来のスキーマ変化に備えた防御として残す）。"""
+    etype = evt.get("type")
+
+    if etype == "system":
+        subtype = evt.get("subtype")
+        if subtype == "init":
+            return "[session] 開始 (model=%s)" % evt.get("model", "?")
+        if subtype == "task_started":
+            label = evt.get("subagent_type") or "subagent"
+            desc = evt.get("description") or evt.get("prompt") or ""
+            if desc:
+                return "[subagent:%s] 開始: %s" % (label, _brief(desc))
+            return "[subagent:%s] 開始" % label
+        if subtype == "task_notification":
+            summary = evt.get("summary")
+            if not summary:
+                return None
+            return "[subagent] 完了(%s): %s" % (
+                evt.get("status", "?"), _brief(summary))
+        return None
+
+    if etype == "stream_event":
+        delta = (evt.get("event") or {}).get("delta") or {}
+        if delta.get("type") == "text_delta" and delta.get("text"):
+            return ("TEXT", delta["text"])
+        return None
+
+    if etype in ("assistant", "user"):
+        content = ((evt.get("message") or {}).get("content")) or []
+        if not isinstance(content, list):
+            return None
+        lines = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "tool_use":
+                lines.append("[tool] %s(%s)" % (
+                    block.get("name", "?"), _brief(block.get("input", {}))))
+            elif btype == "tool_result":
+                lines.append("[result] %s" % _brief(block.get("content", "")))
+        return "\n".join(lines) if lines else None
+
+    if etype in ("task_started", "task_notification") or "parent_tool_use_id" in evt:
+        text = evt.get("text") or evt.get("message") or ""
+        label = evt.get("subagent_type") or evt.get("name") or "subagent"
+        if text:
+            return "[subagent:%s] %s" % (label, _brief(text))
+        return "[subagent:%s] %s" % (label, etype)
+
+    return None
+
+
+def handle_stream_line(raw_line, state):
+    """1行(str)をパースしてrender_eventへ渡し、必要なら表示する。
+    JSONデコード失敗・レンダラー内部例外はいずれも無視して継続する。"""
+    line = raw_line.strip()
+    if not line:
+        return
+    try:
+        evt = json.loads(line)
+    except (ValueError, TypeError):
+        return
+    if not isinstance(evt, dict):
+        return
+    try:
+        rendered = render_event(evt)
+    except Exception:
+        return
+    if rendered is None:
+        return
+    if isinstance(rendered, tuple) and rendered[0] == "TEXT":
+        sys.stdout.write(rendered[1])
+        sys.stdout.flush()
+        state["mid_line"] = True
+        return
+    if state.get("mid_line"):
+        sys.stdout.write("\n")
+        state["mid_line"] = False
+    say(rendered)
 
 
 def _terminate(proc):
@@ -519,20 +632,52 @@ def _terminate(proc):
             pass
 
 
+def _reader_thread(pipe, out_queue):
+    """子プロセスのstdoutを継続的に読み進めてqueueへ渡す（専用スレッド）。
+    パイプを読み切らずに放置するとOSパイプバッファ詰まりで子プロセスが
+    ブロックしうるため、メインスレッドのタイムアウト管理とは独立に排出し続ける。"""
+    try:
+        for line in iter(pipe.readline, ""):
+            out_queue.put(("line", line))
+    finally:
+        out_queue.put(("eof", None))
+
+
 def run_session(cmd, root, timeout_min):
     """claude セッションを1つ実行し (exit_status, elapsed_sec) を返す。
+    stdoutはパイプで受けてリアルタイムに進捗表示する（stderrは継承のまま）。
     exit_status はプロセス終了コード、タイムアウト時は文字列 "timeout"。"""
     start = time.monotonic()
-    proc = subprocess.Popen(cmd, cwd=str(root))
+    proc = subprocess.Popen(
+        cmd, cwd=str(root), stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, text=True, bufsize=1, errors="replace",
+    )
+    out_queue = queue.Queue()
+    reader = threading.Thread(target=_reader_thread,
+                              args=(proc.stdout, out_queue), daemon=True)
+    reader.start()
+    state = {"mid_line": False}
+    deadline = start + timeout_min * 60 if timeout_min else None
     try:
-        if timeout_min:
+        while True:
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _terminate(proc)
+                    return "timeout", time.monotonic() - start
+            else:
+                remaining = None
             try:
-                code = proc.wait(timeout=timeout_min * 60)
-            except subprocess.TimeoutExpired:
-                _terminate(proc)
-                return "timeout", time.monotonic() - start
-        else:
-            code = proc.wait()
+                kind, payload = out_queue.get(timeout=remaining)
+            except queue.Empty:
+                continue
+            if kind == "eof":
+                break
+            handle_stream_line(payload, state)
+        if state["mid_line"]:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        code = proc.wait()
     except KeyboardInterrupt:
         _terminate(proc)
         raise

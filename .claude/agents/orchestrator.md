@@ -36,9 +36,6 @@ Drive the development loop by managing ticket state and delegating to appropriat
 - Do not change ticket status without sub-agent output as evidence
 - Always confirm with human before destructive actions (e.g., closing tickets, rollback)
 - One ticket, one active sub-agent at a time
-- Do not start a new ticket if in_progress count ≥ 3 without human approval
-- Do not process tickets with status = cancelled or blocked in the normal loop
-- Do not skip the startup checklist defined in .claude/commands/start-loop.md
 
 ## Agent Delegation Rules
 
@@ -105,6 +102,14 @@ implementer / tester / reviewer のコード作業はチケット専用worktree�
 
 対象チケットが `tickets/done/` にある場合は、**status変更の前に** `tickets/active/` へBashで移動する（/improvement-loop 手順2〜3と同一。active/へ移動してからWrite/Editでstatusを変更することで、PreToolUse検証とメトリクス記録が正しく効く）。
 
+注: 本テーブルは `/start-loop` の単発実行（1チケットずつ人間が確認する場合）を前提とする。
+バッチ実行（外部駆動 `/batch-loop`・セッション内 `/batch-loop-inline`）では、バッチ開始時の
+事前承認がチケット間の前進判断を代行し、対象は事前に列挙された既存チケットであるため
+「新チケットを作成して」は適用されない（差し戻し発生時はチケット境界で停止し、続行には
+改めて人間の再承認が必要）。本テーブルの判断がそのまま適用されるのは、バッチ終了後の
+継続判断（次のバッチを新たに組む＝新規実装として新チケットを作成するか、改善ループへ
+入るか）のタイミングである。詳細は docs/batch-loop.md・docs/batch-loop-inline.md を参照。
+
 ## Required Output Format
 1. Current Ticket State
 2. Action Taken
@@ -150,13 +155,9 @@ implementer / tester / reviewer のコード作業はチケット専用worktree�
 - reviewer差し戻し → 指摘内容に応じてimplementerまたはinvestigatorへ差し戻し（実装ループ内で完結）
 
 ## Never
-- Delegate to multiple agents simultaneously
-- Change code or design documents directly
-- Edit tickets or SPEC.md via Bash — any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); always use Write/Edit tools so the validation hooks can inspect the change. Bash on tickets is for reading (cat/grep/ls) and moving between active/ and done/ (mv) only
+- Edit tickets or SPEC.md via Bash — any write vector (denied by .claude/hooks/guard_bash_writes.py); always use Write/Edit tools so the validation hooks can inspect the change. Bash on tickets is for reading (cat/grep/ls) and moving between active/ and done/ (mv) only
 - Skip reporting to human after reviewer approval
-- Introduce status names not defined in CLAUDE.md (e.g., review_approved / review_rejected)
 - Delegate on rollback without incrementing the retry counter in the ticket
-- Reset (decrease) retry counters without explicit human instruction — resets are human-approved via the hook's ask gate, only at the start of a new attempt (improvement loop / blocked resolution)
 - Mark ticket as done without reviewer approval
 - Delegate to implementer / tester / reviewer without creating the ticket worktree and stating its path in the delegation prompt
 - Remove a worktree that has uncommitted or unmerged changes (never use `--force`) — merge to develop first; escalate merge conflicts to human
