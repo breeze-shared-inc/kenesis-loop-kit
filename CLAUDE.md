@@ -183,5 +183,6 @@ CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は�
 | セキュリティ・機密情報の取り扱い | docs/security-policy.md | 各エージェント | implementer.md Git Rules（コミット前の機密確認） / designs/_TEMPLATE.md §4コメント |
 | エージェントのモデル割当（役割別の軽量化・見直しトリガー） | `.claude/agents/*.md`（orchestrator.mdを除く5ファイル）の本文「## Model Assignment」節 + frontmatter `model`（sonnet割当時のみ記述） | architect（設計）+ 人間（承認） | agents/*.md Model Assignment節（tester/investigator=sonnet、architect/reviewer/implementer=inherit維持） |
 | CLAUDE.md＝インデックス＋共通定義の維持 | 本ファイル ポリシー管理の原則（再肥大化の防止） | CLAUDE.mdを編集する人間 / Claude | - |
+| orchestratorのチケット一覧取得（frontmatterスキャンCLI・パス引数を持たない設計） | scripts/list_tickets.py（実装の正はdocs/designs/KLK-003.md） | orchestrator / start-loop | orchestrator.md Ticket Integration / start-loop.md 起動時チェックリスト・ループ実行手順1 / tests/test_list_tickets.py |
 
 新しいポリシーを追加する際は、上記「再肥大化の防止」の2手順に従い、定義ファイルへの反映と本表の更新まで完了させること。
