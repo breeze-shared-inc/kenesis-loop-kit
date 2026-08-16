@@ -195,6 +195,21 @@ bash と一致させる正規化（L0）を置く。
   - `mv` は保護対象 cwd 下でも許可する（`cd tickets/active && mv /tmp/e
     APP-001.md`）。CLAUDE.md が active/ ↔ done/ の移動を Bash `mv` の正規手段と
     定めているためで、**意図的な許可**である。
+  - **H6 修正（KLK-014）: degraded mode もコマンド置換の内側を再帰評価する。**
+    閉じている `$(...)`／バッククォート／プロセス置換の境界を
+    `_extract_degraded_substs` が機械的に抽出し、内側テキストを
+    subst_violation／find_violation（正常経路と同じ再帰機構）へ無条件で
+    回す。**閉じていない置換（終端が見つからない形）は従来どおり素の
+    文字列として素朴な分割の対象に残る**（変化なし）。この修正により、
+    `#` コメント本文を除去しない設計（下記）と組み合わさって、**すでに
+    何らかの理由で degraded に落ちた入力に、閉じている置換が
+    コメントとして書かれているだけの形**（例: `grep pattern file
+    # via $(date) #'`）も、置換の内側の head が ALLOWED_HEADS に無ければ
+    新たに deny になる。これは正常経路が既に持つ「コメント本文を
+    除去しないため置換も評価対象になる」という性質（下記「`#` コメントの
+    本文は除去しない」を参照）と degraded を対称にした結果であり、
+    新しいクラスの誤解析ではない。回避策は保護対象に触れるコマンドの
+    コメント内で置換記号を使わないこと
   - degraded mode（下記）は旧版と同じ素朴な分割を使うため、クォート内の `|` と
     未閉じクォートが同時に成立する入力（`grep -E '^(id|title):' tickets/... # don't`）
     は誤denyになる。これは旧版と同一の挙動であり、正常に字句解析できる入力
@@ -290,7 +305,10 @@ degraded_violation へ落とす。degraded は旧版の判定要素（全体の�
 リテラルリダイレクト・heredoc の部分文字列判定・ステートメント分割・パイプ分割・
 パイプライン単位の言及ゲート・セグメント判定）をすべて持つ。旧版から意図的に
 外しているのは「リダイレクト先が `$` / バッククォートを含むだけで deny する」
-規則のみ（無関係な後段リダイレクトの誤denyを解消するため）。
+規則のみ（無関係な後段リダイレクトの誤denyを解消するため）。degraded は
+さらに、置換の内側方向の再帰評価（H6・KLK-014。`_extract_degraded_substs`が
+閉じているコマンド置換・バッククォート・プロセス置換の境界を抽出し、正常経路
+と同じ subst_violation／find_violation へ回す）も持つ。
 """
 import json
 import os
@@ -1740,7 +1758,77 @@ def statement_violation(statement, guarded_vars, substs=(), cwd=""):
     return None
 
 
-def degraded_violation(command, cwd=""):
+def _extract_degraded_substs(command):
+    """字句解析に失敗する入力からも、閉じているコマンド置換・バッククォート・
+    プロセス置換の境界だけを機械的に抽出し、SUBST_PLACEHOLDER に置き換えた
+    スケルトンと抽出済みの内側テキスト一覧を返す（H6 の修正本体）。
+
+    lex() と異なり例外を送出しない。閉じていない置換（$( / ` の終端が
+    見つからない）に出会った時点で、残りをそのまま出力へ写して走査を打ち切る
+    （既存の degraded の素朴な判定へ委ねる＝保守側・何も失わない）。
+
+    置換が1つも無い入力では、戻り値のスケルトンは command と**バイト単位で
+    同一**になる（この関数のいずれの分岐も、$( / ` / <( / >( に一致しない
+    文字を1文字も変更しないため）。
+    """
+    buf, substs = [], []
+    i, n, quote = 0, len(command), ""
+    while i < n:
+        c = command[i]
+        if quote == "'":
+            buf.append(c)
+            if c == "'":
+                quote = ""
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            buf.append(command[i:i + 2])
+            i += 2
+            continue
+        if c == "$" and i + 1 < n and command[i + 1] == "(":
+            try:
+                i = _take_subst(command, i + 2, buf, substs)
+            except ValueError:
+                buf.append(command[i:])
+                break
+            continue
+        if c == "`":
+            try:
+                i = _take_backtick(command, i + 1, buf, substs)
+            except ValueError:
+                buf.append(command[i:])
+                break
+            continue
+        if quote == '"':
+            buf.append(c)
+            if c == '"':
+                quote = ""
+            i += 1
+            continue
+        # ---- ここから quote == ""（通常状態）専用 ----
+        if c in "<>" and i + 1 < n and command[i + 1] == "(":
+            try:
+                i = _take_subst(command, i + 2, buf, substs)
+            except ValueError:
+                buf.append(command[i:])
+                break
+            continue
+        if c == "'":
+            buf.append(c)
+            quote = "'"
+            i += 1
+            continue
+        if c == '"':
+            buf.append(c)
+            quote = '"'
+            i += 1
+            continue
+        buf.append(c)
+        i += 1
+    return "".join(buf), substs
+
+
+def degraded_violation(command, cwd="", depth=0):
     """字句解析できない入力向けのフォールバック。
 
     旧版（KLK-010 以前）の find_violation と同じ判定要素をすべて持つ:
@@ -1759,7 +1847,37 @@ def degraded_violation(command, cwd=""):
     経路が同じ行構造を見る）。LEGACY_STATEMENT_RE は正規化後も改行で無条件に
     分割するため、旧版の判定要素は失われない（正規化が削除するのは「bash が
     連結する `\\`+改行」だけであり、これは旧版が持っていなかった保護の追加）。
+
+    **H6 修正:** `_extract_degraded_substs` で閉じている置換の境界だけを
+    機械的に抽出し、SUBST_PLACEHOLDER に置き換えたスケルトンを以降の判定へ
+    渡す。抽出した各置換は**外側の言及ゲートに関わらず無条件に**（正常経路の
+    find_violation のステートメントループと同じ規律で）subst_violation へ
+    回し、内側で見つかった違反を最優先で返す。置換が1つも無い入力では
+    スケルトンは command と同一であり、以降の判定ロジックは本修正の前後で
+    1バイトも変わらない。depth は subst_violation 経由で MAX_SUBST_DEPTH の
+    打ち切りを正しく継承させるために find_violation から伝播される。
     """
+    skeleton, substs = _extract_degraded_substs(command)
+
+    # H6（内側方向）: 抽出した置換の中身を、それが現れる文の cwd で
+    # 外側の言及ゲートより先に・ゲートに関わらず評価する。cwd 追跡は
+    # このループで1回だけ確定し（stmt_cwds）、下の本体ループへ引き継ぐ
+    # （cwd を2回独立に追跡して食い違わせないため）。
+    stmt_cwds, running_cwd = [], cwd
+    for statement in LEGACY_STATEMENT_RE.split(skeleton):
+        stmt_cwds.append(running_cwd)
+        indexes = sorted(set(int(m.group(1)) for m in
+                              SUBST_PLACEHOLDER_RE.finditer(statement)))
+        for index in indexes:
+            reason = subst_violation(substs, index, depth, running_cwd)
+            if reason:
+                return reason
+        parts = [p for p in statement.split("|") if p.strip()]
+        if parts:
+            running_cwd = next_cwd(parts[0].split(), running_cwd)
+
+    # 以降は旧来の判定要素を skeleton に対して行う（既存ロジックを command
+    # から skeleton へ差し替えただけで、他は無変更）。
     # **関数レベルのゲートにも cwd を入れる。** 入れないと
     # `cd tickets/active && ls `rm APP-001.md #'`` のように置換の内側だけが
     # degraded へ落ちる経路（find_violation → subst_violation →
@@ -1767,22 +1885,23 @@ def degraded_violation(command, cwd=""):
     # ステートメント単位のゲートに到達する前に early return してしまう。
     # 本関数のゲートは①（ここ）②LEGACY_REDIRECT_RE ③heredoc ④文単位ゲート
     # ⑤segment/awk の5つで、cwd を見ないのは①だけであった
-    if not (cwd_is_guarded(cwd) or mentions_guarded(command.split())):
+    if not (cwd_is_guarded(cwd) or mentions_guarded(skeleton.split())):
         return None
-    for match in LEGACY_REDIRECT_RE.finditer(command):
+    for match in LEGACY_REDIRECT_RE.finditer(skeleton):
         target = match.group(1)
         if target.startswith("&"):
             continue  # 2>&1 等の fd 複製
         if is_guarded_token(target):
             return "リダイレクト（> %s）による書き込み" % target
-    if "<<" in command:
+    if "<<" in skeleton:
         return "ヒアドキュメントによる書き込みの可能性"
-    for statement in LEGACY_STATEMENT_RE.split(command):
+    for stmt_index, statement in enumerate(LEGACY_STATEMENT_RE.split(skeleton)):
         parts = [p for p in statement.split("|") if p.strip()]
         if not parts:
             continue
         words_list = [p.split() for p in parts]
-        if cwd_is_guarded(cwd) or any(mentions_guarded(w) for w in words_list):
+        stmt_cwd = stmt_cwds[stmt_index]
+        if cwd_is_guarded(stmt_cwd) or any(mentions_guarded(w) for w in words_list):
             # QT-1: degraded はクォート状態を追えないため、`$'` / `$"` の検出は
             # **部分文字列判定**で行う（クォート内側の `$'` にも発火する＝
             # 保守側）。**この規則を degraded にも置くことが必須である** —
@@ -1793,13 +1912,12 @@ def degraded_violation(command, cwd=""):
                 return ANSI_QUOTE_REASON
             for words in words_list:
                 # degraded=True: awk は AW-7 を使わず AW-5／AW-6 で見る
-                reason = segment_violation(words, cwd=cwd, degraded=True)
+                reason = segment_violation(words, cwd=stmt_cwd, degraded=True)
                 if reason:
                     return reason
         for match in LEGACY_REDIRECT_RE.finditer(statement):
-            if guarded_write_target(match.group(1), cwd):
+            if guarded_write_target(match.group(1), stmt_cwd):
                 return ("リダイレクト（> %s）による書き込み" % match.group(1))
-        cwd = next_cwd(words_list[0], cwd)
     return None
 
 
@@ -1833,7 +1951,7 @@ def find_violation(command, depth=0, cwd=""):
     try:
         tokens, substs = lex(command)
     except ValueError:
-        return degraded_violation(command, cwd)
+        return degraded_violation(command, cwd, depth)
     guarded_vars, seen = set(), set()
     for statement in split_statements(tokens):
         # 内側方向（置換の中身が書き込み）は、**その置換が現れた文の cwd**で
