@@ -34,6 +34,23 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(table["reviewer_to_investigator"], 0)
 
 
+class TestIsTicket(unittest.TestCase):
+    """KLK-004: docs/reports/{ID}/{phase}.md が is_ticket() の対象外であることを検証する
+    （tickets/active|done/*.md のみを実チケット扱いする既存境界は変えない）。"""
+
+    def test_docs_reports_path_not_a_ticket(self):
+        self.assertFalse(
+            lib.is_ticket("/repo/docs/reports/KLK-004/investigation.md"))
+
+    def test_docs_reports_other_phases_not_a_ticket(self):
+        for phase in ("implementation", "test-report", "review"):
+            self.assertFalse(
+                lib.is_ticket("/repo/docs/reports/KLK-004/%s.md" % phase))
+
+    def test_ticket_active_path_still_a_ticket(self):
+        self.assertTrue(lib.is_ticket("/repo/tickets/active/KLK-004.md"))
+
+
 class TestSchema(unittest.TestCase):
     def test_valid_passes(self):
         fm = lib.parse_frontmatter(_util.ticket())

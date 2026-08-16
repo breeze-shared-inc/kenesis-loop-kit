@@ -90,6 +90,17 @@ class TestLoopIntegrity(unittest.TestCase):
     def test_no_tickets_dir_allows(self):
         self.assertIsNone(self.run_stop())
 
+    def test_docs_reports_coexistence_no_false_positive(self):
+        # KLK-004: tickets/active/ の正常なチケットと docs/reports/{ID}/ が共存しても、
+        # check_loop_integrity.py は tickets/active|done/*.md のみを走査するため誤検知しない
+        _util.write_ticket(self.cwd, "KLK-004.md", status="design_done")
+        reports_dir = os.path.join(self.cwd, "docs", "reports", "KLK-004")
+        os.makedirs(reports_dir, exist_ok=True)
+        with open(os.path.join(reports_dir, "investigation.md"), "w",
+                  encoding="utf-8") as f:
+            f.write("# KLK-004 investigation\n\n生成: investigator（代筆: orchestrator） / 最終更新: 2026-07-19\n")
+        self.assertIsNone(self.run_stop())
+
     # --- L3: 差し戻し履歴の照合 ---
 
     def test_rollback_reconcile_mismatch_blocks(self):

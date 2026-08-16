@@ -113,6 +113,13 @@ class TestValidator(unittest.TestCase):
         path = os.path.join(self.cwd, "tickets", "Templates", "ticket.md")
         self.assertAllow(write_payload(path, _util.ticket(status="todo")))
 
+    def test_docs_reports_path_skips_ticket_validation(self):
+        # KLK-004: docs/reports/{ID}/{phase}.md は is_ticket() 非該当のため、
+        # frontmatter必須キー等のチケット検証を一切スルーする（is_ticket()ゲートより前で弾かれない）
+        path = os.path.join(self.cwd, "docs", "reports", "KLK-004", "investigation.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.assertAllow(write_payload(path, "# KLK-004 investigation\n\nno frontmatter here\n"))
+
     def test_broken_stdin_allow(self):
         rc, out, _ = _util.run_script(_util.VALIDATOR, "not json", cwd=self.cwd)
         self.assertEqual(rc, 0)
