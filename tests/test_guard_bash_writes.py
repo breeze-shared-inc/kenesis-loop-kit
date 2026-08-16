@@ -2139,6 +2139,111 @@ class TestGuardBashWrites(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertDeny(command)
 
+    # --- KLK-014（H6）: degraded mode もコマンド置換の内側を再帰評価する
+    # （`_extract_degraded_substs` 新設・案C）。investigator が実測した
+    # 再現手順の全形（置換の型3種 × 書き込みベクタ計8種・ネスト・末尾の
+    # 誘発形2種・保護対象2種）を deny 側で固定し、正常経路の判定（AC2）・
+    # 誤deny予算の3カテゴリ（AC3・設計書§9）を allow/deny の両方向で
+    # 対にして固定する ---
+
+    def test_h6_subshell_substitution_all_write_vectors_deny(self):
+        # T-H6a（AC1）: `$(...)` の内側にある各種書き込みベクタ（チケット
+        # 記載の7種＋repro本体の rm）が、末尾 ` #'`（未閉じコメント内クォート）
+        # で degraded へ落ちた形でも検出されることを固定する。対象は
+        # docs/SPEC.md（investigator が実測したベースの保護対象）
+        for command in (
+            "ls $(rm docs/SPEC.md) #'",
+            "ls $(sed -i 's/a/b/' docs/SPEC.md) #'",
+            "ls $(awk -i inplace '{print}' docs/SPEC.md) #'",
+            "ls $(tee docs/SPEC.md) #'",
+            "ls $(cp /tmp/e docs/SPEC.md) #'",
+            "ls $(truncate -s 0 docs/SPEC.md) #'",
+            "ls $(find docs -name SPEC.md -delete) #'",
+            "ls $(python3 -c \"open('docs/SPEC.md','w').write('x')\") #'",
+        ):
+            with self.subTest(command=command):
+                self.assertDeny(command)
+
+    def test_h6_backtick_substitution_write_vector_deny(self):
+        # T-H6b（AC1）: バッククォート置換。保護対象は tickets/active/ 側
+        # （docs/SPEC.md と tickets/active/*.md の両方で成立することの固定）
+        self.assertDeny("ls `rm tickets/active/APP-001.md` #'")
+
+    def test_h6_process_substitution_write_vector_deny(self):
+        # T-H6c（AC1）: プロセス置換 `<(...)`（入力方向）
+        self.assertDeny("cat <(rm docs/SPEC.md) #'")
+
+    def test_h6_nested_substitution_deny(self):
+        # T-H6d（AC1）: ネスト（`$( $(...) )`）
+        self.assertDeny("ls $( $(rm docs/SPEC.md) ) #'")
+
+    def test_h6_lone_trailing_backslash_also_triggers_degraded_deny(self):
+        # T-H6e（AC1）: ` #'` だけでなく、末尾の孤立 `\` 1個でも degraded へ
+        # 落ちる（H6 のもう1つの誘発形）ことの固定
+        self.assertDeny("ls $(rm docs/SPEC.md) \\")
+
+    def test_h6_cwd_relative_path_propagation_deny(self):
+        # T-H6f（AC1・§9 テスト観点(2)）: cwd 伝播。保護対象 cwd 下では
+        # 置換の内側が相対パス形（`APP-001.md`）でも検出されることの固定
+        self.assertDeny("cd tickets/active && ls $(rm APP-001.md) #'")
+
+    def test_h6_normal_path_judgement_unchanged_deny(self):
+        # T-H6g（AC2）: 正常経路（lex() が成功する対照形）の判定は本チケットで
+        # 1文字も変わらない。` #'` が無ければ引き続き deny のままである
+        self.assertDeny("ls $(rm docs/SPEC.md)")
+
+    def test_h6_readonly_substitution_inside_degraded_stays_allow(self):
+        # T-H6h（AC2）: 置換の内側が読み取り専用なら degraded でも allow の
+        # ままである（H6 は「内側が実際に違反か」を評価するため、却下した
+        # 案Bのように置換記号があるだけで一律 deny にはしない）
+        self.assertAllow("ls $(echo hi) #'")
+        self.assertAllow("ls `echo hi` #'")
+
+    def test_h6_max_subst_depth_boundary_degraded_deny(self):
+        # T-H6i（§9 テスト観点(3)）: 正常経路の既存テスト
+        # test_ansi_c_quote_inside_nested_substitution_all_depths_deny と対に
+        # なる degraded 版。degraded の入口（末尾 ` #'`）から
+        # MAX_SUBST_DEPTH(3) の境界・その先の深さ4まで、`depth` が
+        # find_violation → degraded_violation → subst_violation と正しく
+        # 伝播し続けることを固定する（find_violation の呼び出し側1行の修正が
+        # 無いと、ネストのたびに depth が 0 へリセットされ、打ち切りが
+        # 効かないまま無限に近い再帰が発生しうる）
+        target = "rm docs/SPEC.md"
+        wrapped = target
+        self.assertDeny("ls $(%s) #'" % wrapped)                       # depth0
+        for depth in range(1, 5):
+            wrapped = "echo $(%s)" % wrapped
+            with self.subTest(depth=depth):
+                self.assertDeny("ls $(%s) #'" % wrapped)
+
+    def test_h6_process_substitution_used_as_redirect_target_deny(self):
+        # T-H6j（AC3 新規誤deny Category 2・設計書§9）: プロセス置換が
+        # リダイレクト先に使われる形の副次的な closure。書き込みの実態が
+        # あるため誤denyではないが、チケットの repro 列挙には無い形として
+        # 明記・固定する
+        self.assertDeny("echo x > >(tee docs/SPEC.md) #'")
+
+    def test_h6_category3_comment_embedded_substitution_under_guarded_cwd_deny(
+            self):
+        # T-H6k（AC3 新規誤deny Category 3・要固定・設計書§6・§9）: 保護対象
+        # cwd 下で、既に degraded な入力の `#` コメント内に、閉じている置換
+        # （head が ALLOWED_HEADS に無い。`$(date)` ／ `` `whoami` ``）が
+        # 書かれているだけの形。**旧実装（H6以前）ではこの2形は allow だった**
+        # （`ls` が ALLOWED_HEADS かつ CWD_SAFE_HEADS のため、置換の中身は
+        # 単なる引数語として埋もれていた。旧実装のコピーに対して実際に
+        # allow のままであることを突き合わせ済み）。本チケットの再帰評価に
+        # より、置換の内側 "date"／"whoami" の head が ALLOWED_HEADS に無く、
+        # かつ cwd が保護対象配下であるため新たに deny になる
+        self.assertDeny("cd tickets/active && ls file # via $(date) #'")
+        self.assertDeny("cd tickets/active && ls file # via `whoami` #'")
+
+    def test_h6_category3_without_guarded_cwd_stays_allow(self):
+        # T-H6l（対照）: 保護対象 cwd が無ければ、同じコメント埋め込み置換は
+        # 引き続き allow である（Category 3 は「保護対象 cwd 下」限定の形で
+        # あり、日常読み取り70件相当（cwd を伴わない）には影響しないことの
+        # 固定）
+        self.assertAllow("ls file # via $(date) #'")
+
 
 if __name__ == "__main__":
     unittest.main()
