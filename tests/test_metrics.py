@@ -99,6 +99,53 @@ class TestRecorder(unittest.TestCase):
         _util.run_script(_util.RECORDER, payload, cwd=self.cwd)
         self.assertEqual(self.events(), [])
 
+    # --- KLK-012 AC1: 相対パスでもイベントが記録される ---
+
+    def test_relative_path_recorded(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(_util.ticket(status="todo"))
+        rel = os.path.join("tickets", "active", "APP-001.md")
+        payload = {"tool_name": "Write", "cwd": self.cwd,
+                   "tool_input": {"file_path": rel}}
+        rc, _, _ = _util.run_script(_util.RECORDER, payload, cwd=self.cwd)
+        self.assertEqual(rc, 0)
+        evs = self.events()
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]["to"], "todo")
+
+    def test_relative_path_with_non_str_cwd_falls_back(self):
+        # 非 str の cwd は os.getcwd() へフォールバックする（AC5）
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(_util.ticket(status="todo"))
+        rel = os.path.join("tickets", "active", "APP-001.md")
+        payload = {"tool_name": "Write", "cwd": 123,
+                   "tool_input": {"file_path": rel}}
+        rc, _, _ = _util.run_script(_util.RECORDER, payload, cwd=self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(self.events()), 1)
+
+    # --- KLK-012 AC5: 非 dict 入力でクラッシュしない ---
+
+    def test_non_dict_stdin_ignored(self):
+        rc, out, _ = _util.run_script(_util.RECORDER, "[]", cwd=self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "")
+        self.assertEqual(self.events(), [])
+
+    def test_non_dict_tool_input_ignored(self):
+        payload = {"tool_name": "Write", "cwd": self.cwd, "tool_input": []}
+        rc, out, _ = _util.run_script(_util.RECORDER, payload, cwd=self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "")
+        self.assertEqual(self.events(), [])
+
+    def test_non_str_file_path_ignored(self):
+        payload = {"tool_name": "Write", "cwd": self.cwd,
+                   "tool_input": {"file_path": 123}}
+        rc, _, _ = _util.run_script(_util.RECORDER, payload, cwd=self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.events(), [])
+
 
 class TestAggregate(unittest.TestCase):
     def setUp(self):

@@ -19,7 +19,6 @@ fail-open: 内部エラー（パース不能など）では allow。
       （チケット側と異なり Stop hook のドリフト検知は無い — SPEC.md には
       観測サイドカーが存在しないため）。
 """
-import json
 import os
 import sys
 
@@ -43,14 +42,16 @@ def is_spec(path):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    # 入力型の正規化は hook 境界（main）で行い、判定関数（is_spec）は str を
+    # 前提とする（KLK-012 §3 D5）。非 dict の payload / tool_input、非 str の
+    # file_path はいずれも fail-open（allow）
+    data = lib.read_hook_payload()
+    if data is None:
         allow()
 
-    tool_input = data.get("tool_input") or {}
-    path = tool_input.get("file_path", "")
-    if not path or not is_spec(path):
+    tool_input = lib.as_dict(data.get("tool_input"))
+    path = tool_input.get("file_path")
+    if not isinstance(path, str) or not path or not is_spec(path):
         allow()
 
     ask(
