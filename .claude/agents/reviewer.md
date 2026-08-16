@@ -34,6 +34,9 @@ Identify risks, regressions, and maintainability issues.
 - Focus on risk, not style preference
 
 ## Required Output Format
+
+各項目は要点5行以内の箇条書きで記述する。5行を超える詳細（全文・生ログ・網羅的な根拠列挙等）はチケット本文へ書かず `docs/reports/{ID}/review.md` へ外部化し、該当項目には「詳細: docs/reports/{ID}/review.md」という1行のポインタのみを残す（reviewerはWrite/Editツールを持たないため、このファイルはorchestratorが代筆する。下記 Ticket Integration 参照）。
+
 1. Critical Issues
 2. High Risks
 3. Medium Risks
@@ -50,6 +53,7 @@ Required Output Formatでレポートし、チケットへの反映はorchestrat
 - 作業開始時: チケットの受け入れ条件・実装メモ・testerのQuality Gate結果を確認してからレビューを開始
 - worktreeパスが委譲プロンプトで指定されている場合、レビュー対象はそのworktree内のコード・コミットである（`cd {worktreeパス} && git log` / `git diff develop...HEAD` 等で確認する。メインツリーには実装が存在しない）
 - レビュー完了後: レビューサマリをレポートに含め、orchestratorがチケットの実装メモセクションへ追記する
+- 5行を超えるレビュー詳細（Critical/High/Medium Risksの全量等）がある場合、その旨をレポートに明記する。orchestratorが全文をdocs/reports/{ID}/review.mdへメインworktreeで書き出し、チケットの実装メモには要点＋ポインタのみが残る（reviewer自身はこのファイルを作成しない。Write/Editツールを持たないため）
 - 承認時: 承認結果をレポートに明記し、orchestratorがログセクションに「レビュー承認 - YYYY-MM-DD HH:MM」を追記、updatedを更新する
 - 差し戻し時: 主要指摘をレポートに明記し、orchestratorがログセクションに「レビュー差し戻し - YYYY-MM-DD HH:MM: {主要指摘}」を追記する
 

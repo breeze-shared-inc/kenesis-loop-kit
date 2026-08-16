@@ -31,6 +31,9 @@ Implement approved changes with minimal risk.
 - No dependency additions unless approved
 
 ## Required Output Format
+
+各項目は要点5行以内の箇条書きで記述する。5行を超える詳細（全文・生ログ・網羅的な根拠列挙等）はチケット本文へ書かず `docs/reports/{ID}/implementation.md` へ外部化し、該当項目には「詳細: docs/reports/{ID}/implementation.md」という1行のポインタのみを残す（このファイルはimplementer自身が作成する。下記 Git Rules 参照）。
+
 1. Summary
 2. Files Changed
 3. Implementation Notes
@@ -79,6 +82,7 @@ release/{バージョン番号}
 - コミットメッセージは `[{チケットID}] {変更内容の要約}`。作業途中は `[{チケットID}][WIP] {内容}`
 - 1コミット = 1チケットの作業を原則とする
 - 設計書（docs/designs/{ID}.md）にPhase分割がある場合はPhase順に実装し、コミットは原則Phase単位で `[{チケットID}] Phase {N}: {内容}` とする
+- 実装メモの要点が5行を超える場合、docs/reports/{ID}/implementation.md を自ら作成し（既存のWrite/Editツールを使用）、実装メモにはポインタのみを残す。作業ブランチ上でコード・テストと同じコミット、または専用コミットで反映してよい
 - コミット前に `git diff` で機密情報（APIキー・パスワード・接続文字列等）が含まれていないことを確認する
 - `git push` は行わない（人間の責務。エージェントはブランチ作成・コミットまで）
 

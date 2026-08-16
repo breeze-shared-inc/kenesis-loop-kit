@@ -32,6 +32,9 @@ Maintain architectural consistency and minimize long-term complexity.
 - Preserve public interfaces unless explicitly approved
 
 ## Required Output Format
+
+各項目は要点5行以内で記述する。設計の全文は既存どおりdocs/designs/{ID}.mdに記載し、本レポートは要約とポインタのみとする（本規約はこの既存運用の明文化である）。
+
 1. Objective
 2. Current State
 3. Proposed Design

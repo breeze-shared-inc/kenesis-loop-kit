@@ -24,6 +24,7 @@ Drive the development loop by managing ticket state and delegating to appropriat
 - **Sole ticket writer**: apply all ticket file updates (status / log / related_files / updated / retry counters) yourself, based on each sub-agent's report. Sub-agents do not edit ticket files. Append with the Edit tool; use Write only when creating a new ticket file
 - **Main worktree only for ticket writes**: チケット・メトリクスへの書き込みはメインworktree（orchestratorの作業ツリー）でのみ行う。並行作業用のworktree内ではチケットを更新しない（worktree分離の運用は docs/worktree-policy.md を正とする）
 - **Worktree lifecycle**: implementer以降のコード作業はチケット専用worktree（`../{リポジトリ名}.wt/{ID}/`）へ分離する。作成（implementer委譲直前）・マージ・削除（reviewer承認後）は本ファイル「worktreeライフサイクル管理」の手順に従う
+- Externalize verbose sub-agent reports for tools-less agents (investigator / reviewer, which hold no Write/Edit tool) to docs/reports/{ID}/{phase}.md on their behalf; keep the ticket's log / 実装メモ to the 5-line summary + pointer
 - Detect blockers and escalate to human when needed
 - Manage rollback decisions when reviewer rejects
 - **On every loop start**: verify the permission mode is auto (`.claude/settings.json` `permissions.defaultMode` = `"auto"`, or the current session is in auto mode); if not, tell the human that command-approval prompts will repeatedly stall the loop and prompt them to enable auto mode before proceeding
@@ -111,6 +112,9 @@ implementer / tester / reviewer のコード作業はチケット専用worktree�
 入るか）のタイミングである。詳細は docs/batch-loop.md・docs/batch-loop-inline.md を参照。
 
 ## Required Output Format
+
+各項目は要点5行以内で記述する。詳細な経緯・全文はチケット本文またはdocs/reports/{ID}/{phase}.mdを参照させ、二重に転記しない。ただし「リトライカウンタ管理」節のエスカレーション報告（3項目）はこの上限の対象外とする。
+
 1. Current Ticket State
 2. Action Taken
 3. Delegated Agent
@@ -142,7 +146,8 @@ implementer / tester / reviewer のコード作業はチケット専用worktree�
 
 ## Ticket Integration
 - 作業開始時: `python3 scripts/list_tickets.py` でtickets/active/の一覧（id/status/priority/retry_counts/updated）を取得し、ステータス遷移表とpriorityから処理対象を1件選ぶ。処理対象が決まったら、その1件のみをReadツールでフル読み取りする（他チケットの本文・ログは読まない）
-- 委譲後: sub-agentの出力を受けてログセクションに追記、updatedを現在日時に更新
+- 委譲後: sub-agentの出力を受け、Required Output Formatの各項目（要点5行以内）をログ・実装メモの該当ロール見出しへ追記する。5行を超える詳細を含む報告のうち、Write/Editツールを持たないエージェント（investigator・reviewer）の分はorchestratorがdocs/reports/{ID}/{phase}.mdへ全文を書き出し、チケットには要点＋「詳細: docs/reports/{ID}/{phase}.md」のポインタのみを追記する（Write/Editツールを持つエージェントは既に自ら同パスへ書き出し済みのため、ポインタのみ受け取って追記する）。updatedを現在日時に更新する
+- 同一ロールの詳細ファイルが再実行で更新された場合（差し戻し後の再調査・再レビュー等）、同一ファイルを上書きし、ログに「{phase}を再実施 - 理由」の1行を追記する（docs/designs/{ID}.mdの改訂運用と同型）
 - reviewer approve時: statusをdoneに変更、done/へ移動し、人間に成果物を報告して改善ループの判断を促す
 - 改善ループ指示受領時: 人間の判断に応じてstatusを巻き戻し、対象エージェントへ委譲
 

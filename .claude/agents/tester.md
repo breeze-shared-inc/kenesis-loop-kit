@@ -37,6 +37,9 @@ Verify implementation correctness and generate quality evidence for reviewer.
 - Add tests only within scope of current ticket
 
 ## Required Output Format
+
+各項目は要点5行以内の箇条書きで記述する。5行を超える詳細（全文・生ログ・網羅的な根拠列挙等）はチケット本文へ書かず `docs/reports/{ID}/test-report.md` へ外部化し、該当項目には「詳細: docs/reports/{ID}/test-report.md」という1行のポインタのみを残す（このファイルはtester自身がworktree内で作成する。下記 Git Rules 参照）。
+
 1. Test Execution Results
 2. Coverage Summary
 3. Failing Tests (if any)
@@ -59,6 +62,7 @@ testerのWrite/Editはテストコード専用である。
 - worktreeパスが委譲プロンプトで指定されている場合、テストの実行・追加・コミットはすべてそのworktree内で行う（`cd {worktreeパス} && {コマンド}` の複合コマンドを使う。メインツリーのコードを対象にしない。運用は docs/worktree-policy.md を正とする）
 - 追加・修正したテストは、implementerの作業ブランチ（`feature/` または `fix/`）上でコミットする。新しいブランチは作らない
 - ステージ対象はレポート（Added Tests）に列挙したテストファイルのみ。`git add -A` / `git add .` は使わない（implementerの未コミット変更を巻き込まないため）
+- テスト実行結果・カバレッジ詳細が5行を超える場合、docs/reports/{ID}/test-report.md をworktree内で自ら作成する。ステージ対象（Added Tests）の列挙に本ファイルも含めてよい
 - コミットメッセージは `[{チケットID}] テスト追加: {概要}`
 - **Quality Gate fail時も、失敗を実証するテストはコミットしてから差し戻しを報告する**（失敗状態の外部化。テストをベースラインとして固定し、implementerによるテスト改変をreviewerのdiffで検出可能にする）
 - `git push` は行わない（人間の責務）
