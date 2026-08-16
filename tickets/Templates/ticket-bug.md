@@ -43,6 +43,9 @@ retry_counts:
 ### 設計メモ (architect)
 <!-- バグの場合は修正方針・原因への対処を記載する -->
 
+### 実装ノート (implementer)
+
+### テストメモ (tester)
 
 ### レビューメモ (reviewer)
 

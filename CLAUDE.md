@@ -79,6 +79,7 @@ investigator → architect → implementer → tester → reviewer
 | `.claude/skills/spec-interview/templates/SPEC_TEMPLATE.md` | - | SPEC.mdのテンプレート（`/spec-interview` がコピー元に使う） |
 | `docs/designs/{ID}.md` | architect | チケット単位の設計書。architectが生成し、implementerが参照する |
 | `docs/designs/_TEMPLATE.md` | - | 設計書テンプレート（architectがコピー元に使う） |
+| `docs/reports/{ID}/{phase}.md` | 各エージェント（Write/Edit保持者は自ら、非保持者はorchestratorが代筆） | サブエージェントレポートの詳細外部化。チケット本文には要点5行+ポインタのみを残す |
 | `docs/security-policy.md` | - | 機密情報の取り扱い規約（全エージェント共通） |
 | `docs/obsidian-setup.md` | - | Obsidianの初期設定ガイド |
 
@@ -181,6 +182,7 @@ CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は�
 | Phase分割の規律（AC非再定義・全ACカバー・粒度ガード） | designs/_TEMPLATE.md §4「実装Phase」コメント | architect | architect.md Ticket Integration・Never / reviewer.md Responsibilities / implementer.md Git Rules |
 | セキュリティ・機密情報の取り扱い | docs/security-policy.md | 各エージェント | implementer.md Git Rules（コミット前の機密確認） / designs/_TEMPLATE.md §4コメント |
 | エージェントのモデル割当（役割別の軽量化・見直しトリガー） | 各 `.claude/agents/*.md` の frontmatter `model` + 本文「## Model Assignment」節 | architect（設計）+ 人間（承認） | 各agents/*.md Model Assignment節（tester/investigator=sonnet、architect/reviewer/implementer=inherit維持） |
+| サブエージェントレポートの要約上限・詳細外部化（docs/reports/{ID}/{phase}.md） | docs/designs/KLK-004.md + 各 `.claude/agents/*.md` Required Output Format | 各エージェント + orchestrator（Write/Edit非保持エージェント分の代筆） | 各agents/*.md Required Output Format・Ticket Integration・Git Rules / orchestrator.md Responsibilities・Ticket Integration / docs/reports/README.md |
 | CLAUDE.md＝インデックス＋共通定義の維持 | 本ファイル ポリシー管理の原則（再肥大化の防止） | CLAUDE.mdを編集する人間 / Claude | - |
 
 新しいポリシーを追加する際は、上記「再肥大化の防止」の2手順に従い、定義ファイルへの反映と本表の更新まで完了させること。

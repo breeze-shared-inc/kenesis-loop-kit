@@ -6,6 +6,9 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _util  # noqa: E402
 
+sys.path.insert(0, _util.HOOKS)
+import guard_bash_writes as guard  # noqa: E402
+
 
 def payload(command):
     return {"tool_name": "Bash", "tool_input": {"command": command}}
@@ -113,6 +116,21 @@ class TestGuardBashWrites(unittest.TestCase):
 
     def test_metrics_aggregate_allow(self):
         self.assertAllow("python3 .claude/metrics/aggregate.py APP-001")
+
+    # --- KLK-004: docs/reports/{ID}/ は保護対象外（is_ticket()の境界と同型） ---
+
+    def test_docs_reports_path_not_mentioned_as_guarded(self):
+        # mentions_guarded() が False を返す＝チケット・SPEC.mdと同じ保護は掛からない
+        self.assertFalse(
+            guard.mentions_guarded("rm docs/reports/KLK-004/investigation.md"))
+
+    def test_docs_reports_rm_allow(self):
+        # ホワイトリスト外の先頭コマンド（rm）でも docs/reports/ 配下は非対象のため deny されない
+        self.assertAllow("rm docs/reports/KLK-004/investigation.md")
+
+    def test_docs_reports_redirect_allow(self):
+        # リダイレクトによる書き込みも docs/reports/ 配下は非対象
+        self.assertAllow("echo x > docs/reports/KLK-004/implementation.md")
 
     # --- 読み取り専用スクリプト（READONLY_SCRIPTS）の例外 ---
 

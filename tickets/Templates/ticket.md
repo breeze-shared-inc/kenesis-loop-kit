@@ -31,6 +31,10 @@ retry_counts:
 
 ### 設計メモ (architect)
 
+### 実装ノート (implementer)
+
+### テストメモ (tester)
+
 ### レビューメモ (reviewer)
 
 ## ブロッカー
