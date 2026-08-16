@@ -251,6 +251,18 @@ LEGACY_DENY_COMMANDS = [
     "awk 'BEGIN{/x// system(\"rm SPEC.md\") / 1}'",
     "awk 'BEGIN{f=\"system\"; /x/ / @f(\"rm SPEC.md\") / 1}'",
     "cd tickets/active && awk 'BEGIN{// / system(\"rm APP-001.md\") / 1}'",
+    # --- KLK-013: is_readonly_script_call() の許可経路偽装（python3
+    # IDENTIFIER=VALUE 形）。old=allow（KLK-010 以前から存在する既存の穴。
+    # KLK-010 設計書 §6 R21 として記録済み）だが、維持規律3・4（将来見つかった
+    # 穴を塞いだ時点で追加してよい／本改訂で塞いだ穴）に基づき収載する ---
+    "python3 x=y .claude/skills/spec-interview/scripts/"
+    "check_spec_structure.py docs/SPEC.md",
+    "python3 x=y z=w .claude/skills/spec-interview/scripts/"
+    "check_spec_structure.py docs/SPEC.md",
+    "FOO=bar python3 x=y .claude/skills/spec-interview/scripts/"
+    "check_spec_structure.py docs/SPEC.md",
+    "python x=y .claude/skills/spec-interview/scripts/"
+    "check_spec_structure.py docs/SPEC.md",
 ]
 
 # 設計書 docs/designs/KLK-010.md §3-9 の書き込みベクタ棚卸し表と、実装の
@@ -579,6 +591,39 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertDeny(
             "python3 .claude/skills/spec-interview/scripts/"
             "check_spec_structure.py docs/SPEC.md > docs/SPEC.md")
+
+    # KLK-013: is_readonly_script_call() の許可経路偽装（先頭コマンドより
+    # 後ろの NAME=VALUE 語を位置によらずスキップしていたことが原因）。
+
+    def test_disguised_env_assignment_after_interpreter_deny(self):
+        # チケット再現手順そのもの
+        self.assertDeny(
+            "python3 x=y .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_multiple_env_assignments_after_interpreter_deny(self):
+        # 代入語風の語が2連続
+        self.assertDeny(
+            "python3 x=y z=w .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_env_assignment_with_legit_prefix_deny(self):
+        # 正規の FOO=bar 前置きと偽装の組合せ
+        self.assertDeny(
+            "FOO=bar python3 x=y .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_env_assignment_python_alias_deny(self):
+        # python エイリアスでも同様に偽装できてはならない
+        self.assertDeny(
+            "python x=y .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_readonly_script_with_env_prefix_allow(self):
+        # 正規の許可経路（環境変数前置き付き）は壊れない
+        self.assertAllow(
+            "FOO=bar python3 .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
 
     # --- fail-open ---
 
