@@ -251,6 +251,18 @@ LEGACY_DENY_COMMANDS = [
     "awk 'BEGIN{/x// system(\"rm SPEC.md\") / 1}'",
     "awk 'BEGIN{f=\"system\"; /x/ / @f(\"rm SPEC.md\") / 1}'",
     "cd tickets/active && awk 'BEGIN{// / system(\"rm APP-001.md\") / 1}'",
+    # --- KLK-013: is_readonly_script_call() の許可経路偽装（python3
+    # IDENTIFIER=VALUE 形）。old=allow（KLK-010 以前から存在する既存の穴。
+    # KLK-010 設計書 §6 R21 として記録済み）だが、維持規律3・4（将来見つかった
+    # 穴を塞いだ時点で追加してよい／本改訂で塞いだ穴）に基づき収載する ---
+    "python3 x=y .claude/skills/spec-interview/scripts/"
+    "check_spec_structure.py docs/SPEC.md",
+    "python3 x=y z=w .claude/skills/spec-interview/scripts/"
+    "check_spec_structure.py docs/SPEC.md",
+    "FOO=bar python3 x=y .claude/skills/spec-interview/scripts/"
+    "check_spec_structure.py docs/SPEC.md",
+    "python x=y .claude/skills/spec-interview/scripts/"
+    "check_spec_structure.py docs/SPEC.md",
 ]
 
 # 設計書 docs/designs/KLK-010.md §3-9 の書き込みベクタ棚卸し表と、実装の
@@ -579,6 +591,106 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertDeny(
             "python3 .claude/skills/spec-interview/scripts/"
             "check_spec_structure.py docs/SPEC.md > docs/SPEC.md")
+
+    # KLK-013: is_readonly_script_call() の許可経路偽装（先頭コマンドより
+    # 後ろの NAME=VALUE 語を位置によらずスキップしていたことが原因）。
+
+    def test_disguised_env_assignment_after_interpreter_deny(self):
+        # チケット再現手順そのもの
+        self.assertDeny(
+            "python3 x=y .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_multiple_env_assignments_after_interpreter_deny(self):
+        # 代入語風の語が2連続
+        self.assertDeny(
+            "python3 x=y z=w .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_env_assignment_with_legit_prefix_deny(self):
+        # 正規の FOO=bar 前置きと偽装の組合せ
+        self.assertDeny(
+            "FOO=bar python3 x=y .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_env_assignment_python_alias_deny(self):
+        # python エイリアスでも同様に偽装できてはならない
+        self.assertDeny(
+            "python x=y .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_readonly_script_with_env_prefix_allow(self):
+        # 正規の許可経路（環境変数前置き付き）は壊れない
+        self.assertAllow(
+            "FOO=bar python3 .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    # KLK-013 tester能動検証: 上記の書き換え（head_args()の最初の語だけを見る）は
+    # is_assignment_word() によるフィルタを head_args()[0] 自体には適用しない。
+    # このため「NAME=」を空白なしで READONLY_SCRIPTS の実パスへ直接連結した語」は、
+    # 代入語としてスキップされず、かつ os.path.normpath(...).endswith(READONLY_SCRIPTS)
+    # が単純な文字列サフィックス一致であるために誤って一致してしまい、allowになる
+    # （実際に python3 が開こうとするファイルは「x=.claude/.../check_spec_structure.py」
+    # という別名であり、本物の READONLY_SCRIPTS ではない＝本チケットの脅威モデルと同型）。
+    # merge-base（2963be8）の旧実装ではこの語が is_assignment_word() でスキップされ、
+    # 後続に実スクリプト語が無いため deny だった（旧=deny・新=allow の回帰。AC3違反）。
+    # 検出器: is_readonly_script_call()（本チケットの修正対象そのもの）。
+    def test_disguised_env_assignment_glued_to_readonly_script_deny(self):
+        # 空白を除いた「x=<READONLY_SCRIPT>」1語。旧実装は is_assignment_word() で
+        # この1語ごとスキップし後続に一致する語が無いため deny だったが、新実装は
+        # head_args()[0] をそのまま endswith(READONLY_SCRIPTS) 判定するため、
+        # 語全体の末尾が READONLY_SCRIPTS と文字列一致してしまい allow に回帰する。
+        self.assertDeny(
+            "python3 x=.claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_env_assignment_glued_alt_name_deny(self):
+        # 変数名・区切りを変えた同型（y=z...）。単発の偶然ではないことの裏取り。
+        self.assertDeny(
+            "python3 y=z.claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_three_env_assignments_after_interpreter_deny(self):
+        # 代入語風の語が3連続（implementerの2連続テストの境界を1段先へ）。
+        # 新実装は head_args()[0] のみを見るため N の数に関わらずdenyのはずだが、
+        # 将来 head_args() 自体が変わった際の回帰検知として固定する。
+        self.assertDeny(
+            "python3 a=1 b=2 c=3 .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_env_assignment_then_flag_deny(self):
+        # 代入語風の語の直後にさらにフラグが来る形。head_args()[0] が代入語風でも
+        # 単に一致しない語として deny されることの裏取り（-c 等の別経路と合成されても
+        # 壊れないことの確認）。
+        self.assertDeny(
+            "python3 x=y -u .claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    # KLK-013 差し戻し後の再検証で判明: os.path.normpath(first).endswith(
+    # READONLY_SCRIPTS) は「代入語の glue」に限らず、READONLY_SCRIPTS の要素と
+    # 文字列末尾が一致しさえすれば任意の前置ディレクトリを許してしまう、より
+    # 広い偽装クラスを持っていた（境界が "/" で揃うため部分一致として成立する）。
+    # 攻撃者が cwd から到達可能などこかに「.claude/skills/spec-interview/scripts/
+    # check_spec_structure.py」という同じ相対パスの入れ子ディレクトリを用意できれば
+    # （例: 書き込み可能などこかに `evil_dir/.claude/skills/spec-interview/scripts/
+    # check_spec_structure.py` という偽物を配置）、endswith 一致によりそれが本物の
+    # READONLY_SCRIPTS であるかのように誤認され allow になっていた（旧=allow）。
+    # os.path.normpath(first) in READONLY_SCRIPTS への完全一致化（367cecd）により、
+    # これらは一律 deny に転じる（旧=allow→新=deny・安全側）。これは本チケット
+    # タイトル「許可経路偽装による任意コード実行」と同型の別インスタンスであり、
+    # 完全一致化がこのクラス全体を閉じたことを固定するための回帰ガード。
+    def test_disguised_directory_prefix_relative_deny(self):
+        # 相対パスの前に無関係なディレクトリ1段を付けただけの形。
+        # 旧 endswith 実装では "/" 境界が揃うため誤って一致し allow だった。
+        self.assertDeny(
+            "python3 a/.claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_directory_prefix_absolute_deny(self):
+        # 絶対パスの前置き版。同じ境界一致の問題が絶対パスでも成立していた。
+        self.assertDeny(
+            "python3 /tmp/evil/.claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
 
     # --- fail-open ---
 
