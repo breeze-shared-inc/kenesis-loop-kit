@@ -666,6 +666,32 @@ class TestGuardBashWrites(unittest.TestCase):
             "python3 x=y -u .claude/skills/spec-interview/scripts/"
             "check_spec_structure.py docs/SPEC.md")
 
+    # KLK-013 差し戻し後の再検証で判明: os.path.normpath(first).endswith(
+    # READONLY_SCRIPTS) は「代入語の glue」に限らず、READONLY_SCRIPTS の要素と
+    # 文字列末尾が一致しさえすれば任意の前置ディレクトリを許してしまう、より
+    # 広い偽装クラスを持っていた（境界が "/" で揃うため部分一致として成立する）。
+    # 攻撃者が cwd から到達可能などこかに「.claude/skills/spec-interview/scripts/
+    # check_spec_structure.py」という同じ相対パスの入れ子ディレクトリを用意できれば
+    # （例: 書き込み可能などこかに `evil_dir/.claude/skills/spec-interview/scripts/
+    # check_spec_structure.py` という偽物を配置）、endswith 一致によりそれが本物の
+    # READONLY_SCRIPTS であるかのように誤認され allow になっていた（旧=allow）。
+    # os.path.normpath(first) in READONLY_SCRIPTS への完全一致化（367cecd）により、
+    # これらは一律 deny に転じる（旧=allow→新=deny・安全側）。これは本チケット
+    # タイトル「許可経路偽装による任意コード実行」と同型の別インスタンスであり、
+    # 完全一致化がこのクラス全体を閉じたことを固定するための回帰ガード。
+    def test_disguised_directory_prefix_relative_deny(self):
+        # 相対パスの前に無関係なディレクトリ1段を付けただけの形。
+        # 旧 endswith 実装では "/" 境界が揃うため誤って一致し allow だった。
+        self.assertDeny(
+            "python3 a/.claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
+    def test_disguised_directory_prefix_absolute_deny(self):
+        # 絶対パスの前置き版。同じ境界一致の問題が絶対パスでも成立していた。
+        self.assertDeny(
+            "python3 /tmp/evil/.claude/skills/spec-interview/scripts/"
+            "check_spec_structure.py docs/SPEC.md")
+
     # --- fail-open ---
 
     def test_non_bash_tool_allow(self):
