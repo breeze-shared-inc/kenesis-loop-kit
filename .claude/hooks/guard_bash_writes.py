@@ -1119,6 +1119,20 @@ def is_readonly_script_call(words):
     の脆弱性の原因だった（`python3 x=y <READONLY_SCRIPT> ...` は実際には
     `x=y` というファイルを実行するのに、`x=y` を読み飛ばして
     `<READONLY_SCRIPT>` を見てしまい allow になっていた）。
+
+    候補語の一致判定は `os.path.normpath` 後に READONLY_SCRIPTS の要素と
+    **完全一致**することを要求する（`str.endswith` ではない）。`endswith` は
+    パスの区切り境界（直前が `/` か文字列の先頭か）を見ない単純な文字列
+    サフィックス一致であるため、`NAME=` を空白なしで READONLY_SCRIPTS の
+    実パスへ直接連結しただけの1語（`x=.claude/skills/spec-interview/scripts/
+    check_spec_structure.py`）でも「末尾一致」してしまい、実際に python3 が
+    実行するのは `x=...` という別名のファイルであるにもかかわらず正規呼び出し
+    と誤認して allow になっていた（tester差し戻しで発見。本チケットが解消
+    しようとした脅威モデル＝許可経路偽装と同型の新規の穴だった）。完全一致に
+    することでこの境界の曖昧さを無くす。正規の許可経路
+    （`python3 <READONLY_SCRIPT> ...`・`FOO=bar python3 <READONLY_SCRIPT> ...`）
+    は `os.path.normpath` 後の文字列が READONLY_SCRIPTS の要素とそのまま
+    一致するため引き続き allow のままである。
     """
     args = head_args(words)
     if not args:
@@ -1126,7 +1140,7 @@ def is_readonly_script_call(words):
     first = args[0]
     if first.startswith("-"):
         return False
-    return os.path.normpath(first).endswith(READONLY_SCRIPTS)
+    return os.path.normpath(first) in READONLY_SCRIPTS
 
 
 def cwd_is_guarded(cwd):
