@@ -14,6 +14,14 @@
 （baseline 659件 + 新規9件。INVENTORY_CASES 92件・LEGACY_DENY_COMMANDS 130件を
 含む。既存226件は235件に増加）。
 
+**差し戻し対応（reviewer指摘・RecursionError修正。§7参照）:**
+`_brace_combination_count`／`expand_braces` が非入れ子で隣接する
+ブレース群の連続に対し Python コールスタックを消費し続け
+`RecursionError`（main() の広域 except で allow へフェイルオープン）を
+起こす欠陥を、事前チェック＋try/exceptの2段防御で修正した。修正後
+`python3 -m unittest discover -s tests -v` は676件全件パス（差し戻し前
+672件 + 新規回帰テスト4件）。
+
 ## 2. Files Changed（詳細）
 
 - `.claude/hooks/guard_bash_writes.py`（Phase1）
@@ -112,3 +120,89 @@ guarded_paths_after_shell_expansion自体がSPEC.md側のglobを正しく検出�
   フェーズでの追加を推奨）。
 - README.mdは着手時点でgit status上UU表示だったが、競合マーカーは無く
   Editツールでの編集・コミットに問題は無かった（設計書§4-3の懸念どおり）。
+
+## 7. 差し戻し対応（reviewer Critical Issue・RecursionError修正）
+
+### 7-1. 問題
+
+`_brace_combination_count`（および`expand_braces`）は、ネスト（body）方向の
+再帰でのみ `depth` 引数を進め、直積（suffix）方向の再帰では進めない
+（`MAX_BRACE_DEPTH` は「ネストの深さ」であり「隣接するブレース群の個数」
+ではないため）。したがって非入れ子で隣接するブレース群が大量に連続する
+入力（`"a" + "{x,y}" * 2000 + "b"`）は `MAX_BRACE_DEPTH` の早期リターンに
+到達せず、隣接数に比例した Python コールスタックを消費し続け
+`RecursionError` になる（実測: 隣接997個・`sys.getrecursionlimit()=1000`）。
+この `RecursionError` は `main()` の広域 `except Exception: allow()` に
+捕捉され、deny 方向ではなく allow 方向へフェイルオープンする。同一コマンド
+文字列中に大量の隣接ブレースを含めるだけで、既存の明確な deny 対象
+（例: `rm tickets/active/APP-001.md`）ごと allow になりうる欠陥だった。
+
+### 7-2. 修正内容
+
+`.claude/hooks/guard_bash_writes.py` の `guarded_paths_after_shell_expansion`
+に2段の防御を追加した（設計の大枠変更なし・実装レベルの修正）。
+
+1. 新規定数 `MAX_BRACE_CHAR_COUNT = 50`（`{` 出現数の軽量な事前上限）を
+   `MAX_BRACE_COMBINATIONS` の直後に追加。候補中の `{` 出現数がこれを
+   超える場合、`_brace_combination_count`／`expand_braces` を一切呼ばずに
+   既存の安全側フォールバック（候補全体を無条件に「保護対象パスの候補」と
+   みなす）へ倒す（定数時間の判定で重い再帰への入口自体を塞ぐ）。
+2. 防御第2層として、`_brace_combination_count(candidate)` と
+   `expand_braces(candidate)` の呼び出しを個別に `try/except RecursionError`
+   で囲み、例外発生時も同じ安全側フォールバックへ倒す（①をすり抜けた場合
+   のバックストップ）。
+
+いずれも既存の `MAX_BRACE_COMBINATIONS` 超過時と同じ deny 方向の分岐へ
+合流するため新しい判定パスは増えない。`_brace_combination_count`・
+`expand_braces`・`guarded_paths_after_shell_expansion` の各docstringに
+今回の欠陥・修正・安全性主張を追記した（モジュールの既存ドキュメント文化
+（P8型の安全性主張・「破れる形」記載）に合わせた）。
+
+### 7-3. 対象外にした2件
+
+reviewerが「ブロッカーではない」と明記し、かつarchitectの職務範囲である
+以下2件は今回のコミットに含めていない（委譲プロンプトの指示どおり）。
+
+- 設計書AC2の`cat docs/SPEC*.md`deny例示（実装のallowが正しく設計書の
+  記述誤りと判断済み。§5に既存の申し送りあり）
+- 設計書AC4のN1〜N4閉列挙とMAX_BRACE_*フォールバックの文言不整合
+
+### 7-4. 追加テスト（tests/test_guard_bash_writes.py）
+
+- `test_klk018_adjacent_braces_regression_n1000_denies_conservatively`:
+  隣接1000個（実測閾値997をまたぐ規模）。`rm`と組み合わせてdeny
+- `test_klk018_adjacent_braces_regression_n1500_denies_conservatively`:
+  隣接1500個（申し送りの上限規模）でも同様にdeny
+- `test_klk018_adjacent_braces_regression_allow_symmetry`: 同じ隣接1500個
+  でも読み取り専用head（cat）・tickets/を含まない場合はallowのまま
+  （deny側との対照）
+- `test_klk018_adjacent_braces_regression_does_not_mask_existing_deny`:
+  reviewer指摘の核心シナリオ。既存の明確なdeny対象
+  （`rm tickets/active/APP-001.md`）と隣接1200個のブレースを同一コマンド
+  文字列中に含めてもdenyのままであることを固定
+
+いずれもサブプロセス経由（`tests/_util.run_script`）で実際のhookスクリプト
+を起動する既存の`assertAllow`/`assertDeny`ヘルパを使用しており、修正前は
+`RecursionError`が`main()`内で握りつぶされてstdoutが空になり
+（`assertDeny`が失敗する形で）検出できる構成になっている。
+
+### 7-5. 実機確認
+
+`python3 .claude/hooks/guard_bash_writes.py` へ`"a" + "{x,y}"*2000 + "b"`を
+含む`rm`コマンドのペイロードを直接投入し、修正前は`RecursionError`発生・
+修正後は約33msでdeny判定が返ることを確認した。`_brace_combination_count`を
+直接呼び出す形（事前チェックを経由しない形）は関数自体が非有界のままの
+ため引き続き`RecursionError`を送出する（設計上想定どおり。呼び出し元
+`guarded_paths_after_shell_expansion`だけが保護されていればよい契約）。
+
+### 7-6. Remaining Risks（差し戻し対応分）
+
+- `MAX_BRACE_CHAR_COUNT=50`は既存の固定テスト（隣接最大6個）を大きく
+  上回り、RecursionErrorの実測閾値（隣接997個）を大きく下回る値として
+  選定したが、閾値そのものの妥当性検証（誤deny予算への影響測定）は
+  行っていない。将来的に隣接ブレースを50個超使う正当なユースケースが
+  出た場合は安全側フォールバックに倒れるだけ（allowへの後退ではない）。
+- `_brace_combination_count`・`expand_braces` 自体の非有界な再帰構造は
+  温存した（呼び出し元での防御のみ）。関数単体を直接呼ぶ新しい呼び出し
+  箇所を将来追加する場合は、本チケットの防御パターン（事前チェック＋
+  try/except）を踏襲する必要がある。

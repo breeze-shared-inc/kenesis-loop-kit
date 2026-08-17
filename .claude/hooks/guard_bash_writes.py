@@ -247,6 +247,28 @@ bash と一致させる正規化（L0）を置く。
     使った場合（OR ではなく置換にした場合）。向きは常に allow 方向（危険）。
     検出器は `tests/test_guard_bash_writes.py` の KLK-018 回帰ケースと誤deny
     予算の固定 allow ケース群（`docs/designs/KLK-018.md` §9）。
+    **KLK-018 差し戻し（reviewer指摘・隣接ブレースの RecursionError）:**
+    `_brace_combination_count`／`expand_braces` は入れ子（body）方向の再帰
+    でのみ `depth` を進め、直積（suffix）方向の再帰では `depth` を進めない
+    （MAX_BRACE_DEPTH は「ネストの深さ」であり「隣接するブレース群の個数」
+    ではないため）。したがって非入れ子で隣接するブレース群が大量に連続する
+    入力（`"a" + "{x,y}" * 2000 + "b"`）は MAX_BRACE_DEPTH の早期リターンに
+    到達せず、隣接数に比例した Python コールスタックを消費し続け
+    `RecursionError` になる（実測: 隣接997個・`sys.getrecursionlimit()=1000`）。
+    この `RecursionError` を `guard_bash_writes.py` 内で捕捉しない場合、
+    `main()` の広域 `except Exception: allow()` が deny 方向ではなく allow
+    方向へフェイルオープンし、同一コマンド文字列中の既存の明確な deny 対象
+    （例: `rm tickets/active/APP-001.md`）ごと allow になる（P8「曖昧な位置は
+    安全側=deny」に反する）。対策は2段: ① `guarded_paths_after_shell_expansion`
+    が候補中の `{` 出現数を数える軽量な事前チェック（`MAX_BRACE_CHAR_COUNT`）
+    で重い再帰へ入る前にフォールバックへ倒す ② ①をすり抜けた場合の防御
+    第2層として `_brace_combination_count`／`expand_braces` の呼び出しを
+    `try/except RecursionError` で囲み、例外発生時も同じ安全側フォールバック
+    （候補全体を無条件に「保護対象パスの候補」とみなす）へ倒す。**両者とも
+    MAX_BRACE_COMBINATIONS 超過時の既存フォールバックと同じ deny 方向の分岐へ
+    合流するため、新しい判定パスを増やさない。** 検出器は
+    `tests/test_guard_bash_writes.py` の
+    `test_klk018_adjacent_braces_recursion_regression_*`。
   - **`#` コメントの本文は除去しない**（L0 参照）。したがってコメント内の
     `> path`・`rm` 等が証拠として拾われ誤denyになりうる（**旧版も同じ挙動
     のため回帰ではない**）。また、コメント内の未閉じクォート（`#'` 等）が
@@ -509,6 +531,13 @@ PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/]+")
 SHELL_EXPAND_PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/{},*?\[\]]+")
 MAX_BRACE_DEPTH = 4           # MAX_SUBST_DEPTH(=3)に倣うネスト深さの上限
 MAX_BRACE_COMBINATIONS = 512  # 直積展開の総数の上限（コスト爆発の防止）
+# 隣接（非入れ子）ブレース群の個数に対する軽量な事前上限（KLK-018差し戻し・
+# reviewer指摘）。MAX_BRACE_DEPTH は「ネストの深さ」であり「隣接するブレース群の
+# 個数」には効かないため、_brace_combination_count／expand_braces を呼ぶ**前**に
+# 候補中の `{` 出現数だけを数える定数時間の判定で重い再帰への入口を塞ぐ。
+# 既存の固定テスト（隣接最大6個）を大きく上回り、かつ RecursionError の実測
+# 閾値（隣接997個）を大きく下回る値。
+MAX_BRACE_CHAR_COUNT = 50
 GUARDED_DIR_NAMES = ("active", "done")   # tickets/active・tickets/done の成分名
 GUARDED_FILENAME = "SPEC.md"
 GLOB_META_CHARS = frozenset("*?[")
@@ -853,6 +882,16 @@ def _brace_combination_count(text, depth=0):
     超えた場合は無条件に MAX_BRACE_COMBINATIONS を超える値を返し、呼び出し
     元が一律にフォールバックへ倒れるようにする（過大評価は安全側＝deny
     方向にのみ働く。過小評価は絶対に行わないこと＝安全性の前提）。
+
+    既知の限界（KLK-018 差し戻し・reviewer指摘）: 上記のとおり depth は
+    suffix（直積）方向の再帰では進まないため、非入れ子で隣接するブレース群が
+    大量に連続する入力（`"a" + "{x,y}" * 2000 + "b"`）は MAX_BRACE_DEPTH の
+    早期リターンに到達せず、隣接数に比例した Python コールスタックを消費し
+    続けて `RecursionError` になりうる（実測: 隣接997個）。この関数自体は
+    非有界のままであり、呼び出し元 `guarded_paths_after_shell_expansion` が
+    ①候補中の `{` 出現数の事前チェック（`MAX_BRACE_CHAR_COUNT`）と
+    ②try/except RecursionError の2段で安全側へ倒す（同関数の docstring
+    「RecursionError 安全性」参照）。
     """
     if depth > MAX_BRACE_DEPTH:
         return MAX_BRACE_COMBINATIONS + 1
@@ -901,6 +940,17 @@ def expand_braces(text, depth=0):
     契約になっている。呼び出し元（guarded_paths_after_shell_expansion）が
     `_brace_combination_count` で事前に見積もり、上限を超える入力はこの
     関数を呼ばずにフォールバック（候補全体を無条件に一致とみなす）する。
+
+    既知の限界（KLK-018 差し戻し・reviewer指摘）: `_brace_combination_count`
+    と同型の理由（suffix 方向の再帰で depth が進まない）により、非入れ子で
+    隣接するブレース群が大量に連続する入力は本関数自体も `RecursionError`
+    になりうる（`_brace_combination_count` が見積もりを誤って通過させた場合、
+    またはそれ自体が RecursionError になった場合はこの関数へ到達する前に
+    フォールバックするため通常は到達しない）。呼び出し元が try/except
+    RecursionError で本関数の呼び出しを囲み、防御第2層として同じ安全側
+    フォールバックへ倒す（`_brace_combination_count` の docstring「既知の
+    限界」・`guarded_paths_after_shell_expansion` の docstring
+    「RecursionError 安全性」参照）。
     """
     open_pos = text.find("{")
     if open_pos < 0:
@@ -983,16 +1033,52 @@ def guarded_paths_after_shell_expansion(text):
       - 向き: 誤りの向きは常に allow 方向（危険）。
       - 検出器: tests/test_guard_bash_writes.py の KLK-018 回帰ケースと
         誤deny予算の固定 allow ケース群（docs/designs/KLK-018.md §9）。
+
+    RecursionError 安全性（KLK-018 差し戻し・reviewer指摘）:
+      `_brace_combination_count`／`expand_braces` は非入れ子で隣接する
+      ブレース群が大量に連続すると Python コールスタックを隣接数に比例して
+      消費し、`RecursionError` になりうる（モジュール docstring「既知の
+      限界」の該当パラグラフを参照）。本関数はこれを2段で防ぐ:
+        ① 候補中の `{` 出現数が `MAX_BRACE_CHAR_COUNT` を超える場合、
+           重い再帰へ入る前に安全側フォールバックへ倒す（定数時間の事前
+           チェック）。
+        ② ①をすり抜けた場合の防御第2層として、`_brace_combination_count`
+           ／`expand_braces` の呼び出しを try/except RecursionError で囲み、
+           例外発生時も同じ安全側フォールバックへ倒す。ここで捕捉しないと
+           main() の広域 except Exception: allow() が deny 方向ではなく
+           allow 方向へフェイルオープンしてしまう。
+      いずれも MAX_BRACE_COMBINATIONS 超過時と同じ「候補全体を無条件に
+      保護対象パスの候補とみなす」分岐へ合流するため、新しい判定パスは
+      増えない。
     """
     found = []
     for candidate in SHELL_EXPAND_PATHISH_RE.findall(text):
-        if _brace_combination_count(candidate) > MAX_BRACE_COMBINATIONS:
+        if candidate.count("{") > MAX_BRACE_CHAR_COUNT:
+            # 事前チェック（①）。隣接ブレース数がここを超える入力は
+            # _brace_combination_count／expand_braces を一切呼ばない。
+            found.append(candidate)
+            continue
+        try:
+            combination_count = _brace_combination_count(candidate)
+        except RecursionError:
+            # 防御第2層（②）。事前チェックをすり抜けた場合でも allow 方向へ
+            # フェイルオープンさせない。
+            found.append(candidate)
+            continue
+        if combination_count > MAX_BRACE_COMBINATIONS:
             # 曖昧な位置（コスト爆発の恐れ）では除去しない（P8）。候補全体を
             # 無条件に「保護対象パスの候補」として扱い、_is_guarded_path を
             # 経由せず直接一致とみなす
             found.append(candidate)
             continue
-        for expanded in expand_braces(candidate):
+        try:
+            expansions = expand_braces(candidate)
+        except RecursionError:
+            # 防御第2層（②）。_brace_combination_count が見積もりを誤って
+            # 通過させた場合でも allow 方向へフェイルオープンさせない。
+            found.append(candidate)
+            continue
+        for expanded in expansions:
             found.extend(_guarded_paths_from_expanded(expanded))
     return found
 

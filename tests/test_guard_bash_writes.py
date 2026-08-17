@@ -2881,6 +2881,52 @@ class TestGuardBashWrites(unittest.TestCase):
         # 扱われ、非ホワイトリストhead（rm）と組み合わせると deny になる
         self.assertDeny("rm a{1,2,3}{1,2,3}{1,2,3}{1,2,3}{1,2,3}{1,2,3}b")
 
+    # --- KLK-018 差し戻し: 隣接ブレースの RecursionError 回帰（reviewer指摘）
+    #
+    # `_brace_combination_count`／`expand_braces` は非入れ子で隣接する
+    # ブレース群が大量に連続すると depth が進まないため、隣接数に比例した
+    # Python コールスタックを消費し RecursionError になっていた（実測:
+    # 隣接997個・sys.getrecursionlimit()=1000）。この RecursionError は
+    # main() の広域 except Exception: allow() に捕捉され、deny 方向ではなく
+    # allow 方向へフェイルオープンしていた（設計書§4-1 P8「曖昧な位置は
+    # 安全側=deny」に反する）。修正後は事前チェック（MAX_BRACE_CHAR_COUNT）
+    # と try/except RecursionError の2段で安全側フォールバックへ倒す。
+    # 以下は隣接900〜1500個規模で RecursionError が発生しないこと・deny に
+    # 倒れることを固定する。
+
+    def test_klk018_adjacent_braces_regression_n1000_denies_conservatively(self):
+        # 隣接1000個（実測の閾値997をまたぐ規模）。tickets/ を一切含まない
+        # 候補でもフォールバックにより「一致し得る」ものとして扱われ、
+        # 非ホワイトリストhead（rm）と組み合わせると deny になる。修正前は
+        # RecursionError が main() の広域 except で allow に化けていた
+        candidate = "a" + "{x,y}" * 1000 + "b"
+        self.assertDeny("rm " + candidate)
+
+    def test_klk018_adjacent_braces_regression_n1500_denies_conservatively(self):
+        # 隣接1500個（申し送りの上限規模）でも同様に RecursionError を起こさず
+        # deny に倒れることを固定する
+        candidate = "a" + "{x,y}" * 1500 + "b"
+        self.assertDeny("rm " + candidate)
+
+    def test_klk018_adjacent_braces_regression_allow_symmetry(self):
+        # 同じ隣接1500個の候補でも、先頭コマンドが読み取り専用（cat）で
+        # tickets/ を一切含まない場合は従来どおり allow のまま（フォール
+        # バックは「保護対象パスの候補とみなす」だけであり、書き込み判定自体
+        # を変えないことを確認する。deny 側の
+        # test_klk018_adjacent_braces_regression_n1500_denies_conservatively
+        # との対照ケース）
+        candidate = "a" + "{x,y}" * 1500 + "b"
+        self.assertAllow("cat " + candidate)
+
+    def test_klk018_adjacent_braces_regression_does_not_mask_existing_deny(self):
+        # reviewer指摘の核心シナリオ: 既存の明確な deny 対象
+        # （tickets/active/APP-001.md への rm）と同一コマンド文字列中に
+        # 大量の隣接ブレースを含めても、RecursionError 経由で丸ごと allow に
+        # 転じてはならない（誤りの向きは常に allow=危険な方向という指摘への
+        # 固定）
+        candidate = "a" + "{x,y}" * 1200 + "b"
+        self.assertDeny("rm tickets/active/APP-001.md " + candidate)
+
 
 if __name__ == "__main__":
     unittest.main()
