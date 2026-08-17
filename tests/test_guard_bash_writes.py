@@ -2570,6 +2570,58 @@ class TestGuardBashWrites(unittest.TestCase):
         # 固定）
         self.assertAllow("ls file # via $(date) #'")
 
+    # --- KLK-029: 単体境界（設計書§9「テスト観点」・純粋関数・モック不要）---
+    # INVENTORY_CASES は find_violation() 経由の end-to-end 固定であり、
+    # unescape_program_backslashes / _is_guarded_path_component 自体の
+    # 挙動（1文字単位の畳み込み・basename 完全一致との差分）は直接検証して
+    # いなかった。tester round1 でこのギャップを検出し、下記3形を追加する
+    # （test_docs_reports_path_not_mentioned_as_guarded 等、既存の
+    # guard.<関数> 直接呼び出しスタイルに合わせる）。
+
+    def test_klk029_unescape_program_backslashes_folds_one_char_at_a_time(
+            self):
+        # \X -> X を1文字単位で畳み込む（デリミタが / であるかに関わらず、
+        # バックスラッシュ直後の1文字を一様に畳み込む。§4-1）
+        escaped_slash = "docs" + chr(92) + "/" + "SPEC" + "." + "md"
+        self.assertEqual(
+            guard.unescape_program_backslashes(escaped_slash),
+            "docs" + "/" + "SPEC" + "." + "md")
+        # 複数箇所・スラッシュ以外の任意文字でも同様に1文字ずつ畳み込む
+        arbitrary = "a" + chr(92) + "q" + "b" + chr(92) + "z" + "c"
+        self.assertEqual(
+            guard.unescape_program_backslashes(arbitrary), "aqbzc")
+        # バックスラッシュを含まない入力はそのまま（早期リターン）
+        self.assertEqual(
+            guard.unescape_program_backslashes("no-backslash-here"),
+            "no-backslash-here")
+
+    def test_klk029_unescape_program_backslashes_folds_escaped_backslash_itself(
+            self):
+        # `\\`（エスケープされたバックスラッシュ自身）は1文字の `\` へ畳み込む
+        two_backslashes = chr(92) * 2
+        self.assertEqual(
+            guard.unescape_program_backslashes(two_backslashes), chr(92))
+        # 連続する2組（4文字）は左から非重複に畳み込まれ2文字の `\` になる
+        four_backslashes = chr(92) * 4
+        self.assertEqual(
+            guard.unescape_program_backslashes(four_backslashes),
+            chr(92) * 2)
+
+    def test_klk029_is_guarded_path_component_catches_component_fusion(self):
+        # _is_guarded_path は basename **完全一致**のため、sed の /e フラグが
+        # 融合した候補 "docs/SPEC.md/e"（basename="e"）を拾えない。
+        # _is_guarded_path_component は `/` 区切り成分のいずれかへの一致で
+        # 判定するため、この融合形を拾えることを固定する（§3 設計初期案の
+        # 誤り訂正の核心・_is_guarded_path との差分そのもの）
+        fused = "docs" + "/" + "SPEC" + "." + "md" + "/e"
+        self.assertTrue(guard._is_guarded_path_component(fused))
+        self.assertFalse(guard._is_guarded_path(fused))
+        # tickets/active・tickets/done は元々部分文字列判定のため、融合が
+        # あっても両関数とも一致する（変更していないことの対照）
+        fused_tickets = "tickets" + "/" + "active" + "/APP-001.md"
+        self.assertTrue(guard._is_guarded_path_component(fused_tickets))
+        self.assertTrue(guard._is_guarded_path(fused_tickets))
+
 
 if __name__ == "__main__":
     unittest.main()
