@@ -109,6 +109,21 @@ class TestClassify(unittest.TestCase):
     def test_non_id_string_invalid_format(self):
         self.assertEqual(mod.classify("abc"), (None, "invalid_format"))
 
+    def test_lowercase_prefix_invalid_format(self):
+        # 桁数は正しくてもprefixが小文字だと現状の実装ではsupported扱い
+        # にならない（re.fullmatchは大文字化前のid_全体と照合するため）。
+        # この挙動を固定するリグレッションテスト。
+        self.assertEqual(mod.classify("req-001"), ("REQ", "invalid_format"))
+
+    def test_mixed_case_prefix_invalid_format(self):
+        self.assertEqual(mod.classify("Req-001"), ("REQ", "invalid_format"))
+
+    def test_id_with_leading_whitespace_invalid_format(self):
+        self.assertEqual(mod.classify(" REQ-001"), (None, "invalid_format"))
+
+    def test_id_with_trailing_whitespace_invalid_format(self):
+        self.assertEqual(mod.classify("REQ-001 "), (None, "invalid_format"))
+
 
 class TestFindId(unittest.TestCase):
     def test_req_must_extracted(self):
@@ -212,6 +227,15 @@ class TestCli(unittest.TestCase):
             self.assertEqual(proc.returncode, 0)
             self.assertIn("対応プレフィックス外", proc.stdout)
             self.assertIn("ID形式として認識できません", proc.stdout)
+
+    def test_cli_empty_spec_file_no_crash_exit_zero(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            empty = os.path.join(d, "empty.md")
+            open(empty, "w", encoding="utf-8").close()
+            proc = self.run_cli(empty, "REQ-001")
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn("該当なし", proc.stdout)
 
 
 if __name__ == "__main__":
