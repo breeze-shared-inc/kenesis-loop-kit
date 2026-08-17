@@ -121,6 +121,13 @@ def format_row(row):
                         row["tti"], row["rti"], row["rtv"], row["updated"])
 
 
+def format_target(active_dir):
+    """対象ディレクトリの絶対パスを1行で表す(H1: cwd依存の無言0件対策の可視化)。
+    root は main() で Path(root).resolve() 済み(または既定値が絶対)のため、
+    active_dir は常に絶対パスであることが呼び出し前提。"""
+    return "対象: %s" % active_dir
+
+
 def main(root=None):
     """root（省略時は Path(__file__).resolve().parents[1]）配下の
     tickets/active/ を一覧表示する。tickets/active/ が存在しなければ
@@ -128,7 +135,7 @@ def main(root=None):
     ヘッダ行・データ行・ERROR行・件数サマリを stdout に出力し 0 を返す
     （ERROR行があっても0のまま。ツール自体はinformationalであり、
     個別チケットの不整合はorchestrator/testerが後続で対処する）。"""
-    root = Path(root) if root is not None else Path(__file__).resolve().parents[1]
+    root = Path(root).resolve() if root is not None else Path(__file__).resolve().parents[1]
     active_dir = root / "tickets" / "active"
     if not active_dir.is_dir():
         sys.stderr.write("エラー: tickets/active/ が見つかりません: %s\n"
@@ -137,6 +144,7 @@ def main(root=None):
 
     rows, errors = collect(active_dir)
 
+    print(format_target(active_dir))
     print(LEGEND)
     print(format_header())
     for row in rows:

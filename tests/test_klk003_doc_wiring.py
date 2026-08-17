@@ -146,6 +146,25 @@ class TestClaudeMdPolicyTable(unittest.TestCase):
         idx_closing = self.section.index("新しいポリシーを追加する際は")
         self.assertLess(idx_row, idx_closing)
 
+    def test_row_is_last_line_of_contiguous_table_block(self):
+        lines = self.section.splitlines()
+        table_indices = [i for i, ln in enumerate(lines) if ln.strip().startswith("|")]
+        target_idx = next(i for i, ln in enumerate(lines)
+                          if "scripts/list_tickets.py" in ln)
+        blocks, current = [], []
+        for idx in table_indices:
+            if current and idx != current[-1] + 1:
+                blocks.append(current)
+                current = []
+            current.append(idx)
+        if current:
+            blocks.append(current)
+        containing_block = next(b for b in blocks if target_idx in b)
+        self.assertEqual(
+            target_idx, containing_block[-1],
+            "追加行が表の最終行になっていない(表途中への誤挿入): "
+            "行index=%d, 表の最終行index=%d" % (target_idx, containing_block[-1]))
+
 
 if __name__ == "__main__":
     unittest.main()

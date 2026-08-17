@@ -615,6 +615,9 @@ class TestGuardBashWrites(unittest.TestCase):
     def test_metrics_aggregate_allow(self):
         self.assertAllow("python3 .claude/metrics/aggregate.py APP-001")
 
+    def test_list_tickets_cli_allow(self):
+        self.assertAllow("python3 scripts/list_tickets.py")
+
     # --- KLK-004: docs/reports/{ID}/ は保護対象外（is_ticket()の境界と同型） ---
 
     def test_docs_reports_path_not_mentioned_as_guarded(self):
