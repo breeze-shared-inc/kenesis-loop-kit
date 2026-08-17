@@ -23,7 +23,7 @@ import _util  # noqa: E402
 
 ORCHESTRATOR_MD = os.path.join(_util.REPO, ".claude", "agents", "orchestrator.md")
 START_LOOP_MD = os.path.join(_util.REPO, ".claude", "commands", "start-loop.md")
-CLAUDE_MD = os.path.join(_util.REPO, "CLAUDE.md")
+POLICY_REGISTRY_MD = os.path.join(_util.REPO, "docs", "policy-registry.md")
 
 CLI_INVOCATION = "python3 scripts/list_tickets.py"
 
@@ -120,10 +120,10 @@ class TestStartLoopChecklistAndProcedure(unittest.TestCase):
 
 
 class TestClaudeMdPolicyTable(unittest.TestCase):
-    """AC5: CLAUDE.md ポリシー管理表への1行追加。"""
+    """AC5: docs/policy-registry.md ポリシー管理表への1行追加（KLK-005でCLAUDE.mdから分離）。"""
 
     def setUp(self):
-        self.section = extract_section(read(CLAUDE_MD), "ポリシー管理の原則")
+        self.section = extract_section(read(POLICY_REGISTRY_MD), "ポリシー一覧")
 
     def test_policy_row_references_list_tickets_script(self):
         self.assertIn("scripts/list_tickets.py", self.section)

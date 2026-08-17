@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _util  # noqa: E402
 
 AGENTS_DIR = os.path.join(_util.REPO, ".claude", "agents")
-CLAUDE_MD = os.path.join(_util.REPO, "CLAUDE.md")
+POLICY_REGISTRY_MD = os.path.join(_util.REPO, "docs", "policy-registry.md")
 REPORTS_README = os.path.join(_util.REPO, "docs", "reports", "README.md")
 
 CAP_PHRASE = "要点5行以内"
@@ -119,10 +119,10 @@ class TestOrchestratorTicketIntegrationRules(unittest.TestCase):
 
 
 class TestClaudeMdPolicyRow(unittest.TestCase):
-    """AC5: CLAUDE.md ポリシー管理表への1行追加（本文セクション新設なし）。"""
+    """AC5: docs/policy-registry.md ポリシー管理表への1行追加（本文セクション新設なし・KLK-005でCLAUDE.mdから分離）。"""
 
     def setUp(self):
-        self.section = extract_section(read(CLAUDE_MD), "ポリシー管理の原則")
+        self.section = extract_section(read(POLICY_REGISTRY_MD), "ポリシー一覧")
 
     def test_policy_row_references_reports_path(self):
         self.assertIn("docs/reports/{ID}/{phase}.md", self.section)

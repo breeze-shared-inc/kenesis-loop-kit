@@ -3,31 +3,13 @@
 このファイルはClaude Codeへの運用ルールを定義します。
 作業開始前に必ずこのファイルを読み込んでください。
 
-本ファイルは全体像のインデックスと、複数ファイルから参照される共通定義（ステータス定義・チケットID採番）を持ちます。個別ポリシーの詳細は「ポリシー管理の原則」の表が示す定義ファイルを正とします。
+本ファイルは全体像のインデックスと、複数ファイルから参照される共通定義（ステータス定義・チケットID採番）を持ちます。個別ポリシーの詳細は `docs/policy-registry.md` の表が示す定義ファイルを正とします。
 
 ---
 
 ## スラッシュコマンド一覧
 
-| コマンド | 用途 | 引数 |
-|---|---|---|
-| `/setup` | プロジェクトの初期セットアップと現在地診断（.gitignoreプリセット・略称確定・前工程への誘導） | なし |
-| `/spec-interview` | 対話形式で要件定義書(docs/SPEC.md)を作成・改訂する | モード（最短/フル・省略可） |
-| `/interrogate-spec` | SPECを敵対的にレビューし、質問リストの対話解決でSPEC改訂・決定ログ化する | spec-path モード（省略可） |
-| `/wireframe-gen` | SPECの画面一覧からワイヤーフレーム(docs/wireframes/)を生成する | SCR-ID/モード（省略可） |
-| `/plan-tickets` | SPECを基に開発をチケットへ分割し、承認を経て一括起票する | spec-path（省略可） |
-| `/start-loop` | ループを開始・再開する | チケットID（省略可） |
-| `/batch-loop` | 外部駆動バッチ（scripts/batch_loop.py・1チケット1セッション）のプリフライト検証と実行コマンドライン案内 | チケットID列（2件以上・実行順） |
-| `/batch-loop-inline` | セッション内バッチ（旧方式復旧・1セッションで複数チケットを連続実行）の事前承認と連続実行 | チケットID列（2件以上・実行順） |
-| `/new-ticket` | チケットを新規作成する | タイトル（必須） |
-| `/improvement-loop` | 改善ループを起動する | チケットID 差し戻し先（省略可） |
-| `/rollback` | 承認後に問題が発覚したチケットをロールバックする | チケットID（必須） コミットハッシュ（省略可） |
-| `/triage` | 長期放置blockedチケットをトリアージする | 日数/チケットID（省略可・省略時14日） |
-| `/archive` | 完了チケットを個人vaultへ移動する | アーカイブ先パス（省略可） |
-| `/metrics` | ループの観測メトリクスを表示する | チケットID/プロジェクト名（省略可・フィルタ） |
-
-- `/spec-interview`・`/interrogate-spec`・`/wireframe-gen` は開発ループの**前工程**（SPEC・ワイヤーフレームの整備）を担うスキル。定義は `.claude/skills/` を参照。
-- ループ本体のコマンド（`/start-loop` 以降）の詳細は `.claude/commands/` を参照してください。
+利用可能なスラッシュコマンドの一覧・引数・使用例は `README.md` の「スラッシュコマンド」節を参照する。前工程（/spec-interview・/interrogate-spec・/wireframe-gen）は `.claude/skills/`、ループ本体（/start-loop以降）は `.claude/commands/` を参照。
 
 ---
 
@@ -81,6 +63,7 @@ investigator → architect → implementer → tester → reviewer
 | `docs/designs/{ID}.md` | architect | チケット単位の設計書。architectが生成し、implementerが参照する |
 | `docs/designs/_TEMPLATE.md` | - | 設計書テンプレート（architectがコピー元に使う） |
 | `docs/reports/{ID}/{phase}.md` | 各エージェント（Write/Edit保持者は自ら、非保持者はorchestratorが代筆） | サブエージェントレポートの詳細外部化。チケット本文には要点5行+ポインタのみを残す |
+| `docs/policy-registry.md` | - | CLAUDE.md「ポリシー管理の原則」から分離したポリシー管理表。個別ポリシーの定義（正）の所在を確認する際に参照する |
 | `docs/security-policy.md` | - | 機密情報の取り扱い規約（全エージェント共通） |
 | `docs/obsidian-setup.md` | - | Obsidianの初期設定ガイド |
 
@@ -149,42 +132,11 @@ git-flow（main / develop / feature / fix / release / hotfix）を採用する�
 
 ## ポリシー管理の原則
 
-CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は下表のファイルが持つ。ポリシーは、それを実行する責任者（エージェント/コマンド/hook）の定義ファイルに必ず記載する。「どこかに書いた」だけでは実行されない。
+CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は `docs/policy-registry.md` の表が示すファイルが持つ。ポリシーは、それを実行する責任者（エージェント/コマンド/hook）の定義ファイルに必ず記載する。「どこかに書いた」だけでは実行されない。
 
 **再肥大化の防止（構造維持の原則）:** 本ファイルが本文として持ってよいのは「全体像のインデックス」と「複数ファイルから参照される共通定義」のみ。新しいポリシー・手続きを追加するときは、本ファイルへ本文セクションを追加せず、次の2手順で行う。
 
 1. 実行責任者となるファイルに正を定義する（手続きは `.claude/commands/` または `.claude/skills/`、エージェントの行動規範は `.claude/agents/*.md`、機械強制は `.claude/hooks/`、人間向け規約は `docs/`）
-2. 下表へ1行追加する（必要なら本文セクションではなく既存セクションへのポインタ1行を足す）
+2. `docs/policy-registry.md` の表へ1行追加する（必要なら本文セクションではなく既存セクションへのポインタ1行を足す）
 
-| ポリシー | 定義（正） | 実行責任者 | 転記先・強制 |
-|---|---|---|---|
-| Autoモード起動時チェック | start-loop.md 起動時チェックリスト | orchestrator / start-loop | orchestrator.md Responsibilities |
-| 14日blockedトリアージ | triage.md | orchestrator / start-loop / /triage | orchestrator.md Responsibilities / start-loop.md 起動時チェックリスト |
-| in_progress上限3件 | orchestrator.md Responsibilities | orchestrator + hook | start-loop.md 起動時チェックリスト / validate_ticket_state.py（着手時ask強制）・_ticket_lib.py IN_PROGRESS_LIMIT |
-| cancelledステータス | 本ファイル ステータス定義 / triage.md | orchestrator | orchestrator.md 委譲テーブル / tickets/_index.md クエリ / _ticket_lib.py VALID_STATUS |
-| リトライ上限（3/2/1） | orchestrator.md リトライカウンタ管理 | orchestrator + hook | _ticket_lib.py RETRY_CAPS（自動強制） |
-| リトライ予算のリセット（人間承認ask） | orchestrator.md リトライ予算のリセット | 人間 + hook | validate_ticket_state.py（減少をask） / record_metrics.py（retry_reset記録） / check_loop_integrity.py（L3エポック照合） |
-| チケット状態の不変条件 | 本ファイル ステータス定義 / _ticket_lib.py | PreToolUse + Stop hook（自動強制） | .claude/hooks/validate_ticket_state.py / check_loop_integrity.py |
-| SPEC.md書き込みの人間承認 | 本ファイル ドキュメント管理ルール | PreToolUse hook（自動強制） | .claude/hooks/guard_spec_writes.py |
-| SPEC構造の機械チェック（テンプレート準拠の受付） | .claude/skills/spec-interview/scripts/check_spec_structure.py（構造の正はSPEC_TEMPLATE.md） | /setup / /interrogate-spec / /spec-interview | setup.md 手順5 診断表 / interrogate-spec SKILL.md Phase 0 構造受付 / spec-interview SKILL.md Step 3・改訂モード手順5 |
-| 前工程の次の一手ルーティング | setup.md 手順5（診断表） | /setup | interrogate-spec SKILL.md セッション終了時（ポインタ転記） / spec-interview SKILL.md Step 4（ハンドオフ） |
-| チケット・SPEC.mdのBash書き換え禁止 | 本ファイル チケット管理ルール | PreToolUse + Stop hook（自動強制）+ 各エージェント | .claude/hooks/guard_bash_writes.py / check_loop_integrity.py（ドリフト検知） / 各agents/*.md Never |
-| done/20件超のアーカイブ提案 | 本ファイル チケット管理ルール / start-loop.md | orchestrator / start-loop | start-loop.md 起動時チェックリスト |
-| チケット書き込みのorchestrator専任 | 本ファイル チケット管理ルール | orchestrator / 各エージェント | orchestrator.md Responsibilities / 各agents/*.md Ticket Integration・Never |
-| Git運用規約（ブランチ・コミット・機密確認） | implementer.md / tester.md Git Rules | implementer / tester | - |
-| worktree分離（implementer以降のコード作業・done時にdevelopへマージし削除・チケットはメインツリー一本化） | docs/worktree-policy.md | orchestrator + implementer / tester / reviewer | orchestrator.md worktreeライフサイクル管理 / implementer.md Git Rules 運用ルール / tester.md・reviewer.md / start-loop.md 起動時チェックリスト / batch_loop.py（--add-dir） / 本ファイル Git運用規約（ポインタ） |
-| ロールバック手順 | rollback.md | /rollback | _ticket_lib.py LEGAL_TRANSITIONS（done→implementation_done） |
-| バッチ連続実行の事前承認 | docs/batch-loop.md（外部駆動）/ docs/batch-loop-inline.md（セッション内） | 人間 + scripts/batch_loop.py（外部駆動・/batch-loopは検証・案内）／ orchestrator（セッション内・/batch-loop-inline） | batch-loop.md 手順・Never・停止条件 / batch-loop-inline.md 手順・Never・停止条件 / orchestrator.md 改善ループテーブル直下の注記（バッチ実行時の代行範囲の明記） |
-| Kitからの切り離し（clone導入時の.git再初期化） | setup.md 手順1 | /setup | setup.md Never（.git削除の明示承認・Kit本体除外） |
-| リポジトリ可視性の.gitignoreプリセット | .gitignore.public / .private + setup.md 手順2 | /setup | - |
-| プロジェクト略称の確定 | 本ファイル チケットID採番 | /setup / new-ticket | setup.md 手順4 / new-ticket.md 手順1 |
-| チケットへのREQ/SCR/IF-ID明記（トレーサビリティ） | SPEC_TEMPLATE.md 冒頭規約 | /plan-tickets / architect | plan-tickets.md 手順5 / designs/_TEMPLATE.md §1コメント |
-| NFR/EHカバレッジのチケット割当 | plan-tickets.md 手順3・4 | /plan-tickets | SPEC_TEMPLATE.md §7・§8コメント |
-| Phase分割の規律（AC非再定義・全ACカバー・粒度ガード） | designs/_TEMPLATE.md §4「実装Phase」コメント | architect | architect.md Ticket Integration・Never / reviewer.md Responsibilities / implementer.md Git Rules |
-| セキュリティ・機密情報の取り扱い | docs/security-policy.md | 各エージェント | implementer.md Git Rules（コミット前の機密確認） / designs/_TEMPLATE.md §4コメント |
-| エージェントのモデル割当（役割別の軽量化・見直しトリガー） | `.claude/agents/*.md`（orchestrator.mdを除く5ファイル）の本文「## Model Assignment」節 + frontmatter `model`（sonnet割当時のみ記述） | architect（設計）+ 人間（承認） | agents/*.md Model Assignment節（tester/investigator=sonnet、architect/reviewer/implementer=inherit維持） |
-| サブエージェントレポートの要約上限・詳細外部化（docs/reports/{ID}/{phase}.md） | docs/designs/KLK-004.md + 各 `.claude/agents/*.md` Required Output Format | 各エージェント + orchestrator（Write/Edit非保持エージェント分の代筆） | 各agents/*.md Required Output Format・Ticket Integration・Git Rules / orchestrator.md Responsibilities・Ticket Integration / docs/reports/README.md |
-| CLAUDE.md＝インデックス＋共通定義の維持 | 本ファイル ポリシー管理の原則（再肥大化の防止） | CLAUDE.mdを編集する人間 / Claude | - |
-| orchestratorのチケット一覧取得（frontmatterスキャンCLI・パス引数を持たない設計） | scripts/list_tickets.py（実装の正はdocs/designs/KLK-003.md） | orchestrator / start-loop | orchestrator.md Ticket Integration / start-loop.md 起動時チェックリスト・ループ実行手順1 / tests/test_list_tickets.py |
-
-新しいポリシーを追加する際は、上記「再肥大化の防止」の2手順に従い、定義ファイルへの反映と本表の更新まで完了させること。
+個別ポリシーの一覧と該当行の追加・更新は `docs/policy-registry.md` を参照して行うこと。
