@@ -306,9 +306,12 @@ LEGACY_DENY_COMMANDS = [
 #
 # **期待値 "allow" の行には3種類があり、混同してはならない**（混同すると
 # 「穴を塞いだつもりで正しい allow を deny へ変える」事故が起きる）:
-#   (a) **意図的に未対応の穴**（INV-SH-07・09・11・INV-SED-05
-#       〔`-f SCRIPT` のみ。INV-SED-06・07 は KLK-015 の SED-7 で対応済み
-#       ＝ "deny" 側へ移動した〕ほか）—
+#   (a) **意図的に未対応の穴**（INV-SH-11〔パラメータ展開・引数側。原理的に
+#       PreToolUse では閉じられないため恒久的に allow のまま維持する。
+#       KLK-016 の事後検出に委ねる〕・INV-SED-05
+#       〔`-f SCRIPT` のみ。INV-SED-06・07 は KLK-015 の SED-7 で、
+#       INV-SH-07・09（ブレース展開・分断glob）は KLK-018 で、それぞれ
+#       対応済み＝ "deny" 側へ移動した〕ほか）—
 #       塞いだ時点で "deny" へ変える（変更は意識的な行為になる）。
 #   (b) **bash と一致した結果としての allow**（INV-SH-15・16・19 ほか）—
 #       bash も後続コマンドを実行しない／触るのは保護対象ではない別名で
@@ -475,12 +478,12 @@ INVENTORY_CASES = (
      'awk $"BEGIN{print}" tickets/active/APP-001.md', "deny"),
     ("INV-SH-06", "行継続（\\+改行）による語の分断（QT-2）",
      "rm tickets/acti\\\nve/APP-001.md", "deny"),
-    ("INV-SH-07", "ブレース展開による分断（**未対応**・別チケット）",
-     "rm tickets/{active,done}/APP-001.md", "allow"),
+    ("INV-SH-07", "ブレース展開による分断（KLK-018で対応済み）",
+     "rm tickets/{active,done}/APP-001.md", "deny"),
     ("INV-SH-08", "glob（保護対象ディレクトリが素で残り証拠になる形）",
      "rm tickets/active/*.md", "deny"),
-    ("INV-SH-09", "glob（パス中に * が入り分断される形・**未対応**）",
-     "rm tickets/acti*e/APP-001.md", "allow"),
+    ("INV-SH-09", "glob（パス中に * が入り分断される形・KLK-018で対応済み）",
+     "rm tickets/acti*e/APP-001.md", "deny"),
     ("INV-SH-10", "チルダ展開（残りのパスが証拠として残る）",
      "rm ~/kit/tickets/active/APP-001.md", "deny"),
     ("INV-SH-11", "パラメータ展開（値は不可視＝構造的限界・**未対応**）",
@@ -493,8 +496,8 @@ INVENTORY_CASES = (
     # 内かどうかというサブケースが分解されていなかったために穴が出た）。
     #
     # **期待値 allow の行には2種類があり、混同してはならない**:
-    #   (a) **意図的に未対応の穴**（INV-SH-07・09・11）— 塞いだ時点で "deny"
-    #       へ変える。
+    #   (a) **意図的に未対応の穴**（INV-SH-11。INV-SH-07・09 は KLK-018 で
+    #       対応済みのため "deny" 側へ移動した）— 塞いだ時点で "deny" へ変える。
     #   (b) **bash と一致した結果としての allow**（INV-SH-15・16・19）—
     #       bash も後続コマンドを実行しない／触るのは保護対象ではない別名で
     #       あるため、**"deny" へ変えたら誤り**（過剰deny＝AC2 違反）。
@@ -2771,6 +2774,76 @@ class TestGuardBashWrites(unittest.TestCase):
         fused_tickets = "tickets" + "/" + "active" + "/APP-001.md"
         self.assertTrue(guard._is_guarded_path_component(fused_tickets))
         self.assertTrue(guard._is_guarded_path(fused_tickets))
+
+    # --- KLK-018: シェル展開（ブレース展開・分断glob）による保護対象パスの
+    # 分断への対応（設計書 docs/designs/KLK-018.md §9 AC1・AC2・AC4）。
+    # INVENTORY_CASES の INV-SH-07・09 も allow → deny へ更新済み（AC6）。
+
+    def test_klk018_brace_expansion_simple_deny(self):
+        # AC1: 単純なブレース展開（investigator実機検証・チケット再現手順1）
+        self.assertDeny("rm tickets/{active,done}/APP-001.md")
+        self.assertDeny("rm docs/{SPEC,OTHER}.md")
+
+    def test_klk018_brace_expansion_direct_product_deny(self):
+        # AC1: 直積（隣接する2つ以上の {...}）。investigator実機検証と同型
+        # （bash: tickets/{acti,don}{ve,e}/... -> active/actie/donve/done）
+        self.assertDeny("rm tickets/{acti,don}{ve,e}/APP-001.md")
+
+    def test_klk018_brace_expansion_nested_deny(self):
+        # AC1: 入れ子形（外側のカンマの1要素がさらに {} を持つ）
+        self.assertDeny("rm tickets/{a,{active,x}}/APP-001.md")
+
+    def test_klk018_brace_expansion_no_comma_stays_literal_allow(self):
+        # AC1 の裏付け: カンマの無い {word} は bash も展開しないため、
+        # 保護対象と無関係なブレースを含む日常コマンドを誤denyしない
+        # （AC4 の固定 allow ケースの1つ）
+        self.assertAllow("ls file{1,2}.txt")
+
+    def test_klk018_fragmented_glob_deny(self):
+        # AC2: 分断 glob（*・?・[...]）。tickets/active 側
+        self.assertDeny("rm tickets/acti*e/APP-001.md")
+        self.assertDeny("rm tickets/activ?/APP-001.md")
+        self.assertDeny("rm tickets/activ[e]/APP-001.md")
+
+    def test_klk018_fragmented_glob_write_target_deny(self):
+        # AC2 (N3): guarded_write_target 経由（sort -o の値がブレース展開・
+        # 分断globで保護対象と判定される形）
+        self.assertDeny("sort -o tickets/acti*e/out.md in.md")
+
+    def test_klk018_fragmented_glob_spec_side_read_allow(self):
+        # AC2 で例示された "cat docs/SPEC*.md"（SPEC.md側）は、guarded_paths_
+        # after_shell_expansion が "docs/SPEC.md" を保護対象として検出する
+        # （guard._guarded_paths_from_expanded で確認済み）が、cat は
+        # ALLOWED_HEADS の中でも追加規則を持たない読み取り専用 head であり、
+        # 既存の "cat tickets/active/APP-001.md"（test_read_commands_allow）
+        # と同じ理由で常に allow のままである（本チケットは head 単位の
+        # 判定を変更しないため、この対称性は変わらない）。設計書 §9 AC2 の
+        # 例示文言は「言及ゲートが検出できること」を指しており、head が
+        # 読み取り専用であるため最終判定は allow のまま——という点を本テストで
+        # 明示的に固定する（deny 化される head 側の同型確認は
+        # test_klk018_erroneous_deny_budget_allow の対照ケースを参照）。
+        self.assertAllow("cat docs/SPEC*.md")
+        # 書き込み系 head（rm）に差し替えると同じ分断globが正しく deny に
+        # なることを対照として固定する
+        self.assertDeny("rm docs/SPEC*.md")
+
+    def test_klk018_degraded_mode_fragmented_glob_deny(self):
+        # AC2: degraded mode（未閉じクォート）でも正常経路と対称に deny する
+        # （英文コメントの "don't" が未閉じシングルクォートを誘発する形。
+        # 既存の INV-SH パターンと同型の誘発）
+        self.assertDeny("rm tickets/acti*e/APP-001.md # don't")
+
+    def test_klk018_erroneous_deny_budget_allow(self):
+        # AC4: 誤deny予算の固定 allow ケース。tickets/ を一切含まない日常の
+        # awk/cut/sort/grep のプログラム・オプション文字列（{}・,・[...] を
+        # 含むが保護対象とは無関係）と、保護対象 cwd 下の読み取り専用 awk
+        # （T-H2f系の再固定）が新たに誤denyにならないことを固定する
+        self.assertAllow('awk \'BEGIN{FS=","}{print $1,$2}\' file')
+        self.assertAllow("cut -f1,2 -d, file")
+        self.assertAllow("sort -k1,2 file")
+        self.assertAllow("grep -E '[0-9]{3}' file")
+        self.assertAllow("cd tickets/active && awk 'NR>1 {print}' in.txt")
+        self.assertAllow("ls file{1,2}.txt")
 
 
 if __name__ == "__main__":
