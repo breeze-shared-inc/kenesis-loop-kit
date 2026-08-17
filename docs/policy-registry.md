@@ -17,6 +17,7 @@ CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は�
 | チケット状態の不変条件 | CLAUDE.md ステータス定義 / _ticket_lib.py | PreToolUse + Stop hook（自動強制） | .claude/hooks/validate_ticket_state.py / check_loop_integrity.py |
 | SPEC.md書き込みの人間承認 | CLAUDE.md ドキュメント管理ルール | PreToolUse hook（自動強制） | .claude/hooks/guard_spec_writes.py |
 | SPEC構造の機械チェック（テンプレート準拠の受付） | .claude/skills/spec-interview/scripts/check_spec_structure.py（構造の正はSPEC_TEMPLATE.md） | /setup / /interrogate-spec / /spec-interview | setup.md 手順5 診断表 / interrogate-spec SKILL.md Phase 0 構造受付 / spec-interview SKILL.md Step 3・改訂モード手順5 |
+| SPECのID指向部分抽出（REQ/SCR/IFの該当セクション優先読み・全文はフォールバック） | .claude/skills/spec-interview/scripts/extract_spec_section.py（実装の正はdocs/designs/KLK-006.md。構造の正はSPEC_TEMPLATE.md） | investigator / architect / reviewer | investigator.md Ticket Integration「On start」/ architect.md Ticket Integration「作業開始時」/ reviewer.md Ticket Integration「作業開始時」/ .claude/hooks/guard_bash_writes.py READONLY_SCRIPTS / tests/test_extract_spec_section.py |
 | 前工程の次の一手ルーティング | setup.md 手順5（診断表） | /setup | interrogate-spec SKILL.md セッション終了時（ポインタ転記） / spec-interview SKILL.md Step 4（ハンドオフ） |
 | チケット・SPEC.mdのBash書き換え禁止 | CLAUDE.md チケット管理ルール | PreToolUse + Stop hook（自動強制）+ 各エージェント | .claude/hooks/guard_bash_writes.py / check_loop_integrity.py（ドリフト検知） / 各agents/*.md Never |
 | done/20件超のアーカイブ提案 | CLAUDE.md チケット管理ルール / start-loop.md | orchestrator / start-loop | start-loop.md 起動時チェックリスト |

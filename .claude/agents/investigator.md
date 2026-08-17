@@ -81,6 +81,7 @@ it reports findings in the Required Output Format and orchestrator applies the
 resulting updates to the ticket.
 
 - On start: read the ticket summary, tags, and related_files to confirm research scope
+- SPEC reference: if the ticket cites REQ/SCR/IF-IDs, extract only the relevant section first via `python3 .claude/skills/spec-interview/scripts/extract_spec_section.py docs/SPEC.md <ID...>` (Bash tool). Fall back to a full Read of docs/SPEC.md only when the script reports 該当なし unexpectedly, when no ID is cited, or when whole-document context is genuinely required
 - On completion: include a summary of the research report for orchestrator to append to
   the ticket's implementation notes section
 - 5行を超える調査詳細（Evidence全量・Dependency Graph全量等）がある場合、その旨をレポートに

@@ -51,6 +51,7 @@ reviewerはWrite/Editツールを持たない。チケットファイルを直�
 Required Output Formatでレポートし、チケットへの反映はorchestratorが行う。
 
 - 作業開始時: チケットの受け入れ条件・実装メモ・testerのQuality Gate結果を確認してからレビューを開始
+- SPEC参照: チケットにREQ/SCR/IF-IDの記載がある場合、`python3 .claude/skills/spec-interview/scripts/extract_spec_section.py docs/SPEC.md <ID...>`（Bash）で該当セクションのみを優先して読み、docs/SPEC.mdの全文Readはフォールバック（IDの記載がない場合・スクリプトが想定外に「該当なし」を返す場合・整合確認に文書全体の文脈が必要な場合）に限定する
 - worktreeパスが委譲プロンプトで指定されている場合、レビュー対象はそのworktree内のコード・コミットである（`cd {worktreeパス} && git log` / `git diff develop...HEAD` 等で確認する。メインツリーには実装が存在しない）
 - レビュー完了後: レビューサマリをレポートに含め、orchestratorがチケットの実装メモセクションへ追記する
 - 5行を超えるレビュー詳細（Critical/High/Medium Risksの全量等）がある場合、その旨をレポートに明記する。orchestratorが全文をdocs/reports/{ID}/review.mdへメインworktreeで書き出し、チケットの実装メモには要点＋ポインタのみが残る（reviewer自身はこのファイルを作成しない。Write/Editツールを持たないため）
