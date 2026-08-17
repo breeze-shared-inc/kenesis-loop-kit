@@ -368,6 +368,21 @@ INVENTORY_CASES = (
      "tickets/active/APP-001.md", "allow"),
     ("INV-AWK-20", "プログラム以外のオペランド中の system(（M12）",
      "awk '{print}' 'system(1).md' tickets/active/APP-001.md", "allow"),
+    # --- KLK-029: awk プログラム本文中のバックスラッシュエスケープによる
+    # 言及ゲート回避（investigation.md 詳細調査ログ3）。§4-3・§4-5 ---
+    ("INV-AWK-21", "system() 引数中のエスケープ（tickets/active型）",
+     "awk 'BEGIN{system(\"rm tickets\\/active\\/APP-001.md\")}' "
+     "unrelated.txt", "deny"),
+    ("INV-AWK-22", "print > のリダイレクト先文字列中のエスケープ",
+     "awk '{print > \"tickets\\/active\\/APP-001.md\"}' unrelated.txt",
+     "deny"),
+    ("INV-AWK-23", "system() 引数中のエスケープ（docs/SPEC.md型・回帰固定）",
+     "awk 'BEGIN{system(\"rm docs\\/SPEC.md\")}' unrelated.txt", "deny"),
+    ("INV-AWK-24", "対照: -v 束縛のエスケープ言及（AW-2は束縛自体を証拠とする）",
+     "awk -v f=\"tickets\\/active\\/APP-001.md\" 'BEGIN{print f}' "
+     "unrelated.txt", "deny"),
+    ("INV-AWK-25", "対照: 保護対象と無関係な \\ 使用（誤denyが起きないことの固定）",
+     "awk 'BEGIN{print \"a\\tb\"}' unrelated.txt", "allow"),
     # --- sed のプログラム内構文（§3-9 ③列。KLK-015 で SED-7
     # （プログラム本文のホワイトリスト）へ反転。正常経路はここで判定し、
     # degraded 経路のみ従来の SED_WRITE_RE ブラックリストを維持する
@@ -425,6 +440,22 @@ INVENTORY_CASES = (
      "sed 's/a/b/i' tickets/active/APP-001.md", "deny"),
     ("INV-SED-26", "日常読み取りの追加固定（GNU拡張アドレス）",
      "sed -n '0~2p' tickets/active/APP-001.md", "allow"),
+    # --- KLK-029: sed プログラム本文中のバックスラッシュエスケープによる
+    # 言及ゲート回避（チケット再現手順・investigation.md 詳細調査ログ2・5）。
+    # §4-2・§4-5 ---
+    ("INV-SED-27", "docs/SPEC.md（スラッシュ1箇所）をs///eの置換文字列内でエスケープ"
+     "（チケット再現手順そのもの）",
+     "sed 's/.*/rm docs\\/SPEC.md/e' unrelated.txt", "deny"),
+    ("INV-SED-28", "tickets/active/*.md（スラッシュ2箇所）を同様にエスケープ",
+     "sed 's/.*/rm tickets\\/active\\/APP-001.md/e' unrelated.txt", "deny"),
+    ("INV-SED-29", "デリミタ衝突なしのeコマンド単体＋不要なエスケープ挿入",
+     "sed '1e echo tickets\\/active\\/APP-001.md' unrelated.txt", "deny"),
+    ("INV-SED-30", "対照: 同じエスケープ言及だがSED-7安全文字のみ"
+     "（ゲートが広がってもdenyにならないことの固定）",
+     "sed -n 's/x/y/; /tickets\\/active\\/APP-001.md/p' unrelated.txt",
+     "allow"),
+    ("INV-SED-31", "対照: |区切りは元々検出済み・回帰確認",
+     "sed 's|.*|rm docs\\|SPEC.md|e' unrelated.txt", "deny"),
     # --- シェル展開の次元（§3-9-2。bash が解釈するがコマンド文字列上は
     # 見えない変換）。この次元は第4版まで棚卸し表に1行も無く、C6 はその空白
     # から出た。相違の**向き**（allow 方向＝危険／deny 方向＝保守的）を
@@ -2673,6 +2704,58 @@ class TestGuardBashWrites(unittest.TestCase):
         for text in ("a\\\nb", "echo x\\\ny"):
             with self.subTest(text=text):
                 self.assertEqual(unescape(text), text)
+
+    # --- KLK-029: 単体境界（設計書§9「テスト観点」・純粋関数・モック不要）---
+    # INVENTORY_CASES は find_violation() 経由の end-to-end 固定であり、
+    # unescape_program_backslashes / _is_guarded_path_component 自体の
+    # 挙動（1文字単位の畳み込み・basename 完全一致との差分）は直接検証して
+    # いなかった。tester round1 でこのギャップを検出し、下記3形を追加する
+    # （test_docs_reports_path_not_mentioned_as_guarded 等、既存の
+    # guard.<関数> 直接呼び出しスタイルに合わせる）。
+
+    def test_klk029_unescape_program_backslashes_folds_one_char_at_a_time(
+            self):
+        # \X -> X を1文字単位で畳み込む（デリミタが / であるかに関わらず、
+        # バックスラッシュ直後の1文字を一様に畳み込む。§4-1）
+        escaped_slash = "docs" + chr(92) + "/" + "SPEC" + "." + "md"
+        self.assertEqual(
+            guard.unescape_program_backslashes(escaped_slash),
+            "docs" + "/" + "SPEC" + "." + "md")
+        # 複数箇所・スラッシュ以外の任意文字でも同様に1文字ずつ畳み込む
+        arbitrary = "a" + chr(92) + "q" + "b" + chr(92) + "z" + "c"
+        self.assertEqual(
+            guard.unescape_program_backslashes(arbitrary), "aqbzc")
+        # バックスラッシュを含まない入力はそのまま（早期リターン）
+        self.assertEqual(
+            guard.unescape_program_backslashes("no-backslash-here"),
+            "no-backslash-here")
+
+    def test_klk029_unescape_program_backslashes_folds_escaped_backslash_itself(
+            self):
+        # `\\`（エスケープされたバックスラッシュ自身）は1文字の `\` へ畳み込む
+        two_backslashes = chr(92) * 2
+        self.assertEqual(
+            guard.unescape_program_backslashes(two_backslashes), chr(92))
+        # 連続する2組（4文字）は左から非重複に畳み込まれ2文字の `\` になる
+        four_backslashes = chr(92) * 4
+        self.assertEqual(
+            guard.unescape_program_backslashes(four_backslashes),
+            chr(92) * 2)
+
+    def test_klk029_is_guarded_path_component_catches_component_fusion(self):
+        # _is_guarded_path は basename **完全一致**のため、sed の /e フラグが
+        # 融合した候補 "docs/SPEC.md/e"（basename="e"）を拾えない。
+        # _is_guarded_path_component は `/` 区切り成分のいずれかへの一致で
+        # 判定するため、この融合形を拾えることを固定する（§3 設計初期案の
+        # 誤り訂正の核心・_is_guarded_path との差分そのもの）
+        fused = "docs" + "/" + "SPEC" + "." + "md" + "/e"
+        self.assertTrue(guard._is_guarded_path_component(fused))
+        self.assertFalse(guard._is_guarded_path(fused))
+        # tickets/active・tickets/done は元々部分文字列判定のため、融合が
+        # あっても両関数とも一致する（変更していないことの対照）
+        fused_tickets = "tickets" + "/" + "active" + "/APP-001.md"
+        self.assertTrue(guard._is_guarded_path_component(fused_tickets))
+        self.assertTrue(guard._is_guarded_path(fused_tickets))
 
 
 if __name__ == "__main__":
