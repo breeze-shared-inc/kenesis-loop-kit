@@ -292,6 +292,26 @@ class TestAggregate(unittest.TestCase):
         self.assertIn("なし", self.section(out, "現在進行中"))
         self.assertIn("完了チケットなし", out)
 
+    # --- KLK-028 AC2: ヘッダの件数を本文の集計対象と一致させる ---
+
+    def test_header_counts_exclude_retry_reset_only_ticket(self):
+        # investigatorの実測repro: APP-001(created→todo) + APP-050(retry_resetのみ)
+        # ヘッダは本文と同じ「1チケット・1イベント」を示すべき（従来は2/2）
+        self.write_log([
+            {"ts": "2026-06-10T09:00:00", "ticket": "APP-001", "type": "created",
+             "from": None, "to": "todo", "project": "demo"},
+            self.reset_row("2026-06-10T09:00:00", ticket="APP-050"),
+        ])
+        out = self.run_aggregate()
+        self.assertIn("イベント数: 1 / チケット数: 1", out)
+
+    def test_header_zero_when_all_tickets_retry_reset_only(self):
+        # 本文が「なし」「完了チケットなし」になるログでは、ヘッダも0/0になる
+        # （フィルタ前の生カウントに戻ってしまう不整合を明示的に禁止する）
+        self.write_log([self.reset_row("2026-06-10T09:00:00", ticket="APP-050")])
+        out = self.run_aggregate()
+        self.assertIn("イベント数: 0 / チケット数: 0", out)
+
     # --- KLK-012 AC3: tz-aware な ts が混入しても完走する ---
 
     def test_mixed_timezone_dwell_path(self):

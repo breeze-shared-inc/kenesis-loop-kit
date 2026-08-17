@@ -105,6 +105,46 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(fm["retry_counts"]["tester_to_implementer"], "2")
         self.assertEqual(lib.validate_schema(fm), [])
 
+    # --- KLK-028 AC1: トップレベルscalarキーのcomment-only値の期待挙動 ---
+
+    def test_scalar_comment_only_value_becomes_none(self):
+        # 子行が続かない場合、コメントの有無に関わらずYAML準拠でNoneになる
+        # （{}=ネストマップ確定ではない。KLK-012 M3の残課題）
+        fm = lib.parse_frontmatter(frontmatter(
+            "title: # コメント",
+            "status: todo",
+        ))
+        self.assertIsNone(fm["title"])
+        self.assertEqual(fm["status"], "todo")
+
+    def test_scalar_empty_value_without_comment_becomes_none(self):
+        # コメントを伴わない空値も同じ規則（子行の有無のみが基準）
+        fm = lib.parse_frontmatter(frontmatter(
+            "title:",
+            "status: todo",
+        ))
+        self.assertIsNone(fm["title"])
+
+    def test_trailing_comment_only_key_at_end_of_frontmatter_becomes_none(self):
+        # current_mapが開いたままfrontmatterが終端に達するケース（ループ後処理の回帰ガード）
+        fm = lib.parse_frontmatter(frontmatter(
+            "status: todo",
+            "title: # コメント",
+        ))
+        self.assertIsNone(fm["title"])
+
+    def test_blank_line_before_child_still_attaches_to_map(self):
+        # 既存の挙動（空行を挟んでもcurrent_mapはリセットされない）が本チケットの
+        # 修正で変化しないことを固定する（investigator調査メモ。AC1の対象外だが
+        # 同じコードパスを通るため回帰ガードとして残す）
+        fm = lib.parse_frontmatter(frontmatter(
+            "title: # コメント",
+            "",
+            "  x: 1",
+            "status: todo",
+        ))
+        self.assertEqual(fm["title"], {"x": "1"})
+
 
 class TestIsTicket(unittest.TestCase):
     """KLK-004: docs/reports/{ID}/{phase}.md が is_ticket() の対象外であることを検証する

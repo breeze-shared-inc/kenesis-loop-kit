@@ -154,6 +154,32 @@ class TestValidator(unittest.TestCase):
         self.assertDeny(write_payload(
             path, _util.ticket(status="done", tid="APP-778")))
 
+    # --- KLK-028 AC3: 相対パス × 実体あり × Write 分岐のdenyを固定する ---
+    # reconstructのWrite分岐はexists判定→isabs判定の順（KLK-012 D6）。順序が
+    # 入れ替わると本来denyすべき不正遷移がallowへバイパスされる
+    # （KLK-028 investigation実測。既存テストはEdit分岐のみをカバーしていた）。
+
+    def test_relative_path_write_existing_file_illegal_transition_deny(self):
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
+        rel = os.path.join("tickets", "active", "APP-001.md")
+        self.assertDeny(write_payload(
+            rel, _util.ticket(status="done", tid="APP-001")))
+
+    def test_relative_path_write_existing_file_legal_transition_allow(self):
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
+        rel = os.path.join("tickets", "active", "APP-001.md")
+        self.assertAllow(write_payload(
+            rel, _util.ticket(status="implementation_done", tid="APP-001")))
+
+    # --- KLK-028 AC4: `./` 明示形の相対パス × 実体なし = allow を固定する ---
+    # D6の意図的緩和（KLK-012 review M1）。既存の
+    # test_relative_path_missing_file_write_allow は `./` 無しの綴りのみをカバーしていた。
+
+    def test_dot_prefixed_relative_path_missing_file_write_allow(self):
+        rel = os.path.join(".", "tickets", "active", "APP-780.md")
+        self.assertAllow(write_payload(
+            rel, _util.ticket(status="done", tid="APP-780")))
+
     # --- KLK-012 AC5: 非 dict 入力でクラッシュしない ---
 
     def test_non_dict_stdin_allow(self):
