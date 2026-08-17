@@ -935,21 +935,41 @@ class TestGuardBashWrites(unittest.TestCase):
             "sed -n -e '1,2p' -e '4,5p' tickets/active/APP-001.md")
 
     def test_sed_bracket_expression_containing_delimiter_allow(self):
-        # T-SED7h（tester発見・KLK-015 AC6違反）: `sed_strip_literals` は
-        # POSIX/GNU の文字クラス（ブラケット式 `[...]`）を認識しないため、
-        # デリミタ文字がブラケット式の内側にあってもデリミタとして
-        # クロージングしてしまい、実際には安全な読み取り専用プログラム
-        # （`/[/]/p`＝スラッシュを含む行を表示するだけ）を字句未確定
-        # （None）として誤denyする。設計書 §6 R1 の新規deny列挙に
-        # この形は無く、実機 GNU sed では書き込み・実行を一切伴わない
-        # 純粋な読み取りである（`sed -n '/[/]/p' file` は該当行を
-        # 標準出力へ出すだけ）。**このテストは現状の実装に対して失敗する
-        # ことを意図している**（AC6「列挙外の新規denyが1件でもあれば
-        # ブロッカー」の実証。テストを緩めて allow の期待値を deny へ
-        # 変えないこと）。詳細: docs/reports/KLK-015/test-report.md
+        # T-SED7h（tester発見・KLK-015 AC6違反。implementer差し戻し1回目で
+        # 修正）: `sed_strip_literals` は当初POSIX/GNU の文字クラス
+        # （ブラケット式 `[...]`）を認識せず、デリミタ文字がブラケット式の
+        # 内側にあってもデリミタとしてクロージングしてしまい、実際には
+        # 安全な読み取り専用プログラム（`/[/]/p`＝スラッシュを含む行を表示
+        # するだけ）を字句未確定（None）として誤denyしていた。設計書
+        # §6 R1 の新規deny列挙にこの形は無く、実機 GNU sed では書き込み・
+        # 実行を一切伴わない純粋な読み取りである（`sed -n '/[/]/p' file`
+        # は該当行を標準出力へ出すだけ）。`_sed_skip_bracket_expression`
+        # の追加によりブラケット式の内側を読み飛ばして解消した（詳細:
+        # docs/reports/KLK-015/implementation.md）。テストを緩めて
+        # allow の期待値を deny へ変えないこと。
         self.assertAllow("sed -n '/[/]/p' tickets/active/APP-001.md")
         self.assertAllow("sed -n '/[^/]/p' tickets/active/APP-001.md")
         self.assertAllow("sed 's/[/]/X/' tickets/active/APP-001.md")
+
+    def test_sed_bracket_expression_does_not_hide_real_write_deny(self):
+        # ブラケット式対応（上記テスト）が新たなバイパス経路を生まないことの
+        # 固定点。ブラケット式を読み飛ばして正しくアドレス正規表現
+        # `/[/]/`（＝末尾のブラケットの外側にある `/` が閉じデリミタ）を
+        # 確定した後に続く `w tickets/active/APP-001.md` は実機 GNU sed 4.9
+        # で実際にファイル書き出しを行う（`/tmp`配下で実行確認済み）。
+        # ブラケット式の内側だけを読み飛ばすべきところを誤って外側の実在の
+        # `w` コマンドまで読み飛ばしてしまうと、この形が誤って allow に
+        # 倒れてしまう。
+        self.assertDeny("sed -n '/[/]/w tickets/active/APP-001.md' in.md")
+        # s の**パターンフィールド**の内側にリテラルとして
+        # `w tickets/active/APP-001.md` という文字列が現れても（実際は
+        # 正規表現の一部であり `w` コマンドではない。区切り文字を `#` に
+        # することでパス中の `/` と衝突させず検証。実機 GNU sed 4.9で
+        # 書き込みが発生しないことを確認済み）、置換フィールドにブラケット式
+        # は無いためデリミタ探索は従来どおりであり、誤って allow になる
+        # ことを固定する（対照）。
+        self.assertAllow(
+            "sed 's#[/]w tickets/active/APP-001.md#X#' unrelated.txt")
 
     # --- KLK-010: awk のプログラム内リダイレクト（D1） ---
 

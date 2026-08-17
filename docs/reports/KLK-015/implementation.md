@@ -125,3 +125,63 @@
 - degraded経路は設計どおり`SED_WRITE_RE`のまま変更していない（`w`/`e`/`i`
   以外を絶対に許可文字集合へ含めていないこと、AC1〜3が破れていないことは
   Phase1〜3のテストで確認済み）。
+
+## 差し戻し対応（tester→implementer 1回目・ブラケット式の誤deny解消）
+
+### 欠陥の原因
+
+`sed_strip_literals`（`.claude/hooks/guard_bash_writes.py`）の3つのデリミタ走査
+（アドレス正規表現`/…/`・カスタムデリミタ`\cXXXc`・`s`のパターンフィールド）が
+POSIX/GNUのブラケット式（`[...]`）を認識せず、ブラケット式内側のデリミタ文字
+（`[/]`内の`/`等）を閉じデリミタと誤認して早期にクローズし、後続の走査が破綻
+して`None`（判定不能）を返しdenyになっていた（`test_sed_bracket_expression_
+containing_delimiter_allow`が実証）。
+
+### 修正内容
+
+- 新設関数`_sed_skip_bracket_expression(text, i)`をPOSIXブラケット式の字句規則
+  （`^`否定・先頭`]`のリテラル特例・`[.`/`[=`/`[:`特殊要素の対応`.]`/`=]`/`:]`
+  までの読み飛ばし・改行での未終端判定）に従って実装し、`sed_strip_literals`の
+  3走査すべてへ組み込んだ。`s`コマンドは**パターンフィールドのみ**
+  （`found == 0`の間）にブラケット判定を適用し、置換フィールド・`y`コマンドの
+  両フィールド（リテラルでブラケット構文を持たない）には適用しない。
+- ブラケット式内部は**バックスラッシュをエスケープとして扱わない**（POSIXの
+  規則どおり。GNU sed 4.9で実機確認済み: `[\]]`は「`\`のみの文字クラス」＋
+  直後のリテラル`]`）。
+- 未終端（対応する`]`が見つからない）はunder-skip側へ倒し`None`を返す
+  （P8を維持。over-skipする経路は構造的に存在しない——最初に出会う`]`で
+  必ず終了するため）。
+
+### 実機再検証（GNU sed 4.9、`/tmp`配下で実行）
+
+- `sed -n '/[/]/p'`・`sed -n '/[^/]/p'`・`sed 's/[/]/X/'`: いずれも書き込み
+  なしの読み取り専用であることを再確認（tester報告と一致）。
+- ブラケット式の周辺ケース: `[]/]`（先頭`]`のリテラル特例）・
+  `[[:alpha:]]`（ネストした文字クラス）はいずれも正しく解析されallow。
+  `/[/p`（未終端）・`/[.ab/p`（未終端の照合記号）は実機でも構文エラー
+  （exit=1）であり、本実装も`None`（deny）を返すことを確認（P8整合）。
+- **バイパス検証**: `sed 's/[/]w FILE/X/'`（パターンフィールド内にリテラル
+  として`w FILE`という文字列が現れる形）は実機で書き込みが発生しない
+  （`w FILE`は正規表現の一部であり`w`コマンドとして機能しない）ことを確認。
+  本実装もこの形をallowにする（バイパスではなく実際の安全な形との一致）。
+- **回帰なしの確認**: ブラケット式を含む正規表現の後に**実在の**`w`コマンドが
+  続く形（`sed -n '/[/]/w FILE'`）は実機で実際にファイル書き込みが発生する
+  ことを確認し、本実装も引き続きdenyすることを確認（`test_sed_bracket_
+  expression_does_not_hide_real_write_deny`として固定化）。
+
+### 追加テスト
+
+- `tests/test_guard_bash_writes.py`
+  - `test_sed_bracket_expression_containing_delimiter_allow`（tester追加分。
+    コメントを「現状failを意図」から「差し戻し1回目で修正済み」へ更新。
+    アサーション自体は変更していない）
+  - `test_sed_bracket_expression_does_not_hide_real_write_deny`
+    （implementer新規追加。ブラケット式対応が新たなバイパス経路を生まない
+    ことの固定点。deny側1形・allow側の対照1形）
+
+### 実測結果（再測）
+
+- `python3 -m unittest tests.test_guard_bash_writes -v`: 212件中212件pass
+  （tester時点211件 + 本修正で追加した1件 = 212件）。
+- `python3 -m unittest discover -s tests -p "test_*.py"`: 590件中590件pass
+  （巻き添え不合格なし）。

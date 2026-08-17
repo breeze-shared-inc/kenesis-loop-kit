@@ -1535,6 +1535,60 @@ def awk_program_violation(text):
     return None
 
 
+def _sed_skip_bracket_expression(text, i):
+    r"""ブラケット式 `[...]`（POSIX/GNU の文字クラス）の終端の**次**の位置を返す。
+
+    `text[i]` は `[` であること。対応する `]` が見つからなければ **-1**
+    （未終端。呼び出し側は None を返し deny する＝安全側）。
+
+    POSIX の字句規則（GNU regex＝GNU sed の既定 BRE と一致。**ブラケット式の
+    内側ではバックスラッシュはエスケープではない**——`[\]]` は「`\` と `]` を
+    含む文字クラス」ではなく「`\` 1文字だけの文字クラス」＋直後の literal
+    `]`（POSIX にバックスラッシュエスケープの規定は無い。実機 GNU sed 4.9で
+    確認済み）:
+      1. `[` の直後が `^`（否定）ならその次へ進む。
+      2. その次の最初の文字が `]` なら、それは**リテラルの `]`**（文字クラスの
+         要素）として扱い、閉じ括弧とはみなさない（`[]abc]` は `]abc` の
+         4文字を含む集合）。
+      3. 以降、未エスケープ（＝エスケープの概念自体が無い）の `]` が現れる
+         まで進む。ただし `[.` `[=` `[:` で始まる特殊要素（照合記号・
+         等価クラス・文字クラス名。例 `[:alpha:]`）は、対応する `.]` `=]`
+         `:]` まで丸ごと読み飛ばす（内側に `]` が含まれても閉じ括弧と
+         誤認しない。例 `[[:alpha:]]` の内側の `:alpha:]` の `]` は
+         `[:` の対応 `:]` であり、外側のブラケットはまだ閉じない）。
+      4. 改行に達したら未終端（sed のブラケット式は改行をまたげない）。
+
+    この関数は `sed_strip_literals` の三つのデリミタ走査
+    （アドレス正規表現 `/…/`・カスタムデリミタ `\cXXXc`・`s` のパターン
+    フィールド）が **デリミタ文字をブラケット式の内側で誤って「閉じデリミタ」
+    と読まない**ようにするために使う。`s`/`y` の**置換フィールド**・`y` の
+    どちらのフィールドにも適用しない（置換文字列はリテラルでありブラケット式
+    の構文を持たない。実機 GNU sed 4.9 で `s/a/[/]/` がブラケット式として
+    解釈されず `]` 以降がフラグとしてエラーになることを確認済み）。
+    """
+    n = len(text)
+    j = i + 1
+    if j < n and text[j] == "^":
+        j += 1
+    if j < n and text[j] == "]":
+        j += 1  # 直後の ] はリテラル（閉じ括弧ではない）
+    while j < n:
+        c = text[j]
+        if c == "\n":
+            return -1
+        if c == "[" and j + 1 < n and text[j + 1] in ".=:":
+            end_seq = text[j + 1] + "]"
+            k = text.find(end_seq, j + 2)
+            if k < 0:
+                return -1
+            j = k + 2
+            continue
+        if c == "]":
+            return j + 1
+        j += 1
+    return -1
+
+
 def sed_strip_literals(text):
     r"""sed プログラムのアドレス正規表現・s/y のパターン＋置換文字列を除去する。
 
@@ -1559,6 +1613,28 @@ def sed_strip_literals(text):
       フラグに `w`/`e` が含まれれば安全文字集合に無いため自動的に deny
       になる**（`g`/`p`/数字のみ許可。`i`/`I`/`m`/`M` は本改訂では未収載＝
       新規deny・§6 リスク R1）。
+    - **ブラケット式 `[...]`（tester差し戻し・KLK-015 T-SED7h）**:
+      アドレス正規表現・カスタムデリミタ正規表現・`s` の**パターン
+      フィールドのみ**（`found == 0` の間）で、未エスケープの `[` に
+      遭遇したら `_sed_skip_bracket_expression` で対応する `]` まで
+      丸ごと読み飛ばし、内側の文字（デリミタと同じ文字を含む）をデリミタ
+      探索の対象にしない（POSIX のブラケット式は「正規表現の中の別の
+      正規表現」であり、内側でのデリミタの再出現は sed 自身も閉じデリミタ
+      と解釈しないため——`sed -n '/[/]/p'` は実機 GNU sed 4.9 で該当行を
+      表示するだけの読み取り専用コマンドである）。**破れる形（否定形）:**
+      `_sed_skip_bracket_expression` の終端判定が実際の GNU regex の
+      ブラケット式字句規則と食い違う入力。**向き:** 対応する `]` を
+      実際より手前で見つける（under-skip）と、ブラケット内側のデリミタが
+      閉じデリミタと誤認されて早期にクローズし、旧来どおり None を返す
+      デリミタ側へ倒れる（安全側＝deny。P8 の不変条件を保つ）。対応する
+      `]` を実際より奥で見つける（over-skip）方向の誤りは無い
+      （`_sed_skip_bracket_expression` は最初に出会う非特殊要素の `]` で
+      必ず終了するため、実際の GNU regex より広く読み飛ばすことはない）。
+      `s`/`y` の**置換フィールド**（`found == 1` 以降）・`y` コマンドの
+      両フィールドにはブラケット式の構文が無いため適用しない（実機確認は
+      `_sed_skip_bracket_expression` のdocstring参照）。**検出器:**
+      `tests/test_guard_bash_writes.py`の
+      `test_sed_bracket_expression_containing_delimiter_allow`。
     - **上記以外の文字**: そのまま残す（安全性は呼び出し側の
       `sed_program_violation` が `SED_SAFE_PROGRAM_CHARS` で判定する）。
 
@@ -1573,9 +1649,17 @@ def sed_strip_literals(text):
             delim = text[i + 1]
             if delim in ("\\", "\n"):
                 return None
+            is_regex_field = ch == "s"  # y は両フィールドともリテラル（非regex）
             j, found = i + 2, 0
             while j < n and found < 2:
                 c = text[j]
+                if (is_regex_field and found == 0 and c == "["
+                        and delim != "["):
+                    end = _sed_skip_bracket_expression(text, j)
+                    if end < 0:
+                        return None
+                    j = end
+                    continue
                 if c == "\\":
                     j += 2
                     continue
@@ -1595,6 +1679,12 @@ def sed_strip_literals(text):
             j, closed = i + 1, False
             while j < n:
                 c = text[j]
+                if c == "[":
+                    end = _sed_skip_bracket_expression(text, j)
+                    if end < 0:
+                        return None
+                    j = end
+                    continue
                 if c == "\\":
                     j += 2
                     continue
@@ -1615,6 +1705,12 @@ def sed_strip_literals(text):
             j, closed = i + 2, False
             while j < n:
                 c = text[j]
+                if c == "[" and delim != "[":
+                    end = _sed_skip_bracket_expression(text, j)
+                    if end < 0:
+                        return None
+                    j = end
+                    continue
                 if c == "\\":
                     j += 2
                     continue
