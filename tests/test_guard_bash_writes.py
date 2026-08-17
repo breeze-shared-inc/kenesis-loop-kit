@@ -770,6 +770,27 @@ class TestGuardBashWrites(unittest.TestCase):
             "python3 /tmp/evil/.claude/skills/spec-interview/scripts/"
             "check_spec_structure.py docs/SPEC.md")
 
+    # --- extract_spec_section.py（KLK-006）の同型許可 ---
+    # is_readonly_script_call()はREADONLY_SCRIPTSの完全一致判定のみを行う
+    # ため、新規登録スクリプトについても既存のcheck_spec_structure.py向け
+    # テストと同じ判定ロジックが働く。判定ロジック自体は変更していないため、
+    # ここでは代表的な許可・deny各1件と偽装パターン1件のみ確認し、既存の
+    # 全偽装パターン（KLK-013系列）の再複製はしない（判定関数が共通のため
+    # 冗長になる）。
+
+    def test_extract_spec_section_allow(self):
+        self.assertAllow(
+            "python3 .claude/skills/spec-interview/scripts/"
+            "extract_spec_section.py docs/SPEC.md REQ-001")
+
+    def test_extract_spec_section_wrong_script_deny(self):
+        self.assertDeny("python3 evil.py docs/SPEC.md REQ-001")
+
+    def test_extract_spec_section_disguised_directory_prefix_deny(self):
+        self.assertDeny(
+            "python3 a/.claude/skills/spec-interview/scripts/"
+            "extract_spec_section.py docs/SPEC.md REQ-001")
+
     # --- fail-open ---
 
     def test_non_bash_tool_allow(self):

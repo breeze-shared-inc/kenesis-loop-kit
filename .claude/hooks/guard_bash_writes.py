@@ -408,6 +408,7 @@ UNIQ_VALUE_FLAGS = ("-f", "-s", "-w",
 # (スクリプト側のdocstringにも「書き込み処理を追加してはならない」と明記)
 READONLY_SCRIPTS = (
     ".claude/skills/spec-interview/scripts/check_spec_structure.py",
+    ".claude/skills/spec-interview/scripts/extract_spec_section.py",
 )
 
 # シェル演算子。種別とセットを1つの表から導出する（種別の宣言漏れを構造的に防ぐ）。
