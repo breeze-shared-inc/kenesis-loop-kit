@@ -120,6 +120,8 @@ def main():
     improvement_by_ticket = {}  # ticket -> count
     blocked_events = []       # (ticket, ts)
     in_progress = []          # (ticket, status, age_seconds)
+    included_ticket_count = 0  # 本文集計対象（statusイベントを持つ）チケット数（KLK-028 AC2）
+    included_event_count = 0   # 上記チケットのstatusイベント総数
 
     for ticket, evs in by_ticket.items():
         # status を伴わないイベント（retry_reset）を除外してから集計する。
@@ -129,6 +131,8 @@ def main():
         evs = [ev for ev in evs if is_status_event(ev)]
         if not evs:
             continue  # status イベントが1件も無いチケットは集計対象外
+        included_ticket_count += 1
+        included_event_count += len(evs)
 
         first_ts = parse_ts(evs[0].get("ts"))
         done_ts = None
@@ -178,7 +182,7 @@ def main():
     # ---- 出力 ----
     print("=== Kenesis Loop Kit メトリクス ===")
     print("イベント数: %d / チケット数: %d%s"
-          % (len(events), len(by_ticket),
+          % (included_event_count, included_ticket_count,
              ("  フィルタ: %s" % filter_str) if filter_str else ""))
     print()
 
