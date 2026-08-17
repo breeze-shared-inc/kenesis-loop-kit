@@ -14,6 +14,27 @@ def payload(command):
     return {"tool_name": "Bash", "tool_input": {"command": command}}
 
 
+def _escape_once_for_backtick(text):
+    r"""次の外側のバッククォートへ埋め込むために、text 中の `` ` ``・`$`・`\`
+    をそれぞれ1段階分エスケープする（guard_bash_writes._unescape_backtick_body
+    の逆演算。KLK-024のテスト専用ヘルパ）。"""
+    return (text.replace("\\", "\\\\")
+                .replace("`", "\\`")
+                .replace("$", "\\$"))
+
+
+def _nested_backtick_command(depth, inner="rm docs/SPEC.md"):
+    r"""バッククォートを `depth` 階層ネストしたコマンド文字列を機械的に構築
+    する（各階層は `echo` でラップする）。depth=1 は `` `inner` ``、depth=2 は
+    チケット KLK-024 の再現手順1と同型（`_escape_once_for_backtick` を1回
+    適用した形が完全に一致することを設計時に手計算で確認済み。
+    docs/designs/KLK-024.md §3参照）。"""
+    command = "`%s`" % inner
+    for _ in range(depth - 1):
+        command = "`echo %s`" % _escape_once_for_backtick(command)
+    return command
+
+
 # 旧版（KLK-010 マージ前の develop）が deny していたコマンド集合。
 # 本 hook の改修でこれらが allow へ転じることは保護の後退に当たる。
 #
@@ -2538,6 +2559,63 @@ class TestGuardBashWrites(unittest.TestCase):
         # あり、日常読み取り70件相当（cwd を伴わない）には影響しないことの
         # 固定）
         self.assertAllow("ls file # via $(date) #'")
+
+    # --- KLK-024: エスケープされたネストのバッククォート --------------------
+    # investigator調査（docs/reports/KLK-024/investigation.md）に基づく。
+    # `_take_backtick` がバッククォート内容確定時の1段階アンエスケープを
+    # 実装していなかったため、エスケープされたネストのバッククォート
+    # （`` `echo \`rm ...\`` ``）内側の書き込みが正常経路（degraded非経由）
+    # でも allow になっていた。境界探索（`_skip_backtick`/`_skip_balanced`）
+    # は変更していない ---
+
+    def test_klk024_escaped_nested_backtick_write_vector_deny(self):
+        # T-KLK024a（AC1）: チケット再現手順1。保護対象2種
+        # （docs/SPEC.md・tickets/active/*.md）双方で成立することを固定する
+        for target in ("docs/SPEC.md", "tickets/active/APP-001.md"):
+            with self.subTest(target=target):
+                self.assertDeny(
+                    "ls %s" % _nested_backtick_command(2, "rm %s" % target))
+
+    def test_klk024_contrast_dollar_paren_and_plain_backtick_deny(self):
+        # T-KLK024b（AC2）: チケット再現手順2・3（対照）。本チケットの修正で
+        # 判定が変わらないことの固定
+        self.assertDeny("ls $(echo `rm docs/SPEC.md`)")
+        self.assertDeny("ls `rm docs/SPEC.md`")
+
+    def test_klk024_multi_level_nested_backtick_deny(self):
+        # T-KLK024c（多段ネストへの一般化・設計書§3-4-1）: 2〜5階層
+        # （MAX_SUBST_DEPTH=3 の境界とその先の深さ1つ分を含む）。depth=4・5は
+        # subst_violation の保守的な深さ打ち切りで deny になる
+        # （test_h6_max_subst_depth_boundary_degraded_deny と同型の境界）。
+        # depth3の具体形は実装時に実機bashで手動検証済み（実装ノート参照）
+        for depth in range(2, 6):
+            with self.subTest(depth=depth):
+                self.assertDeny("ls %s" % _nested_backtick_command(depth))
+
+    def test_klk024_degraded_path_shares_fix_deny(self):
+        # T-KLK024d（AC6の実証）: `_extract_degraded_substs` は
+        # `_take_backtick` を共有呼び出しするため、本チケットの修正1箇所が
+        # degraded 経路にも同時に適用されることを実機的に固定する。末尾に
+        # `#'`（未閉じクォート）を付与して degraded を誘発する
+        # （KLK-014のT-H6系と同型の誘発形）
+        self.assertDeny(
+            "ls %s #'" % _nested_backtick_command(2, "rm docs/SPEC.md"))
+
+    def test_klk024_lone_escaped_backtick_false_deny_budget_allow(self):
+        # T-KLK024e（AC3 誤deny予算）: ネストしていない単独の `` \` ``
+        # （対応するバッククォートが無い）は実機bashでもリテラル解釈のままで
+        # あり、`_take_backtick` を一度も起動しない（分岐3の汎用エスケープが
+        # 消費するだけ）。本チケットの修正で新たに deny にならないことの固定
+        self.assertAllow(
+            "echo \\`not a real subst tickets/active/APP-001.md")
+
+    def test_klk024_readonly_backtick_substitution_regression_allow(self):
+        # T-KLK024f（AC3・AC4 回帰）: 既存 test_backtick_readonly_substitution_
+        # allow はバッククォート内側にバックスラッシュを含まないため
+        # `_unescape_backtick_body` は no-op であり、本チケットの修正後も
+        # allow のままであることの明示固定（既存テストの再確認）
+        self.assertAllow("echo `date +%Y` tickets/active/APP-001.md")
+        self.assertAllow("echo `echo $(echo hi)` tickets/active/APP-001.md")
 
 
 if __name__ == "__main__":

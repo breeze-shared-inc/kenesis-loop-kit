@@ -232,6 +232,15 @@ bash と一致させる正規化（L0）を置く。
     本文は除去しない」を参照）と degraded を対称にした結果であり、
     新しいクラスの誤解析ではない。回避策は保護対象に触れるコマンドの
     コメント内で置換記号を使わないこと
+  - **KLK-024追記:** `_take_backtick`（正常経路`lex()`・degraded経路
+    `_extract_degraded_substs`が共有する抽出関数）は、抽出したバッククォート
+    内容へbashの1段階アンエスケープ（`` \` ``→`` ` ``・`\$`→`$`・`\\`→`\`）を
+    適用してから`substs`へ格納する。以前はこのアンエスケープを行っておらず、
+    エスケープされたネストのバッククォート（`` `echo \`rm docs/SPEC.md\`` ``）
+    内側の書き込みが再帰評価で新規`substs`エントリにならずallowになって
+    いた。`_extract_degraded_substs`は`_take_backtick`を直接呼ぶ共有関数で
+    あるため、本修正は両経路に同時に適用される（`_extract_degraded_substs`
+    自体への変更は無い）。
   - degraded mode（下記）は旧版と同じ素朴な分割を使うため、クォート内の `|` と
     未閉じクォートが同時に成立する入力（`grep -E '^(id|title):' tickets/... # don't`）
     は誤denyになる。これは旧版と同一の挙動であり、正常に字句解析できる入力
@@ -801,12 +810,61 @@ def _take_subst(command, start, buf, substs):
     return end
 
 
+# --- KLK-024: バッククォート内容確定時の1段階アンエスケープ ------------------
+#
+# bash はバッククォート置換の内容を確定する際、`` \` ``→`` ` ``・`\$`→`$`・
+# `\\`→`\` の3種のみを1段階アンエスケープし、他の文字へのバックスラッシュ
+# （`\;`・`\ ` 等）はバックスラッシュ自体を含めてそのまま残す（実機bashで
+# 確認済み。investigation.md詳細4）。`_take_backtick`はこれまでこの
+# アンエスケープを行っておらず、抽出した生スライスをそのまま substs へ
+# 格納していたため、再帰評価（subst_violation → find_violation → lex()
+# 再呼び出し）時に `lex()` の汎用エスケープ分岐が `` \` `` を先に消費して
+# しまい、内側の書き込みコマンドが新規 substs エントリにならず allow に
+# なっていた（KLK-024）。
+#
+# 走査は `_skip_backtick` と同じ「`\`+次の1文字を対として消費する」規則に
+# 従う（re.sub は左から右へ非重複でマッチを消費するため同じ挙動になる）。
+# re.DOTALL は行継続の生テキスト（`\`+改行）がこの位置に残っている場合に
+# 1組として正しく消費するために必要——対象外の組（改行を含む）は
+# match.group(0) をそのまま返すため出力は1バイトも変わらない。
+#
+# `_skip_balanced`（$(...)/<(...)/>(...)用）には適用しない——$(...) の内側の
+# `` \` `` は実機bashでリテラルのまま解釈されるため（investigation.md詳細4・
+# `_skip_balanced`のdocstring参照）。
+BACKTICK_UNESCAPE_RE = re.compile(r"\\(.)", re.DOTALL)
+
+
+def _unescape_backtick_body(text):
+    r"""bash のバッククォート内容確定規則（1段階アンエスケープ）を適用する。
+
+    対象は `` \` ``→`` ` ``・`\$`→`$`・`\\`→`\` の3種のみ。他の文字への
+    バックスラッシュはそのまま残す。証拠（保護対象パスの文字集合）を
+    1文字も減らさない（アンエスケープ対象はいずれもパス文字集合
+    `PATHISH_RE` に含まれない記号のため）。
+    """
+    if "\\" not in text:
+        return text
+
+    def replace(match):
+        c = match.group(1)
+        return c if c in "`$\\" else match.group(0)
+
+    return BACKTICK_UNESCAPE_RE.sub(replace, text)
+
+
 def _take_backtick(command, start, buf, substs):
-    """バッククォート置換の内側を取り込み、終端の次の位置を返す。"""
+    """バッククォート置換の内側を取り込み、終端の次の位置を返す。
+
+    格納前に `_unescape_backtick_body` でバッククォート内容確定規則の
+    1段階アンエスケープを適用する（KLK-024）。境界探索（`_skip_backtick`）
+    自体は変更しない。`lex()`（正常経路）・`_extract_degraded_substs`
+    （degraded経路）の双方が本関数を共有して呼ぶため、この修正1箇所で
+    両経路に適用される。
+    """
     end = _skip_backtick(command, start)
     if end < 0:
         raise ValueError("no closing backquote")
-    substs.append(command[start:end - 1])
+    substs.append(_unescape_backtick_body(command[start:end - 1]))
     buf.append(SUBST_PLACEHOLDER % (len(substs) - 1))
     return end
 
