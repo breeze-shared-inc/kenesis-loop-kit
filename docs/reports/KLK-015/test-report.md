@@ -109,3 +109,62 @@
   r/i/branch/大文字小文字無視フラグ・e系）の一部を再現し、書き込み・
   情報開示・実行が実際に発生することを再確認（`/[/]/w FILE`の変種も
   実機で書き込みを確認。ただしこの変種はhookが正しくdenyしている）
+
+## 8. 再検証（2回目・commit fe4fd17・差し戻し1回目対応後）
+
+### 8-1. 実行結果
+
+- `python3 -m unittest tests.test_guard_bash_writes -v`: **212件中212件pass**
+  （implementer報告と一致）。`test_sed_bracket_expression_containing_delimiter_allow`
+  が今回passすることを個別実行でも確認。
+- `python3 -m unittest discover -s tests -p "test_*.py"`: リポジトリ全体
+  **590件中590件pass**（implementer報告と一致。巻き添え不合格なし）。
+- `git diff a33c492 fe4fd17 --stat`: 変更は `.claude/hooks/guard_bash_writes.py`・
+  `docs/reports/KLK-015/implementation.md`・`tests/test_guard_bash_writes.py`
+  の3ファイルのみ。テストdiffは前回testerが追加した3assertion（コメントのみ更新、
+  期待値・入力文字列は無傷）＋新規テスト1件の追加のみで、既存アサーションの
+  弱体化・削除は無い。
+
+### 8-2. 独自バイパス探索（bracket式起因）
+
+`guard.find_violation` / `guard.sed_strip_literals` を直接importして10通りの
+アドバーサリアルパターンを構成し、実機 GNU sed 4.9（`/tmp`配下）と突き合わせて
+検証した。
+
+- 検証対象: (A)アドレス内エスケープ`\[x\]`直後の実在w、(B)二重バックスラッシュ
+  +素の否定クラス、(C)カスタム区切り文字と同じ文字をブラケット内容に含む形
+  （`s@[@]@REPL@`）、(D)単独`[:w:]`（外側`[`無しの文字クラス風表記）、
+  (E)ネストクラス`[[:alpha:]]`+外側の実在w、(F)ブラケット直後に空白なしで実在w、
+  (G)未終端の照合記号`[.x`+実在w、(H)`[^]/]`（否定+先頭`]`特例）+実在w、
+  (I)カスタムデリミタアドレス`\%[%]%p`、(J)非保護対象へのs///eフラグ形。
+  加えて(K)s コマンドの区切り文字を`]`自体にする形（`s][b]]X]`
+  ＝ブラケットの閉じ`]`と区切り文字`]`が字面上衝突する境界ケース）を追加検証。
+- 結果: 全パターンでguardの判定は実機GNU sedの実際の安全性（書き込み・実行の
+  有無）と整合。新たなバイパス（allowなのに実際に書き込み/実行が発生する形）
+  は**発見されなかった**。(D)は実機GNU sedが`character class syntax is
+  [[:space:]], not [:space:]`で構文エラー（exit=4）となり実行自体が起きない
+  ため、guardのallow判定は無害（構文エラーで完全に処理が止まるsedの2パス
+  コンパイル方式により副作用が生じ得ない）。(K)は実機で`s]a[b]c]`が
+  `unterminated 's' command`エラーになる一方、`s][b]]X]`（ブラケットが
+  正しく`]`で閉じ、直後の`]`が区切り文字として機能する境界例）は実機で
+  安全に置換が成立し、Python側`sed_strip_literals`の判定（前者None＝deny、
+  後者"s"＝allow）と完全に一致した。
+- `_sed_skip_bracket_expression`の`[.`/`[=`/`[:`特殊要素の貪欲な`str.find`探索
+  （途中の`]`を読み飛ばしてでも`.]`等の対応終端を探す）についても、実機で
+  `[[.ab]cd.]]`（意図的に`]`を埋め込んだ照合記号もどき）が「Invalid
+  collation character」エラーとなることを確認し、GNU sed自身も同じ貪欲探索
+  を行っていることを裏取りした（over-skip側の懸念は実機的にも否定）。
+
+### 8-3. 参考所見（本チケットのスコープ外・ブロッカーではない）
+
+- `sed_strip_literals`のトップレベル走査は「`s`/`y`という**文字**が現れたら
+  常にs/yコマンドの開始とみなす」設計のため、ガード対象パス文字列自体に
+  `s`を含む（`tickets`・`docs`は末尾が`s`）場合、パス内で疑似的な区切り文字
+  探索が発生することがある（例: `1w tickets/active/sub/APP-001.md`の
+  stripped結果は`1w ticketsAPP-001.md`）。今回検証した範囲では、この現象が
+  発生するのは実際の危険文字（`w`等）より**後**の位置のみであり、危険文字は
+  常に`out`へ確定済みのため検出漏れ（allow化）には至らない。ブラケット式
+  対応（本チケットのdiff）が原因ではなく、Phase 1由来の既存設計特性であり、
+  今回のリトライ差分にも含まれない。allow化する具体例は見つからなかったが、
+  `sed_strip_literals`全体の設計見直し（文単位でのs/yコマンド境界認識）は
+  別チケットでの検討を推奨する。
