@@ -53,6 +53,7 @@ architectのWrite/Editツールは `docs/designs/{ID}.md` の作成・改訂専�
 チケットへの反映（related_files・ログ・updated・ブロッカー）はorchestratorが行う。
 
 - 作業開始時: チケットの概要・受け入れ条件・investigatorの調査結果（実装メモ）を読み取る
+- SPEC参照: チケットにREQ/SCR/IF-IDの記載がある場合、docs/SPEC.mdの該当箇所を優先して参照する。architectはBashツールを持たないため、investigator/reviewerのようにextract_spec_section.pyを直接実行できない。代わりにGrepツールでID（例: `REQ-xxx`）のテーブル行を検索し、Readツールのoffset/limitで該当行の前後（該当小見出し相当の範囲）のみを読む。docs/SPEC.mdの全文Readはフォールバック（IDの記載がない場合・Grepで該当行が見つからない場合）に限定する
 - 設計開始時: `docs/designs/_TEMPLATE.md` をコピーして `docs/designs/{ID}.md` を作成する（{ID}はチケットIDと一致させる）
 - Phase分割時: 各Phaseに完了条件と「対応する受け入れ条件」を明記し、チケットの全受け入れ条件がいずれかのPhaseでカバーされていることをセルフチェックする。Phaseが4つ以上になる、または各Phaseが独立してレビュー・リリース可能な粒度になる場合は、設計を確定せずorchestratorへチケット粒度の見直しを報告する（人間が /plan-tickets の差分起票で割り直す）
 - 設計書作成後: レポートに `docs/designs/{ID}.md` のパスを明記し、orchestratorがチケットのrelated_filesへ追記する
