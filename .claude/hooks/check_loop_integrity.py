@@ -19,6 +19,14 @@ Write/Edit を経ない書き換え（Bashリダイレクト・インタプリ�
 （観測値へ戻す、または観測値からの正当な遷移として適用し直す）を強制する。
 サイドカー側を直接書き換えて解消してはならない。
 
+SPEC.mdドリフト検知（KLK-016）:
+hook管理のサイドカー docs/.spec_state.json（record_metrics.py が最後に観測
+した sha256ハッシュ）と docs/SPEC.md（プロジェクト直下のみ。ネストした
+SPEC.md は対象外）の内容を突き合わせ、Write/Edit を経ない書き換えを検出
+する。SPEC.md が存在しない、またはサイドカーに記録が無い（hook導入前・
+SPEC.md作成直後で一度もWrite/Editを経ていない等）場合は照合しない
+（fail-open）。
+
 fail-open: 内部エラーでは継続を許可（exit 0）。サイドカーに記録が無い
 チケット（hook導入前の旧チケット等）はドリフト照合をスキップする。
 無限ループ防止: stop_hook_active が真なら何もしない。
@@ -152,6 +160,33 @@ def check_done_ticket_drift(path, state):
     return ["%s: %s" % (os.path.basename(path), e) for e in errors]
 
 
+def check_spec_drift(cwd):
+    """docs/SPEC.md（プロジェクト直下）のハッシュドリフトを検知する（KLK-016）。
+    SPEC.md が存在しない、またはサイドカーに記録が無い場合は照合しない
+    （fail-open。AC3）。"""
+    spec_path = lib.spec_path_for(cwd)
+    if not spec_path or not os.path.isfile(spec_path):
+        return []
+    record = lib.load_spec_state(cwd)
+    if not isinstance(record, dict):
+        return []
+    observed = record.get("hash")
+    if not observed:
+        return []
+    current = lib.sha256_file(spec_path)
+    if current is None:
+        return []
+    if current != observed:
+        return [
+            "docs/SPEC.md: Write/Edit を経ない変更を検出しました"
+            "（最後に検証されたハッシュと現在の内容が不一致）。"
+            "正規経路（Write/Edit ツール・人間の diff 承認）で変更を"
+            "再適用するか、意図しない変更なら元の内容へ戻してください"
+            "（docs/.spec_state.json は直接編集しないこと）"
+        ]
+    return []
+
+
 def main():
     # 入力型の正規化は hook 境界（main）で行う（KLK-012 §3 D5）。
     # 非 dict の payload・非 str の cwd はいずれも fail-open
@@ -181,6 +216,8 @@ def main():
         problems.extend(check_ticket(path, events_by_ticket, state))
     for path in sorted(glob.glob(os.path.join(done_dir, "*.md"))):
         problems.extend(check_done_ticket_drift(path, state))
+
+    problems.extend(check_spec_drift(cwd))
 
     if problems:
         reason = (
