@@ -719,6 +719,106 @@ def mentions_guarded(values):
     return any(is_guarded_token(v) for v in values)
 
 
+# --- KLK-029: sed/awk 専用の言及ゲート緩和 -----------------------------------
+#
+# sed/awk は「プログラム本文」という独自の小言語を持ち、その小言語自身が `\`
+# によるデリミタ／文字列終端のエスケープ規約を持つ。bash が引用解除した後の
+# 文字列（シングルクォート内では `\` がそのまま残る）を sed/awk 自身がもう
+# 一段解釈するため、is_guarded_token が見る字面（`docs\/SPEC.md`）と実行時の
+# 意味（sed の `s///` 区切り文字解釈・awk の未知エスケープ警告つき正規化）が
+# 乖離する（実機 GNU sed 4.9・GNU Awk 5.2.1 で確認済み。
+# docs/reports/KLK-029/investigation.md 参照）。
+#
+# **この乖離は sed/awk に固有**である。リダイレクト先・変数代入・`sort -o`
+# 等はbashが引用解除した値がそのまま最終値であり、追加の再解釈層を持たない
+# ため、下記の一連の関数は sed/awk 専用のゲート（segment_violation の sed
+# 分岐・awk_violation・head に sed/awk を含む文の statement_violation）でのみ
+# 呼び出すこと。**PATHISH_RE／guarded_paths／_is_guarded_path／
+# is_guarded_token／mentions_guarded 自体は変更しない**（他 13 箇所の
+# 呼び出し元・他 head の判定に一切影響しない＝ AC4）。
+#
+# P8 型の安全性主張:
+#   - 主張: is_guarded_token_in_program(t) は is_guarded_token(t) が真ならば
+#     必ず真（OR 追加のみ）。したがって既存の deny が allow に転じることは
+#     構造的に起こらない。
+#   - 破れる形（否定形）: 本関数の呼び出し箇所を「素の is_guarded_token を
+#     置き換える」形で使った場合（OR ではなく置換にした場合）。本設計は
+#     すべての呼び出し箇所で OR 追加の形を取ることを§4-2〜4-4で明記する。
+#   - 向き: 誤りの向きは常に allow 方向（危険）。SPEC.md 型の判定を
+#     basename 完全一致から「/ 区切り成分のいずれかに一致」へ緩めたことで
+#     ゲートの発火条件は広がる方向にのみ動く（判定基準を狭める変更は無い）。
+#   - 検出器: tests/test_guard_bash_writes.py の INV-SED-27〜31・
+#     INV-AWK-21〜25（本設計§4-5）。
+
+def unescape_program_backslashes(text):
+    r"""sed/awk が実行時に解釈するとおり `\X` → `X` へ畳み込む（証拠収集専用）。
+
+    デリミタが `/` か `|` か、あるいはそれ以外かに関わらず一様に適用する
+    （バックスラッシュの直後の1文字を問わず畳み込むため、特定のデリミタ
+    文字集合に依存しない）。判定を広げる方向（ゲートを発火させる方向）にのみ
+    使うこと。sed_program_violation／awk_program_violation の安全性判定
+    そのもの（sed_strip_literals／awk_strip_literals）は経由しない——両関数は
+    KLK-015／KLK-010で確立済みの独自のデリミタ／文字列除去を引き続き使う。
+    """
+    if "\\" not in text:
+        return text
+    return re.sub(r"\\(.)", r"\1", text)
+
+
+def _is_guarded_path_component(path):
+    r"""sed/awk 専用ゲート: _is_guarded_path の SPEC.md 判定（basename の
+    **完全一致**）を「`/` 区切り成分のいずれかに一致」へ緩めた判定。
+
+    sed の `s/.*/rm docs\/SPEC.md/e` を畳み込むと候補 `docs/SPEC.md/e` に
+    なる（`/e` はsed自身の区切り文字＋フラグで、空白を挟まず直後に連続する
+    ため PATHISH 候補へ融合する）。この候補の basename は `e` であり、
+    _is_guarded_path の完全一致では検出できない。成分単位（`split("/")`に
+    `"SPEC.md"` が含まれるか）で見ることでこの融合に頑健になる。
+    tickets/active・tickets/done は元の部分文字列判定のまま（既に融合に
+    頑健なため変更しない）。**_is_guarded_path 自体は無変更**——本関数は
+    sed/awk 専用ゲートだけが使う並行した緩い判定として新設する（AC4）。
+    """
+    if ".claude" in path.split("/"):
+        return False
+    if "tickets/active" in path or "tickets/done" in path:
+        return "/Templates/" not in path and not path.endswith("_index.md")
+    return "SPEC.md" in path.split("/")
+
+
+def guarded_paths_in_program(text):
+    """sed/awk 専用: guarded_paths のエスケープ畳み込み・成分緩和版。
+
+    バックスラッシュを畳み込んだ字面から PATHISH 候補を再抽出し、
+    _is_guarded_path_component で判定する。guarded_paths（無変更）と
+    _is_guarded_path（無変更）は経由しない。
+    """
+    unescaped = unescape_program_backslashes(text)
+    found = []
+    for candidate in PATHISH_RE.findall(unescaped):
+        path = os.path.normpath(candidate)
+        if _is_guarded_path_component(path):
+            found.append(path)
+    return found
+
+
+def is_guarded_token_in_program(text):
+    """sed/awk 専用: is_guarded_token に加え、guarded_paths_in_program でも
+    判定する（OR 追加のみ。is_guarded_token(text) が真なら必ず真）。
+    sed/awk のゲート呼び出し箇所以外では使わないこと。
+    """
+    return bool(is_guarded_token(text) or guarded_paths_in_program(text))
+
+
+def mentions_guarded_in_program(values):
+    """sed/awk 専用: 語の集合のいずれかが is_guarded_token_in_program で真か。"""
+    return any(is_guarded_token_in_program(v) for v in values)
+
+
+# sed/awk のプログラム本文ゲート緩和（KLK-029）の対象 head。statement_violation
+# の共有ゲートを緩和する範囲をこの集合に限定する（他 head の文には影響しない）。
+PROGRAM_TEXT_HEADS = frozenset({"sed", "awk"})
+
+
 # --- L1: 字句レイヤ ---------------------------------------------------------
 
 def _skip_balanced(command, start):
@@ -1811,16 +1911,19 @@ def awk_violation(words, cwd="", degraded=False):
     """
     # AW-1: 保護対象に言及する語そのものが > / | を含む（{print > "docs/SPEC.md"}
     # 等）。正常な読み取りでは保護対象は素のパス引数として現れる
-    if any(">" in t or "|" in t for t in words if is_guarded_token(t)):
+    # KLK-029: is_guarded_token_in_program は is_guarded_token の OR 追加
+    # 拡張であり、エスケープされた保護対象パスの言及も検出する
+    # （docs/designs/KLK-029.md §3・§4-1）
+    if any(">" in t or "|" in t for t in words if is_guarded_token_in_program(t)):
         return "awk のプログラム内リダイレクト（print > file 等）は許可されていません"
     # AW-2: 保護対象パスを awk 変数へ束縛している（-v f=... / 位置引数 f=...）。
     # 参照側（print > f）まで追わないのは、エイリアス（g=f; print > g）で
     # 容易に迂回でき防御にならないため。束縛そのものを証拠とする
-    if any(is_guarded_token(v) for v in awk_bindings(words)):
+    if any(is_guarded_token_in_program(v) for v in awk_bindings(words)):
         return "awk の変数へ保護対象パスを束縛しています（-v / NAME=VALUE）"
     # 以降は「保護対象に言及する awk」「保護対象を作業ディレクトリとする awk」
     # に限って適用する（読み取り awk を誤denyしないためのゲート）
-    if not (mentions_guarded(words) or cwd_is_guarded(cwd)):
+    if not (mentions_guarded_in_program(words) or cwd_is_guarded(cwd)):
         return None
     for word in head_args(words):
         # AW-4: 未知・危険なオプション（外部コード読み込み／ファイル書き出し）。
@@ -1973,7 +2076,7 @@ def segment_violation(words, substs=(), cwd="", degraded=False):
             if any(SED_WRITE_RE.search(t) for t in flat
                    if strict or is_guarded_token(t)):
                 return "sed の w コマンド（ファイル書き出し）は許可されていません"
-        elif strict or mentions_guarded(flat):
+        elif strict or mentions_guarded_in_program(flat):
             # SED-7（正常経路の本体）: プログラム本文がホワイトリストの
             # 安全形か。判定対象はプログラム本文だけであり、入力ファイル名
             # オペランドは sed が実行しないため検査しない
@@ -2074,11 +2177,22 @@ def statement_violation(statement, guarded_vars, substs=(), cwd=""):
     if reason:
         return reason
     words = [v for k, v in statement if k == "w"]
-    # 言及ゲートはプレースホルダ解決後のテキストで判定する（置換の結果が
-    # 外側コマンドの引数になる形を取りこぼさないため）。作業ディレクトリが
-    # 保護対象配下ならゲートは無条件に真とする
-    if not (cwd_is_guarded(cwd) or
-            mentions_guarded(expand_all(words, substs))):
+    segments = pipe_segments(statement)
+    # KLK-029: sed/awk はプログラム本文に独自のエスケープ規約を持つため、
+    # 通常の mentions_guarded では検出できない言及がありうる（§3・§4-1）。
+    # この文に sed/awk のパイプ区間が含まれる場合に限り、エスケープを
+    # 畳み込んだ字面でも判定する（他 head だけの文はゲートを一切変更しない
+    # ＝ AC4。head 判定は raw な語で行う——segment_violation の head_of と
+    # 同じ規約）
+    has_program_head = any(head_of(seg) in PROGRAM_TEXT_HEADS
+                            for seg in segments)
+    expanded_words = expand_all(words, substs)
+    if has_program_head:
+        gate_hit = (cwd_is_guarded(cwd) or
+                    mentions_guarded_in_program(expanded_words))
+    else:
+        gate_hit = cwd_is_guarded(cwd) or mentions_guarded(expanded_words)
+    if not gate_hit:
         return None
     # QT-1: この文には bash が展開時にデコード／翻訳する語がある。hook が見て
     # いる字面と実行される文字列が一致しないことが確定しているため、ホワイト
@@ -2090,7 +2204,7 @@ def statement_violation(statement, guarded_vars, substs=(), cwd=""):
         return ANSI_QUOTE_REASON
     if any(k == "op" and op_kind(v) == "heredoc" for k, v in statement):
         return "ヒアドキュメントによる書き込みの可能性"
-    for segment_words in pipe_segments(statement):
+    for segment_words in segments:
         reason = segment_violation(segment_words, substs, cwd)
         if reason:
             return reason

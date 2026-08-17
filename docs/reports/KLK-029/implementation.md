@@ -1,0 +1,54 @@
+# KLK-029 実装レポート（implementer）
+
+## Phase 1: ゲート改修
+
+### 変更内容
+`docs/designs/KLK-029.md` §4-1〜§4-4のとおり実装。
+
+- §4-1: `mentions_guarded`直後に`unescape_program_backslashes`・`_is_guarded_path_component`・
+  `guarded_paths_in_program`・`is_guarded_token_in_program`・`mentions_guarded_in_program`・
+  定数`PROGRAM_TEXT_HEADS`を新設。設計書のコードをそのまま転記。
+- §4-2: `segment_violation`の`elif strict or mentions_guarded(flat):`を
+  `mentions_guarded_in_program(flat)`へ差し替え（degraded分岐の`is_guarded_token(t)`は無変更）。
+- §4-3: `awk_violation`のAW-1・AW-2・共有ゲート3箇所を`is_guarded_token_in_program`／
+  `mentions_guarded_in_program`へ差し替え。
+- §4-4: `statement_violation`の共有ゲートを、`pipe_segments`を1回だけ呼び出して
+  `head_of(seg) in PROGRAM_TEXT_HEADS`でsed/awk含有文を判定し、含む場合のみ
+  `mentions_guarded_in_program`を使うよう差し替え。
+
+### 設計との差分（軽微・非意味論的）
+`_is_guarded_path_component`のdocstringに`\/`が含まれるため、設計書の転記どおり`"""`のままだと
+`SyntaxWarning: invalid escape sequence '\/'`が出た（Python 3.12）。docstring本文は一切変更せず、
+`r"""`（raw文字列プレフィックス）を付けるだけの修正を行った（`unescape_program_backslashes`は
+設計書の時点で既に`r"""`だったため、同じ扱いに揃えた形）。動作・文言に影響なし。
+
+### AC4確認（`git diff`によるdiff無し確認）
+```
+$ git diff -U0 .claude/hooks/guard_bash_writes.py \
+    | grep -E "^[-+][^-+]" \
+    | grep -E "PATHISH_RE = |^def guarded_paths\(|^def _is_guarded_path\(|^def is_guarded_token\(|^def mentions_guarded\("
+（出力なし = 上記5定義に変更なし）
+```
+`git diff --stat`: `.claude/hooks/guard_bash_writes.py | 134 ++++++++++++++--- (124 insertions, 10 deletions)`。
+削除10行はすべて§4-2〜4-4の3箇所の呼び出し名差し替え・`statement_violation`のゲート整形分。
+
+### 既存テスト（ベースライン213件）
+```
+$ python3 -m unittest tests.test_guard_bash_writes
+Ran 213 tests in ~24-36s
+OK
+```
+（Phase 1適用後、追加テストなしの状態で実行。213件全pass）
+
+### 再現手順の実機投入結果（AC1）
+`find_violation()`を直接呼び出して確認（investigation.md 詳細調査ログ2・3の形）。
+
+| コマンド | 修正前（investigation.md記載） | 修正後（本実装） |
+|---|---|---|
+| `sed 's/.*/rm docs\/SPEC.md/e' unrelated.txt` | `None`（allow） | `sed プログラムに許可されていないコマンド／文字 'e' があります…`（deny） |
+| `sed 's/.*/rm tickets\/active\/APP-001.md/e' unrelated.txt` | `None`（allow） | 同上（deny） |
+| `awk 'BEGIN{system("rm tickets\/active\/APP-001.md")}' unrelated.txt` | `None`（allow） | `awk プログラムの関数呼び出し system() は許可されていません…`（deny） |
+| `awk '{print > "tickets\/active\/APP-001.md"}' unrelated.txt` | `None`（allow） | `awk のプログラム内リダイレクト（print > file 等）は許可されていません`（deny） |
+| `sed '1e echo tickets\/active\/APP-001.md' unrelated.txt`（investigation.md詳細調査ログ5系） | （調査時未実機投入・理論上バイパス） | `sed プログラムの字句を確定できません…`（deny。SED-7本体のfail-closed経由で到達・確認） |
+
+いずれもdenyへ転じたことを確認済み。5件目は文字列パターンが厳密なアドレス正規表現として解釈されずSED-7本体の字句解析失敗によるfail-closed denyとなったが、ゲート自体は正しく通過しSED-7本体（無変更）へ到達している。
