@@ -1,7 +1,9 @@
 """_ticket_lib.py の単体テスト（検証ルールの中核）"""
 import io
+import json
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -438,6 +440,47 @@ class TestReconcile(unittest.TestCase):
         rc = {"tester_to_implementer": 9, "reviewer_to_implementer": 0,
               "reviewer_to_investigator": 0}
         self.assertEqual(lib.reconcile_rollbacks(rc, events), [])
+
+
+class TestSpecDriftPureFunctions(unittest.TestCase):
+    """KLK-016 設計書§9「単体境界テスト（純粋関数）について」で明示された3観点。
+    tests/test_spec_drift.py はサブプロセス起動の統合テストスタイルであり、
+    これらの純粋関数の境界はモック不要で直接呼び出して確認できる（フェイル
+    オープンの根拠になる分岐のため、統合テストとは独立に固定する）。"""
+
+    def test_sha256_file_missing_path_returns_none(self):
+        self.assertIsNone(
+            lib.sha256_file("/nonexistent/path/does-not-exist.md"))
+
+    def test_is_project_spec_nested_spec_is_false(self):
+        # docs/foo/SPEC.md はネストしたSPEC.mdであり、basename一致の
+        # guard_spec_writes.is_spec とは異なり is_project_spec は
+        # プロジェクト直下の docs/SPEC.md のみを対象とする（D3）
+        self.assertFalse(lib.is_project_spec("/repo/docs/foo/SPEC.md", "/repo"))
+        self.assertFalse(lib.is_project_spec("docs/foo/SPEC.md", "/repo"))
+
+    def test_is_project_spec_root_spec_is_true(self):
+        # 対照ケース: プロジェクト直下（絶対形・相対形とも）は真になる
+        self.assertTrue(lib.is_project_spec("/repo/docs/SPEC.md", "/repo"))
+        self.assertTrue(lib.is_project_spec("docs/SPEC.md", "/repo"))
+
+    def test_load_spec_state_broken_json_returns_none(self):
+        with tempfile.TemporaryDirectory() as cwd:
+            docs = os.path.join(cwd, "docs")
+            os.makedirs(docs)
+            with open(os.path.join(docs, ".spec_state.json"), "w",
+                      encoding="utf-8") as f:
+                f.write("not json")
+            self.assertIsNone(lib.load_spec_state(cwd))
+
+    def test_load_spec_state_non_dict_returns_none(self):
+        with tempfile.TemporaryDirectory() as cwd:
+            docs = os.path.join(cwd, "docs")
+            os.makedirs(docs)
+            with open(os.path.join(docs, ".spec_state.json"), "w",
+                      encoding="utf-8") as f:
+                json.dump([1, 2, 3], f)
+            self.assertIsNone(lib.load_spec_state(cwd))
 
 
 if __name__ == "__main__":
