@@ -637,6 +637,26 @@ INVENTORY_CASES = (
      "done", "allow"),
     ("INV-CTRL-25", "単独 esac のみのステートメント（R-CTRL3）",
      "esac", "allow"),
+    # --- R-CTRL7（architectがレビュー中に静的読解で発見・実機bash二方向検証
+    # で確認した回帰。詳細: docs/reports/KLK-019/implementation.md）: case
+    # ヘッダーが内側の for ヘッダー／前置き代入と同一statementを共有する形。
+    # strip_control_prefix（ALLOWED_HEADS判定・cwd追跡用）は_strip_case_clause
+    # で剥がすため該当statement自体はdenyにならないが、修正前は
+    # record_loop_binding/record_assignmentsがcaseヘッダーを剥がさず
+    # NAME/代入の登録に失敗し、後続statementがgate_hitせずコマンド全体が
+    # allowへ転じていた（実機bashで実際にファイル削除・上書きを確認済み）。
+    ("INV-CTRL-26", "case ヘッダーと内側 for ヘッダーが同一statementを共有"
+     "（ループ変数経由の書き込み。R-CTRL7）",
+     "case x in *) for f in tickets/active/*.md; do rm $f; done ;; esac",
+     "deny"),
+    ("INV-CTRL-27", "case ヘッダーと内側 for ヘッダーが同一statementを共有"
+     "（読み取り。R-CTRL7の裏付け）",
+     "case x in *) for f in tickets/active/*.md; do cat $f; done ;; esac",
+     "allow"),
+    ("INV-CTRL-28", "case ヘッダーと内側の前置き代入が同一statementを共有"
+     "（リダイレクト書き込み。R-CTRL7）",
+     "case x in *) f=tickets/active/APP-001.md; echo hi > $f ;; esac",
+     "deny"),
 )
 
 
@@ -3225,6 +3245,49 @@ class TestGuardBashWrites(unittest.TestCase):
         # ままであることは test_redirect_to_variable_deny が担保する）
         self.assertDeny(
             "for i in 1 2; do f=tickets/active/APP-001.md; echo x > $f; done")
+
+    # --- R-CTRL7（architectが設計書レビュー中に静的読解で発見。実機bash
+    # 二方向検証で確認済み。詳細: docs/reports/KLK-019/implementation.md）:
+    # `case SUBJECT in PATTERN) ...` のヘッダーが、内側の `for NAME in LIST`
+    # ヘッダーや前置き代入と同一statementを共有する形。strip_control_prefix
+    # （ALLOWED_HEADS判定・cwd追跡用）は _strip_case_clause で case ヘッダーを
+    # 剥がすため該当statement自体は正しく空残余（deny不要）へ倒れるが、修正前は
+    # record_loop_binding/record_assignments が生のstatement語（先頭 "case"）を
+    # 見て `_parse_for_header`／`ASSIGN_RE` のいずれとも一致せず、NAME/代入の
+    # 登録に失敗していた。その結果、後続statement（`do rm $f`・`echo hi > $f`）
+    # がguarded_loop_vars/guarded_vars未登録のままgate_hitせず、コマンド全体が
+    # deny→allowへ転じていた（修正前の実機bash検証で実際にファイルが削除・
+    # 上書きされることを確認済み）。
+
+    def test_klk019_r_ctrl7_case_shared_statement_for_loop_var_write_denies(self):
+        # `case x in *) for f in ...` で case ヘッダーと内側 for ヘッダーが
+        # 同一statementを共有する形。修正前は guarded_loop_vars への "f" の
+        # 登録が漏れ、後続の `do rm $f` が gate_hit せず allow へ転じていた
+        self.assertDeny(
+            "case x in *) for f in tickets/active/*.md; do rm $f; done ;; esac")
+
+    def test_klk019_r_ctrl7_case_shared_statement_for_loop_var_read_allows(self):
+        # 上と同型だが本体が読み取り（cat）のみの場合は引き続き allow
+        # （ゲートを開いた後の許可・不許可は既存の ALLOWED_HEADS 判定に委ねる
+        # という設計が case 共有の形でも一貫していることの裏付け）
+        self.assertAllow(
+            "case x in *) for f in tickets/active/*.md; do cat $f; done ;; esac")
+
+    def test_klk019_r_ctrl7_case_shared_statement_assignment_redirect_denies(self):
+        # `case x in *) f=tickets/active/APP-001.md; echo hi > $f ;; esac` で
+        # case ヘッダーと内側の前置き代入が同一statementを共有する形。修正前は
+        # guarded_vars への "f" の登録が漏れ、後続の `echo hi > $f` が
+        # redirect_violation をすり抜けて allow へ転じていた
+        self.assertDeny(
+            "case x in *) f=tickets/active/APP-001.md; echo hi > $f ;; esac")
+
+    def test_klk019_r_ctrl7_case_shared_statement_inv_sh_11_unaffected(self):
+        # INV-SH-11（値の追跡は原理的に不可能なため `f=path; rm $f` は恒久的に
+        # allow）は case 共有の形になっても挙動が変わらないことを固定する
+        # （guarded_vars は redirect_violation だけに使われ、mentions_guarded_var
+        # のゲートには使われないため。§3方針5の分離が case 経路でも保たれる）
+        self.assertAllow(
+            "case x in *) f=tickets/active/APP-001.md; rm $f ;; esac")
 
 
 if __name__ == "__main__":

@@ -221,3 +221,114 @@ ALLOWED_HEADS判定とcwd追跡の両方から呼ぶこと」を明記してい�
 §6 R-CTRL4の記述と整合させるための更新が必要と判断する（architectの
 権限のため本実装では設計書自体は編集していない。反映有無・要否の最終判断は
 architect/orchestratorへ委ねる）。
+
+## 7. R-CTRL7対応（architectが設計書レビュー中に静的読解で発見した未検証リスク）
+
+### 7-1. 実機検証結果（修正前・コミット349ec69時点）
+
+architectの推論どおり、`case`ヘッダーが内側の`for`ヘッダー／前置き代入と
+同一statementを共有する形で、実際に**deny→allowの回帰が発生することを
+実機で確認した**。検証はscratchpadの使い捨てディレクトリ
+（`/tmp/claude-.../scratchpad/klk019-verify/`。本番`tickets/`・`docs/SPEC.md`
+には一切触れていない）で、`guard_bash_writes.py`へJSON payloadを直接
+標準入力から投入し、修正前バイナリで以下を確認した:
+
+- **`case x in *) for f in tickets/active/*.md; do rm $f; done ;; esac`**:
+  修正前は**allow**（stdout 0バイト・exit 0）。同一コマンドから`case ... ;;
+  esac`のラッパーを外した`for f in tickets/active/*.md; do rm $f; done`は
+  修正前・後とも一貫して**deny**（`'rm' は許可されていません`）であり、
+  ラッパーの有無だけでdeny→allowが切り替わることを確認した
+- **`case x in *) f=tickets/active/APP-001.md; echo hi > $f ;; esac`**:
+  同様に修正前は**allow**。ラッパー無しの
+  `f=tickets/active/APP-001.md; echo hi > $f`は修正前・後とも一貫して
+  **deny**（`リダイレクト（> $f）による書き込み`）
+- **ゲート無しの実機bash実行（サンドボックス内、ゲートを経由しない直接実行）**:
+  上記1件目は`tickets/active/`配下のダミーファイル（APP-001.md・
+  APP-002.md）が実際に削除されることを、2件目はダミーファイルの内容が
+  `original content 1`から`hi`へ実際に上書きされることを確認した。
+  すなわちこの2形はいずれも「hookをすり抜けて実際にチケットファイルを
+  破壊しうる」真陽性の穴であった
+
+### 7-2. 原因（architectの推論の裏付け）
+
+architectの推論は正確だった。`strip_control_prefix`（ALLOWED_HEADS判定・
+cwd追跡用）は`_strip_case_clause`で`case`ヘッダーを剥がすため、
+`case`ヘッダーを含むstatement自体は正しく空残余（またはfor同様に空残余）
+へ倒れ、その1文単体はdenyにならない。一方、`record_assignments`・
+`record_loop_binding`が使う`strip_outer_control_keywords`（tester差し戻し
+対応で新設。§6参照）は、修正前は`for`/`case`をいずれも対象外としていた
+（`_strip_leading_outer_keyword`のdocstringどおり）。このため`case`ヘッダーを
+含むstatementでは残余の先頭が常に生の`"case"`のままとなり、
+`_parse_for_header`（先頭語が`"for"`であることを要求）・`ASSIGN_RE`
+（先頭語が`NAME=`形であることを要求）のいずれとも一致せず、後続statement
+（`do rm $f`・`echo hi > $f`）が参照する`guarded_loop_vars`・`guarded_vars`
+への登録が漏れていた。登録が漏れた結果、後続statementの`gate_hit`が
+一切立たず、ALLOWED_HEADS判定（`rm`は本来ALLOWED_HEADS外）・
+`redirect_violation`（`$f`は本来guarded_varsに登録されているべき）の
+いずれにも到達せずallowになっていた。
+
+### 7-3. 対応したコード変更
+
+`.claude/hooks/guard_bash_writes.py`の`strip_outer_control_keywords`へ
+`case`ヘッダーの剥がし処理を追加した（`_strip_leading_outer_keyword`自体は
+`for`/`case`を対象外のまま変更していない——ALLOWED_HEADS判定用の
+`strip_control_prefix`から見た`for`の特別扱いとは無関係であるため）:
+
+```python
+def strip_outer_control_keywords(statement):
+    tokens = statement
+    while True:
+        if tokens and tokens[0][0] == "w" and tokens[0][1] == "case":
+            residual = _strip_case_clause(tokens)
+            if residual is None:
+                return tokens
+            tokens = residual
+            continue
+        stripped = _strip_leading_outer_keyword(tokens)
+        if stripped is None:
+            return tokens
+        tokens = stripped
+```
+
+`case`ヘッダーは「実行されるコマンドを一切含まない構文マーカー」という点で
+if/while/do等と同じであり（`for`とは異なりヘッダー自体に判定対象の情報＝
+NAME/LISTを持たない）、`_strip_case_clause`で剥がして残余へ進めばよい。
+`_strip_case_clause`が解析できない形（複数パターン`a|b)`等）は`None`を
+返すため、その時点で残余をそのまま返す（既存の「剥がせない場合は元の
+statementをそのまま渡す」規約を踏襲。安全側フォールバック）。
+`_strip_leading_outer_keyword`・`strip_control_prefix`・`_OUTER_CONTROL_KEYWORDS`
+自体は無変更。`record_assignments`・`record_loop_binding`のシグネチャ・
+呼び出し元も無変更（内部で使う`strip_outer_control_keywords`の挙動だけが
+変わる）。
+
+### 7-4. 修正後の検証結果（実測）
+
+- 同じscratchpadのJSON payloadをそのまま再投入し、上記2形がいずれも
+  **deny**へ転じたことを確認した（1件目: `'rm' は許可されていません`。
+  2件目: `リダイレクト（> $f）による書き込み`）
+- 回帰確認: 読み取り版
+  `case x in *) for f in tickets/active/*.md; do cat $f; done ;; esac`・
+  `case x in *) cat tickets/active/APP-001.md ;; esac`は引き続き**allow**
+- INV-SH-11の分離規律の回帰確認:
+  `case x in *) f=tickets/active/APP-001.md; rm $f ;; esac`
+  （`guarded_vars`はredirect_violationにのみ使われ、`mentions_guarded_var`の
+  ゲートには使われないため、値の追跡不能という既存の恒久的allow）は
+  修正後も一貫して**allow**のまま（既存INV-SH-11の挙動をcase共有の形でも
+  変えていないことを確認）
+- `tests/test_guard_bash_writes.py`へ`INVENTORY_CASES`3件
+  （`INV-CTRL-26`〜`28`）と専用回帰テスト4件（`test_klk019_r_ctrl7_*`）を
+  追加し、`python3 -m unittest discover -s tests -v`で**735件全件PASS**
+  （既存731件＋今回追加4件。INV-CTRL-26〜28は既存の
+  `test_inventory_cases_match_expected_decisions`のsubTestとして自動的に
+  カバーされるため、テストメソッド数の増分には現れない）
+
+### 7-5. Remaining Risks（追加分）
+
+- R-CTRL2（既知・設計確定事項）と同様、`case`の複数パターン（`a|b)`）は
+  `_strip_case_clause`が`None`を返しフォールバックdenyのままであり、
+  `strip_outer_control_keywords`の今回の変更でもこの制約は変わらない
+- 設計書`docs/designs/KLK-019.md`§4・§6には本R-CTRL7・対応する
+  `strip_outer_control_keywords`のcase対応は未反映（tester差し戻し対応の
+  `strip_outer_control_keywords`新設自体も設計書時点では未反映＝§6-4で
+  既に申し送り済みの反映要否と合わせて、architect/orchestratorの判断に
+  委ねる）

@@ -2688,9 +2688,14 @@ def _strip_case_clause(tokens):
 # `for`/`case` に到達した時点でヘッダーごと消費・破棄されてしまい使えない
 # （ALLOWED_HEADS判定用には「ヘッダーに実行コマンドは無い」という扱いが
 # 正しいが、この2関数には逆の要件がある）。そこで「条件／本体／閉じ
-# キーワードだけを先頭から剥がし、for/case はそのまま残す」部分だけを
+# キーワードだけを先頭から剥がし、for はそのまま残す」部分だけを
 # _strip_leading_outer_keyword として切り出し、strip_control_prefix と
 # 新設の strip_outer_control_keywords の両方から呼ぶ（重複ロジックの回避）。
+# **R-CTRL7追加修正:** `case`は当初この関数の対象外としていたが、
+# strip_outer_control_keywords 側では剥がす（下記関数のdocstring参照）。
+# `case`ヘッダー自体は「実行されるコマンドを含まない構文マーカー」という点で
+# if/while/do等と同じであり、`for`（ヘッダー自体に判定対象の情報=NAME/LISTが
+# ある）とは扱いが異なるため、ここでは区別を残す。
 _OUTER_CONTROL_KEYWORDS = (CONTROL_CONDITION_KEYWORDS | CONTROL_BODY_KEYWORDS |
                            CONTROL_CLOSING_KEYWORDS)
 
@@ -2752,19 +2757,49 @@ def strip_control_prefix(statement):
 
 
 def strip_outer_control_keywords(statement):
-    """先頭に連なる外側制御構文キーワードだけを剥がし、`for`/`case`はそのまま
-    残す軽量ヘルパー（KLK-019差し戻し）。
+    """先頭に連なる外側制御構文キーワード・`case`ヘッダーを剥がし、`for`ヘッダー
+    はそのまま残す軽量ヘルパー（KLK-019差し戻し・R-CTRL7追加修正）。
 
-    strip_control_prefix と異なり `for`/`case` に到達しても止まらず（残余の
-    先頭に残したまま）常に残余トークン列を返す（「変化が無い」ことを None
-    で示す設計を採らない——呼び出し元 record_loop_binding・
-    record_assignments は残余の先頭が for ヘッダー／代入かどうかだけを
-    見るため、変化の有無を区別する必要が無い）。剥がすものが無ければ
-    引数をそのまま返す（制御構文キーワードで始まらない大多数の
-    ステートメントに対して1バイトも挙動を変えない）。
+    strip_control_prefix と異なり `for` に到達しても止まらず（残余の先頭に
+    残したまま）常に残余トークン列を返す（「変化が無い」ことを None で示す
+    設計を採らない——呼び出し元 record_loop_binding・record_assignments は
+    残余の先頭が for ヘッダー／代入かどうかだけを見るため、変化の有無を
+    区別する必要が無い）。剥がすものが無ければ引数をそのまま返す（制御構文
+    キーワードで始まらない大多数のステートメントに対して1バイトも挙動を
+    変えない）。
+
+    **R-CTRL7追加修正（architect指摘・実機bash二方向検証で確認。詳細:
+    docs/reports/KLK-019/implementation.md）:** 当初 `case` を対象外として
+    いたが、`case SUBJECT in PATTERN) ...` のヘッダーが内側の
+    `for NAME in LIST` ヘッダーや前置き代入と同一ステートメントを共有する形
+    （`case x in *) for f in tickets/active/*.md; do rm $f; done ;; esac`・
+    `case x in *) f=tickets/active/APP-001.md; echo hi > $f ;; esac`）では、
+    `case` ヘッダー自体を剥がさないと残余の先頭が常に "case" のままとなり、
+    `_parse_for_header`／`ASSIGN_RE` のいずれとも一致せず
+    record_loop_binding／record_assignments への登録が漏れていた
+    （実測: 修正前は上記2形がいずれも deny→allow・実機 bash で実際に
+    ファイルが削除・上書きされることを確認した）。`strip_control_prefix`
+    側（ALLOWED_HEADS判定・cwd追跡用）は既に `_strip_case_clause` で
+    `case` ヘッダーを剥がしていたため、この statement 自体は正しく空残余
+    （denyの必要なし）へ倒れていたが、その結果このstatement単体ではdenyが
+    出ず、後続statementが guarded_loop_vars／guarded_vars 未登録のまま
+    gate_hitしないため、コマンド全体としてはdeny→allowに転じていた。
+    `case` ヘッダーは「実行されるコマンドを一切含まない構文マーカー」という
+    点で if/while/do 等と同じであり（`for` とは異なりヘッダー自体に
+    判定対象の情報＝NAME/LISTが無い）、剥がした後の残余だけを見れば十分
+    なため、`_strip_case_clause` で剥がして残余へ進む。`_strip_case_clause`
+    が解析できない形（複数パターン `a|b)` 等）は None を返すため、その
+    時点で残余をそのまま返す（安全側フォールバック。剥がせない場合は元の
+    statement をそのまま渡す既存の規約を踏襲する）。
     """
     tokens = statement
     while True:
+        if tokens and tokens[0][0] == "w" and tokens[0][1] == "case":
+            residual = _strip_case_clause(tokens)
+            if residual is None:
+                return tokens
+            tokens = residual
+            continue
         stripped = _strip_leading_outer_keyword(tokens)
         if stripped is None:
             return tokens
