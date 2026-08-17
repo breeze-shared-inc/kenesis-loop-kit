@@ -3172,6 +3172,60 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertDeny("case x in a|b) cat tickets/active/APP-001.md ;; esac")
         self.assertDeny("for f in tickets/active/*.md; do rm $f; done")
 
+    # --- tester差し戻し（AC6独自検証で発見。設計書§9 N1〜N6のいずれにも
+    # 該当しない新規のdeny→allow転換）: record_loop_binding / record_assignments
+    # がいずれも生の（strip_control_prefixを通していない）statement語で
+    # `for NAME in LIST` / 前置き代入を検出するため、内側の for ヘッダーや
+    # 代入が「別の制御構文の do/then 等と同一ステートメントを共有する」形
+    # （`;` 区切りで `do for ...` のように連結される、ごく一般的な入れ子
+    # ループの書き方）だと NAME/変数の登録が丸ごと失われ、後続の書き込みに
+    # ゲートが一切立たず allow へ転じる。strip_control_prefix を経由する
+    # statement_violation/find_violation のcwd追跡は正しく処理するため、
+    # record_loop_binding・record_assignments だけがこの前提から取り残されて
+    # いる。実機bashでも実際にガード対象ファイルの削除・上書きが発生する
+    # ことを確認済み（tester試験時の手動検証）。以下はいずれも「deny である
+    # べき」だが本コミット時点の実装では allow に転じてしまう回帰固定テスト
+    # （プロダクションコード側の修正はimplementerへ差し戻す）。
+
+    def test_klk019_regression_nested_for_loop_var_write_denies_do_prefix(self):
+        # 外側 for の `do` と内側 `for NAME in LIST` が同一ステートメントを
+        # 共有する（`; do for f in ...`）、実務でごく普通の入れ子ループの
+        # 書き方。record_loop_binding が生の statement 語（先頭 "do"）を見て
+        # `_parse_for_header` に失敗するため NAME="f" が guarded_loop_vars に
+        # 登録されず、`do rm $f` にゲートが一切立たず allow へ転じる
+        self.assertDeny(
+            "for i in 1 2; do for f in tickets/active/*.md; do rm $f; done; done")
+
+    def test_klk019_regression_nested_for_loop_var_write_denies_then_prefix(self):
+        # 上と同型。`if ...; then for NAME in LIST` の形で "then" が内側
+        # forヘッダーと同一ステートメントを共有する場合も同じ穴が開く
+        self.assertDeny(
+            "if true; then for f in tickets/active/*.md; do rm $f; done; fi")
+
+    def test_klk019_regression_nested_for_loop_var_write_denies_while_prefix(self):
+        # 上と同型。`while ...; do for NAME in LIST` の形
+        self.assertDeny(
+            "while true; do for f in tickets/active/*.md; do rm $f; done; "
+            "break; done")
+
+    def test_klk019_regression_nested_for_loop_var_redirect_write_denies(self):
+        # redirect_violation 経由でも同じ穴が開く（guarded_loop_vars が空の
+        # ため `> $f` の変数参照チェックも素通りする）
+        self.assertDeny(
+            "for i in 1 2; do for f in tickets/active/*.md; do "
+            "echo x > $f; done; done")
+
+    def test_klk019_regression_nested_assignment_redirect_write_denies(self):
+        # record_assignments も同じ根本原因（生の statement 語を見る）を
+        # 共有する: `for i in 1 2; do f=tickets/active/APP-001.md; ...` の
+        # ように前置き代入が外側 for の "do" と同一ステートメントを共有すると
+        # guarded_vars に "f" が登録されず、後続の `echo x > $f` が
+        # redirect_violation をすり抜けて allow へ転じる（トップレベルの
+        # `f=tickets/active/APP-001.md; echo x > $f` は既存どおり deny の
+        # ままであることは test_redirect_to_variable_deny が担保する）
+        self.assertDeny(
+            "for i in 1 2; do f=tickets/active/APP-001.md; echo x > $f; done")
+
 
 if __name__ == "__main__":
     unittest.main()
