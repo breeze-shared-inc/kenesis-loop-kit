@@ -246,6 +246,34 @@ class TestMain(ListTicketsBase):
         self.assertIn("ERROR KLK-777_broken.md:", out)
         self.assertIn("計 1 件（エラー 1 件）", out)
 
+    def test_relative_root_matches_absolute_root(self):
+        self.write_ticket("KLK-005_t.md", tid="KLK-005", status="design_done",
+                          priority="medium", updated="2026-07-15")
+        resolved_root = self.root.resolve()
+        abs_rc, abs_out, _abs_err = self.run_main(root=resolved_root)
+        cwd_backup = os.getcwd()
+        self.addCleanup(os.chdir, cwd_backup)
+        os.chdir(str(resolved_root))
+        rel_rc, rel_out, _rel_err = self.run_main(root=".")
+        self.assertEqual(abs_rc, rel_rc)
+        self.assertEqual(abs_out, rel_out)
+
+
+# ---------------------------------------------------------------------------
+# T4: パスを表す引数を一切持たない制約自体の固定（argparse不使用・sys.argv非参照）
+# ---------------------------------------------------------------------------
+
+class TestNoPositionalPathArguments(unittest.TestCase):
+    """T4: パスを表す引数を一切持たない制約自体の固定(argparse不使用・sys.argv非参照)。"""
+
+    def test_module_does_not_use_argparse(self):
+        source = Path(list_tickets.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("argparse", source)
+
+    def test_module_does_not_reference_sys_argv(self):
+        source = Path(list_tickets.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("sys.argv", source)
+
 
 if __name__ == "__main__":
     unittest.main()
