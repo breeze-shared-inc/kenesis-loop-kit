@@ -16,9 +16,14 @@
 
 | 作業場所 | エージェント | 扱うもの |
 |---|---|---|
-| メインツリー | orchestrator / investigator / architect | チケット・メトリクス・SPEC・設計書（docs/designs/） |
-| チケット専用worktree | implementer / tester / reviewer | コード・テスト・コミット |
+| メインツリー | orchestrator / investigator / architect | チケット・メトリクス・SPEC・設計書（docs/designs/）・`docs/reports/{ID}/investigation.md`・`review.md`（investigator・reviewer分はorchestratorが代筆） |
+| チケット専用worktree | implementer / tester / reviewer | コード・テスト・コミット・`docs/reports/{ID}/implementation.md`・`test-report.md`（implementer・testerの自筆分） |
 
+- reviewerは本表では「チケット専用worktree」行にのみ現れる。worktree内でレビュー対象
+  （コード・コミット）を読むためであり、`docs/reports/{ID}/review.md`自体はWrite/Editツールを
+  持たないため書き込まない。同ファイルの作成・コミットはorchestratorがメインツリーで代筆する
+  （上のメインツリー行を参照）。表の「エージェント」列は『どこで作業するか』を表し、
+  『誰の報告が外部化されるか』ではない
 - 境界は「ドキュメントとコードの境界」に一致する。設計より前の工程はコードを変更しないためメインツリーで完結し、実装以降はコードを触るためworktreeへ移る
 - implementer / tester / reviewer への委譲時、orchestratorは委譲プロンプトにworktreeの絶対パスを明記する（手順は `.claude/agents/orchestrator.md`「worktreeライフサイクル管理」を正とする）
 
@@ -36,9 +41,20 @@
 
 **作成 — design_done → implementer委譲の直前**（詳細手順は `.claude/agents/orchestrator.md`「worktreeライフサイクル管理」を正とする）
 
-1. `docs/designs/{ID}.md` をdevelopへコミットしてから派生する（worktree内から設計書を読めるようにするため）
+1. `docs/designs/{ID}.md`（および存在する場合は `docs/reports/{ID}/investigation.md`）を
+   developへコミットしてから派生する（worktree内から両ファイルを読めるようにするため。
+   詳細手順は `.claude/agents/orchestrator.md`「worktreeライフサイクル管理」作成手順2を正とする）
 2. `mkdir -p ../{リポジトリ名}.wt && git worktree add ../{リポジトリ名}.wt/{チケットID} -b feature/{チケットID}-{slug} develop`
 3. 差し戻し再実装では既存のworktree・ブランチを継続使用する
+
+**レビュー完了時 — 承認・差し戻し共通・マージ判断の前**
+
+`docs/reports/{ID}/review.md` はメインツリーで作成・commitする（reviewerはWrite/Editツール
+非保持のためorchestratorが代筆）。マージの成否に依存せずメインツリーのチケットから
+参照できるようにするため、マージ判断の前に行う。チケットworktree側のブランチへ
+コミットしてマージで取り込む方式（KLK-012実運用）は正規手順として採用しない —
+差し戻し時はマージされず恒久的に参照不能になるため。詳細手順は
+`.claude/agents/orchestrator.md`「worktreeライフサイクル管理」を正とする。
 
 **削除 — reviewer承認後・done化の前**
 
