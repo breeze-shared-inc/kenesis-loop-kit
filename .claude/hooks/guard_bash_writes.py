@@ -99,7 +99,8 @@ bash と一致させる正規化（L0）を置く。
     区間はどこかで保護対象に言及していれば全区間の先頭コマンドがホワイトリストに
     載っている必要がある（`find tickets/... | xargs rm` のようなパイプ越しの
     書き込み連鎖を防ぐため）。ホワイトリスト収載コマンドのうち引数だけで書ける
-    ものには追加規則を持つ（sed の -i 全表記と w／W コマンド、awk の
+    ものには追加規則を持つ（sed の -i 全表記とプログラム本文のホワイトリスト
+    （SED-7）、awk の
     プログラム内リダイレクト・変数束縛・**オプション**〔既知の読み取り専用
     オプションのホワイトリスト。未知の `-` 始まりの語は deny〕・**プログラム
     本文**〔下記〕、sort の -o／--output、uniq の第2位置引数、find の
@@ -141,6 +142,26 @@ bash と一致させる正規化（L0）を置く。
     なお degraded mode（下記）は空白分割でプログラム本文の同一性が失われる
     ためこの判定を適用できず、`system(` / `@load` / `@include` と間接呼び出し
     `@f(...)` のブラックリスト（語単位＋空白結合テキスト）で見る。
+
+  sed のプログラム本文（sed_program_violation・SED-7。KLK-015）— awk の
+    AW-7 と同型のホワイトリストだが、sed のコマンドが単一文字であるため
+    条件が1つ（許可文字集合）に縮約される。**主張:** `sed_program_violation`は
+    リテラル除去後のプログラム本文が `SED_SAFE_PROGRAM_CHARS` のみで
+    構成されることを要求し、未知の文字・未収載のコマンド（`w`/`W`/`r`/`R`/
+    `e`/`a`/`i`/`c`/`b`/`t`/`T`/`:` 等）は自動的に deny 側へ落ちる。
+    **破れる形（否定形）:** `sed_strip_literals`の終端条件（デリミタの
+    再出現・改行での打ち切り）が sed の実際の字句規則と食い違う入力。
+    **向き:** 除去しすぎ（over-removal）は allow 方向（危険）／除去し
+    なさすぎ（under-removal）は deny 方向（安全）。**現在の
+    `sed_strip_literals`は under-removal 方向にしか倒れない**（デリミタが
+    閉じない場合は None で deny、閉じた場合のみ除去するため、実行される
+    テキストを誤って消す経路が構造的に存在しない）。**検出器:**
+    `tests/test_guard_bash_writes.py`の INV-SED-09 以降（設計書
+    docs/designs/KLK-015.md §4-6）と AC8 の実機二方向検証。
+    `a`/`i`/`c`（自由テキスト）・`b`/`t`/`T`/`:`（分岐・ラベル）は終端処理
+    コストが見合わないため安全集合から意図的に除外し、自動 deny としている
+    （degraded mode は空白分割でプログラム本文の同一性が失われるため
+    SED-7 を適用せず、従来の `SED_WRITE_RE` ブラックリストを維持する）。
 
   書き込み先オペランドと cwd — 語のうち**構文的に書き込み先と確定している**もの
     （出力リダイレクトの直後の語・sort の -o の値・uniq の第2位置引数）だけを
@@ -229,8 +250,19 @@ bash と一致させる正規化（L0）を置く。
     「未知の構文は deny」という機械的既定が無い。degraded の awk は旧版で
     常に deny だったため保護の後退ではない。
   - 保守側へ倒している判定（誤deny方向。保護対象に言及する／保護対象を cwd と
-    する場合に限る）: 保護対象を cwd とする sed のスクリプトに ` w <非空白>` が
-    現れる形（`sed 's/a w b/c/'`）／mawk・BWK awk 固有のオプション（`-W ...` 等）と
+    する場合に限る）: **sed のプログラム本文がホワイトリスト（SED-7）の
+    許可文字集合を満たさない形**はすべて deny になる（KLK-015）。具体的には
+    ① `r`/`R`（外部ファイルの読み込み。情報開示の経路） ② `a`/`i`/`c`
+    （追加・挿入・変更の自由形式テキスト） ③ `b`/`t`/`T`/`:`（分岐・ラベル）
+    ④ GNU拡張の `z`/`F`/`v`（利用頻度が低いため未収載） ⑤ `s`/`y` の
+    `i`/`I`/`m`/`M` フラグ（大文字小文字無視・複数行モード。`g`/`p`/数字は
+    許可） ⑥ 上記以外の未収載の1文字コマンド。**この列挙が誤deny予算の正**
+    （設計書 docs/designs/KLK-015.md §6 R1）であり、実用上の必要が生じた
+    場合は安全性を確認のうえ `SED_SAFE_COMMANDS` へ追加する（追加チケット）。
+    なお旧版（`SED_WRITE_RE` のみ）で誤denyだった
+    `sed 's/a w b/c/'`（`w` が正規表現/置換文字列の内側の1文字にすぎない形）
+    は、SED-7 がデリミタごとスパンを除去するため誤denyが解消し allow になる
+    （保護の後退ではない。安全側の是正）／mawk・BWK awk 固有のオプション（`-W ...` 等）と
     gawk の未収載オプション（`-I`・`--trace`・`-O`・`-L`）は AWK_SAFE_FLAGS /
     AWK_SAFE_VALUE_FLAGS に無いため deny になる（安全性を確認してから収載する）／
     **awk のプログラム本文がホワイトリスト（AW-7）の3条件を満たさない形**は
@@ -277,8 +309,9 @@ bash と一致させる正規化（L0）を置く。
     既に同じ判定を行っている**（degraded との非対称を解消する方向）。
   - ホワイトリスト収載コマンドのうち次の書き込み／実行経路は**未対応**である。
     いずれも本 hook の導入当初から存在する穴で、別チケットで扱う:
-    `sed -f SCRIPT`（外部スクリプトでプログラムが不可視）、GNU sed の `e`
-    フラグ・`e` コマンド（**任意コマンド実行**）、
+    `sed -f SCRIPT`（外部スクリプトでプログラムが不可視。GNU sed の `e`
+    フラグ・`e` コマンドは KLK-015 で SED-7 ホワイトリストへ反転し
+    自動的に deny へ落ちるため対応済み＝本欄から除外した）、
     `sort --compress-program=PROG`（外部プログラム実行）、
     `git diff --output=FILE`。
   - パスがリテラルに現れない形（変数・置換の出力・断片の結合。
@@ -334,7 +367,8 @@ ALLOWED_HEADS = {
              # ただし移動先は next_cwd で追跡し、後続の相対パス判定に使う
     "pwd", "echo", "cut", "tr", "nl", "rev", "realpath", "readlink",
     "mv",    # active/ ↔ done/ の移動・アーカイブは設計上 Bash mv が正規手段
-    "sed",   # -i（in-place）・w コマンドが無ければ読み取り
+    "sed",   # -i（in-place）・プログラム本文が SED-7 ホワイトリスト外
+             # （w/W・r/R・e・a/i/c・b/t/T 等）でなければ読み取り
     "awk",   # プログラム内リダイレクト（print > file）・system()・
              # 書き出し／外部コード読み込みオプションが無ければ読み取り
     "find",  # -exec / -delete 等が無ければ読み取り
@@ -410,6 +444,34 @@ ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9]*=")
 VAR_REF_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?")
 SED_INPLACE_SHORT_RE = re.compile(r"-[A-Za-z]*i")     # -i / -i.bak / -ni / -si.bak
 SED_WRITE_RE = re.compile(r"(?:^|[;{}\s/])[wW]\s+\S")  # s/a/b/w FILE ・ /re/w FILE
+
+# --- SED-7: sed プログラム本文のホワイトリスト（KLK-015・AW-7と同型） ------
+#
+# sed のコマンド集合は単一文字であるため、AW-7 の「呼び出し名の許可集合」
+# （条件2）は「許可文字集合」（条件1）へ吸収され、「出力構文の順序条件」
+# （条件3）も不要になる（sed には print のような「安全な位置」が無く、
+# w/W/r/R/e はどこに現れても危険なため、除去されずに残っていれば無条件に
+# deny してよい＝ KLK-010 §3-1 P8）。
+#
+# 許可するコマンド（読み取り専用と確認済み。理由は docs/designs/KLK-015.md
+# §3 の表を正とする）:
+SED_SAFE_COMMANDS = frozenset("pPdDnNgGhHxlqQsy=")
+
+# アドレス構文（行番号・$・,・!・~・+）とグルーピング（{}・;）・空白。
+# デリミタそのもの（s/y のデリミタ・アドレス正規表現のデリミタ）は
+# sed_strip_literals がスパンごと除去するためここへ含める必要はない。
+# awk の // と異なり sed のデリミタは位置が構文的に確定しており、
+# 「正規表現か除算か」で揺れる曖昧さが無いため AWL-4 相当の曖昧ガードも
+# 不要である。
+SED_SAFE_STRUCTURAL_CHARS = frozenset("0123456789$,!~+;{} \t\n")
+
+SED_SAFE_PROGRAM_CHARS = SED_SAFE_COMMANDS | SED_SAFE_STRUCTURAL_CHARS
+
+# sed が実際にプログラムとして実行するテキストを供給するオプション。
+# -f／--file の値は外部スクリプトファイル名でありプログラム本文ではない
+# （中身は不可視のまま＝ KLK-010 D6-3・INV-SED-05 のスコープ外を維持する）。
+SED_PROGRAM_TEXT_FLAGS = ("-e", "--expression")
+SED_SCRIPT_VALUE_FLAGS = ("-e", "-f", "--expression", "--file")
 
 # awk 専用（プログラム内リダイレクトと変数束縛の検出）
 AWK_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=(.*)$", re.S)
@@ -1473,6 +1535,268 @@ def awk_program_violation(text):
     return None
 
 
+def _sed_skip_bracket_expression(text, i):
+    r"""ブラケット式 `[...]`（POSIX/GNU の文字クラス）の終端の**次**の位置を返す。
+
+    `text[i]` は `[` であること。対応する `]` が見つからなければ **-1**
+    （未終端。呼び出し側は None を返し deny する＝安全側）。
+
+    POSIX の字句規則（GNU regex＝GNU sed の既定 BRE と一致。**ブラケット式の
+    内側ではバックスラッシュはエスケープではない**——`[\]]` は「`\` と `]` を
+    含む文字クラス」ではなく「`\` 1文字だけの文字クラス」＋直後の literal
+    `]`（POSIX にバックスラッシュエスケープの規定は無い。実機 GNU sed 4.9で
+    確認済み）:
+      1. `[` の直後が `^`（否定）ならその次へ進む。
+      2. その次の最初の文字が `]` なら、それは**リテラルの `]`**（文字クラスの
+         要素）として扱い、閉じ括弧とはみなさない（`[]abc]` は `]abc` の
+         4文字を含む集合）。
+      3. 以降、未エスケープ（＝エスケープの概念自体が無い）の `]` が現れる
+         まで進む。ただし `[.` `[=` `[:` で始まる特殊要素（照合記号・
+         等価クラス・文字クラス名。例 `[:alpha:]`）は、対応する `.]` `=]`
+         `:]` まで丸ごと読み飛ばす（内側に `]` が含まれても閉じ括弧と
+         誤認しない。例 `[[:alpha:]]` の内側の `:alpha:]` の `]` は
+         `[:` の対応 `:]` であり、外側のブラケットはまだ閉じない）。
+      4. 改行に達したら未終端（sed のブラケット式は改行をまたげない）。
+
+    この関数は `sed_strip_literals` の三つのデリミタ走査
+    （アドレス正規表現 `/…/`・カスタムデリミタ `\cXXXc`・`s` のパターン
+    フィールド）が **デリミタ文字をブラケット式の内側で誤って「閉じデリミタ」
+    と読まない**ようにするために使う。`s`/`y` の**置換フィールド**・`y` の
+    どちらのフィールドにも適用しない（置換文字列はリテラルでありブラケット式
+    の構文を持たない。実機 GNU sed 4.9 で `s/a/[/]/` がブラケット式として
+    解釈されず `]` 以降がフラグとしてエラーになることを確認済み）。
+    """
+    n = len(text)
+    j = i + 1
+    if j < n and text[j] == "^":
+        j += 1
+    if j < n and text[j] == "]":
+        j += 1  # 直後の ] はリテラル（閉じ括弧ではない）
+    while j < n:
+        c = text[j]
+        if c == "\n":
+            return -1
+        if c == "[" and j + 1 < n and text[j + 1] in ".=:":
+            end_seq = text[j + 1] + "]"
+            k = text.find(end_seq, j + 2)
+            if k < 0:
+                return -1
+            j = k + 2
+            continue
+        if c == "]":
+            return j + 1
+        j += 1
+    return -1
+
+
+def sed_strip_literals(text):
+    r"""sed プログラムのアドレス正規表現・s/y のパターン＋置換文字列を除去する。
+
+    **不変条件（P8）— 除去は「sed が実行しないテキスト」の部分集合でなければ
+    ならない。開始条件と終端条件を対で規定し、終端が確定できない位置では
+    除去せず None（判定不能→deny）を返す。**
+
+    - **アドレス正規表現 `/…/`**: 未エスケープの `/` から次の未エスケープの
+      `/` まで。改行に達したら未終端（sed の正規表現は改行をまたげない）。
+      デリミタごと除去する（残す情報が無いため。awk の `//` 空literalとは
+      異なり、除去後に「ここに正規表現があった」という痕跡を残す必要が無い
+      ——後続の文字だけで安全性を判定できるため）。
+    - **カスタムデリミタのアドレス正規表現 `\cXXXc`**（GNU/POSIX拡張）:
+      `\` の次の1文字をデリミタとし、同様に未エスケープの再出現まで除去する。
+      デリミタが `\` または改行なら不正な形として None を返す。
+    - **`s`/`y` のパターン＋置換文字列**: `s`/`y` の次の1文字をデリミタとし、
+      未エスケープの再出現を2回見つけるまで除去する（`s`/`y` を含めて3回の
+      デリミタ出現＝2つの内容スパン）。コマンド文字（`s`/`y`）自体は
+      **安全文字として残す**——`SED_SAFE_COMMANDS` に含まれるため。
+      2回目の再出現が見つからない、または途中で未エスケープの改行に
+      達した場合は None を返す。**除去後に残るのは s のフラグ領域だけであり、
+      フラグに `w`/`e` が含まれれば安全文字集合に無いため自動的に deny
+      になる**（`g`/`p`/数字のみ許可。`i`/`I`/`m`/`M` は本改訂では未収載＝
+      新規deny・§6 リスク R1）。
+    - **ブラケット式 `[...]`（tester差し戻し・KLK-015 T-SED7h）**:
+      アドレス正規表現・カスタムデリミタ正規表現・`s` の**パターン
+      フィールドのみ**（`found == 0` の間）で、未エスケープの `[` に
+      遭遇したら `_sed_skip_bracket_expression` で対応する `]` まで
+      丸ごと読み飛ばし、内側の文字（デリミタと同じ文字を含む）をデリミタ
+      探索の対象にしない（POSIX のブラケット式は「正規表現の中の別の
+      正規表現」であり、内側でのデリミタの再出現は sed 自身も閉じデリミタ
+      と解釈しないため——`sed -n '/[/]/p'` は実機 GNU sed 4.9 で該当行を
+      表示するだけの読み取り専用コマンドである）。**破れる形（否定形）:**
+      `_sed_skip_bracket_expression` の終端判定が実際の GNU regex の
+      ブラケット式字句規則と食い違う入力。**向き:** 対応する `]` を
+      実際より手前で見つける（under-skip）と、ブラケット内側のデリミタが
+      閉じデリミタと誤認されて早期にクローズし、旧来どおり None を返す
+      デリミタ側へ倒れる（安全側＝deny。P8 の不変条件を保つ）。対応する
+      `]` を実際より奥で見つける（over-skip）方向の誤りは無い
+      （`_sed_skip_bracket_expression` は最初に出会う非特殊要素の `]` で
+      必ず終了するため、実際の GNU regex より広く読み飛ばすことはない）。
+      `s`/`y` の**置換フィールド**（`found == 1` 以降）・`y` コマンドの
+      両フィールドにはブラケット式の構文が無いため適用しない（実機確認は
+      `_sed_skip_bracket_expression` のdocstring参照）。**検出器:**
+      `tests/test_guard_bash_writes.py`の
+      `test_sed_bracket_expression_containing_delimiter_allow`。
+    - **上記以外の文字**: そのまま残す（安全性は呼び出し側の
+      `sed_program_violation` が `SED_SAFE_PROGRAM_CHARS` で判定する）。
+
+    戻り値: 除去後テキスト。**判定不能（デリミタが閉じない）は None。**
+    """
+    out, i, n = [], 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch in ("s", "y"):
+            if i + 1 >= n:
+                return None
+            delim = text[i + 1]
+            if delim in ("\\", "\n"):
+                return None
+            is_regex_field = ch == "s"  # y は両フィールドともリテラル（非regex）
+            j, found = i + 2, 0
+            while j < n and found < 2:
+                c = text[j]
+                if (is_regex_field and found == 0 and c == "["
+                        and delim != "["):
+                    end = _sed_skip_bracket_expression(text, j)
+                    if end < 0:
+                        return None
+                    j = end
+                    continue
+                if c == "\\":
+                    j += 2
+                    continue
+                if c == delim:
+                    found += 1
+                    j += 1
+                    continue
+                if c == "\n":
+                    break
+                j += 1
+            if found < 2:
+                return None
+            out.append(ch)  # コマンド文字は安全文字として残す
+            i = j
+            continue
+        if ch == "/":
+            j, closed = i + 1, False
+            while j < n:
+                c = text[j]
+                if c == "[":
+                    end = _sed_skip_bracket_expression(text, j)
+                    if end < 0:
+                        return None
+                    j = end
+                    continue
+                if c == "\\":
+                    j += 2
+                    continue
+                if c == "/":
+                    closed = True
+                    break
+                if c == "\n":
+                    break
+                j += 1
+            if not closed:
+                return None
+            i = j + 1  # デリミタごと除去（残す情報が無い）
+            continue
+        if ch == "\\":
+            if i + 1 >= n or text[i + 1] == "\n":
+                return None
+            delim = text[i + 1]
+            j, closed = i + 2, False
+            while j < n:
+                c = text[j]
+                if c == "[" and delim != "[":
+                    end = _sed_skip_bracket_expression(text, j)
+                    if end < 0:
+                        return None
+                    j = end
+                    continue
+                if c == "\\":
+                    j += 2
+                    continue
+                if c == delim:
+                    closed = True
+                    break
+                if c == "\n":
+                    break
+                j += 1
+            if not closed:
+                return None
+            i = j + 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def sed_program_texts(words):
+    """sed が**プログラムとして実行する**テキストを列挙する（AW-7の
+    `awk_program_texts` と同型）。
+
+    - `-e TEXT` / `-eTEXT` / `--expression TEXT` / `--expression=TEXT` の値
+      （複数可。GNU sed は複数指定時に改行で連結して1つのプログラムにする）
+    - `-e` も `-f`（`--file` 含む）も無い場合に限り、位置引数の**先頭の
+      オペランド**（sed は最初の非オプション引数をプログラムとして扱い、
+      2番目以降は入力ファイル名として扱う）
+    - `-f FILE` / `--file=FILE` の値は**プログラム候補に含めない**
+      （中身が不可視の外部ファイル＝ KLK-010 D6-3 のスコープ外を維持する）。
+      `-f` が存在する場合、位置引数はすべて入力ファイル名であり
+      **フォールバックの「先頭オペランド」判定も行わない**
+      （行うと入力ファイル名を誤ってプログラム本文として検査してしまう）
+    """
+    texts, positionals, expect, has_f = [], [], "", False
+    for word in head_args(words):
+        if expect:
+            if expect in SED_PROGRAM_TEXT_FLAGS:
+                texts.append(word)
+            else:
+                has_f = True
+            expect = ""
+            continue
+        if word in SED_SCRIPT_VALUE_FLAGS:
+            expect = word
+            continue
+        if word.startswith("-e") and len(word) > 2:
+            texts.append(word[2:])
+            continue
+        if word.startswith("--expression="):
+            texts.append(word[len("--expression="):])
+            continue
+        if word.startswith("-f") and len(word) > 2:
+            has_f = True
+            continue
+        if word.startswith("--file="):
+            has_f = True
+            continue
+        if word.startswith("-"):
+            continue
+        positionals.append(word)
+    if not texts and positionals and not has_f:
+        texts.append(positionals[0])
+    return texts
+
+
+def sed_program_violation(text):
+    """プログラム本文が「安全と確認できる形」でなければ理由を返す（SED-7）。
+
+    **ホワイトリスト。** リテラル除去後のプログラムが `SED_SAFE_PROGRAM_CHARS`
+    のみで構成されていることを要求する。未知の文字・未収載のコマンド
+    （`w`/`W`/`r`/`R`/`e`/`a`/`i`/`c`/`b`/`t`/`T`/`:` 等）はすべて deny 側へ
+    落ちる。
+    """
+    stripped = sed_strip_literals(text)
+    if stripped is None:
+        return ("sed プログラムの字句を確定できません（アドレス正規表現、"
+                "または s/y コマンドの区切り文字が閉じていません）。安全と"
+                "確認できるプログラム形に限り許可します")
+    unsafe = [c for c in stripped if c not in SED_SAFE_PROGRAM_CHARS]
+    if unsafe:
+        return ("sed プログラムに許可されていないコマンド／文字 %r があります"
+                "（w/W・r/R・e・a/i/c・b/t/T 等の書き込み・情報開示・実行・"
+                "分岐系コマンドは許可されていません）" % unsafe[0])
+    return None
+
+
 def awk_violation(words, cwd="", degraded=False):
     """awk セグメントの違反理由を返す（設計書 §3-6 D1 の AW-1〜AW-7）。
 
@@ -1638,18 +1962,33 @@ def segment_violation(words, substs=(), cwd="", degraded=False):
         if any(SED_INPLACE_SHORT_RE.match(t) or t == "--in-place" or
                t.startswith("--in-place=") for t in flat):
             return "sed -i（in-place編集）は許可されていません"
-        # スクリプト引数に埋め込まれた書き出し（s/a/b/w FILE ・ /re/w FILE）。
-        # 保護対象を作業ディレクトリとする場合は書き出し先が相対パスになり
-        # 保護対象パターンに一致しないため、語の言及フィルタを外して
-        # 「w コマンドの存在」そのものを証拠とする（保守側）
         strict = cwd_is_guarded(cwd)
-        if strict:
-            # degraded は空白分割のため `w FILE` が2語に割れる。
-            # 保護対象 cwd 下に限り空白結合したテキストも併せて評価する
-            flat = flat + [" ".join(words)]
-        if any(SED_WRITE_RE.search(t) for t in flat
-               if strict or is_guarded_token(t)):
-            return "sed の w コマンド（ファイル書き出し）は許可されていません"
+        if degraded:
+            # degraded は空白分割でプログラム本文の同一性が失われるため
+            # SED-7（sed_program_violation）を適用せず、従来の SED_WRITE_RE
+            # （ブラックリスト）を維持する。awk の AW-5／AW-6 が degraded
+            # 専用として残るのと同型の縮退（KLK-010 §3-5 第4版の追加）
+            if strict:
+                flat = flat + [" ".join(words)]
+            if any(SED_WRITE_RE.search(t) for t in flat
+                   if strict or is_guarded_token(t)):
+                return "sed の w コマンド（ファイル書き出し）は許可されていません"
+        elif strict or mentions_guarded(flat):
+            # SED-7（正常経路の本体）: プログラム本文がホワイトリストの
+            # 安全形か。判定対象はプログラム本文だけであり、入力ファイル名
+            # オペランドは sed が実行しないため検査しない
+            for variant in variants:
+                texts = sed_program_texts(variant)
+                for text in texts:
+                    reason = sed_program_violation(text)
+                    if reason:
+                        return reason
+                if len(texts) > 1:
+                    # GNU sed は複数の -e を連結して1つのプログラムにする。
+                    # 語をまたいで割った形を取りこぼさない（awk と同型）
+                    reason = sed_program_violation("\n".join(texts))
+                    if reason:
+                        return reason
     if head == "awk":
         for variant in variants:
             reason = awk_violation(variant, cwd, degraded)

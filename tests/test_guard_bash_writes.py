@@ -285,7 +285,9 @@ LEGACY_DENY_COMMANDS = [
 #
 # **期待値 "allow" の行には3種類があり、混同してはならない**（混同すると
 # 「穴を塞いだつもりで正しい allow を deny へ変える」事故が起きる）:
-#   (a) **意図的に未対応の穴**（INV-SH-07・09・11・INV-SED-05〜07 ほか）—
+#   (a) **意図的に未対応の穴**（INV-SH-07・09・11・INV-SED-05
+#       〔`-f SCRIPT` のみ。INV-SED-06・07 は KLK-015 の SED-7 で対応済み
+#       ＝ "deny" 側へ移動した〕ほか）—
 #       塞いだ時点で "deny" へ変える（変更は意識的な行為になる）。
 #   (b) **bash と一致した結果としての allow**（INV-SH-15・16・19 ほか）—
 #       bash も後続コマンドを実行しない／触るのは保護対象ではない別名で
@@ -345,8 +347,10 @@ INVENTORY_CASES = (
      "tickets/active/APP-001.md", "allow"),
     ("INV-AWK-20", "プログラム以外のオペランド中の system(（M12）",
      "awk '{print}' 'system(1).md' tickets/active/APP-001.md", "allow"),
-    # --- sed のプログラム内構文（§3-9 ③列。この次元は第4版でも
-    # ブラックリストのまま＝設計書 §6 R25） ---
+    # --- sed のプログラム内構文（§3-9 ③列。KLK-015 で SED-7
+    # （プログラム本文のホワイトリスト）へ反転。正常経路はここで判定し、
+    # degraded 経路のみ従来の SED_WRITE_RE ブラックリストを維持する
+    # ＝設計書 docs/designs/KLK-015.md §3・§6 R25） ---
     ("INV-SED-01", "s/a/b/w FILE",
      "sed 's/a/b/w tickets/active/APP-001.md' in.md", "deny"),
     ("INV-SED-02", "/re/W FILE", "sed '/x/W docs/SPEC.md' in.md", "deny"),
@@ -356,12 +360,50 @@ INVENTORY_CASES = (
      "cd tickets/active && sed 's/a/b/w APP-001.md' in.md", "deny"),
     ("INV-SED-05", "-f SCRIPT（プログラム不可視・**未対応**・別チケット）",
      "sed -f script.sed tickets/active/APP-001.md", "allow"),
-    ("INV-SED-06", "GNU sed の s///e（**未対応**・別チケット）",
-     "sed 's/a/b/e' tickets/active/APP-001.md", "allow"),
-    ("INV-SED-07", "GNU sed の e コマンド（**未対応**・別チケット）",
-     "sed '1e cat /etc/hosts' tickets/active/APP-001.md", "allow"),
+    ("INV-SED-06", "GNU sed の s///e（KLK-015・SED-7で自動deny＝対応済み）",
+     "sed 's/a/b/e' tickets/active/APP-001.md", "deny"),
+    ("INV-SED-07", "GNU sed の e コマンド（KLK-015・SED-7で自動deny＝対応済み）",
+     "sed '1e cat /etc/hosts' tickets/active/APP-001.md", "deny"),
     ("INV-SED-08", "-n '1,5p'（読み取り・意図的に allow）",
      "sed -n '1,5p' tickets/active/APP-001.md", "allow"),
+    # --- KLK-015: SED-7 の回帰テスト（アドレス前置き・区切り文字任意性・
+    # r/a/i/c/branch/フラグの新規deny・日常読み取りの追加固定） ---
+    ("INV-SED-09", "1w FILE（アドレス前置き）",
+     "sed -n '1w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-10", "$w FILE",
+     "sed -n '$w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-11", "1,2w FILE",
+     "sed -n '1,2w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-12", "2!w FILE",
+     "sed -n '2!w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-13", "0~2w FILE（GNU拡張ステップアドレス）",
+     "sed -n '0~2w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-14", "1W FILE（大文字）",
+     "sed -n '1W tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-15", "-e '1w FILE' 形",
+     "sed -n -e '1w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-16", "cwd相対形",
+     "cd tickets/active && sed -n '1w APP-001.md' in.md", "deny"),
+    ("INV-SED-17", "区切り文字 #",
+     "sed 's#a#XYZ#w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-18", "区切り文字 ,",
+     "sed 's,a,b,w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-19", "区切り文字 |",
+     "sed 's|a|b|w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-20", "アドレス前置き×区切り文字の組み合わせ",
+     "sed -n '1s#a#XYZ#w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-21", "y コマンド＋区切り文字任意性",
+     "sed -n '1y,ab,ba,;2w tickets/active/APP-001.md' in.md", "deny"),
+    ("INV-SED-22", "r FILE（外部ファイル読み込み・新規deny）",
+     "sed -n '1r /etc/hosts' tickets/active/APP-001.md", "deny"),
+    ("INV-SED-23", "1i TEXT（挿入コマンド・新規deny）",
+     "sed '1i hello' tickets/active/APP-001.md", "deny"),
+    ("INV-SED-24", ":label / b label（分岐・ラベル・新規deny）",
+     "sed ':a;b a' tickets/active/APP-001.md", "deny"),
+    ("INV-SED-25", "s/a/b/i（大文字小文字無視フラグ・新規deny）",
+     "sed 's/a/b/i' tickets/active/APP-001.md", "deny"),
+    ("INV-SED-26", "日常読み取りの追加固定（GNU拡張アドレス）",
+     "sed -n '0~2p' tickets/active/APP-001.md", "allow"),
     # --- シェル展開の次元（§3-9-2。bash が解釈するがコマンド文字列上は
     # 見えない変換）。この次元は第4版まで棚卸し表に1行も無く、C6 はその空白
     # から出た。相違の**向き**（allow 方向＝危険／deny 方向＝保守的）を
@@ -781,6 +823,11 @@ class TestGuardBashWrites(unittest.TestCase):
         # T-SED-N: in-place 判定が -n を誤爆しない
         self.assertAllow("sed -n '1,10p' tickets/active/APP-001.md")
 
+    def test_sed_gnu_extended_address_allow(self):
+        # T-SED7d（KLK-015・INV-SED-26の第2形）: GNU拡張の相対アドレス
+        # （1,+3）も SED_SAFE_STRUCTURAL_CHARS で読み取りのまま allow になる
+        self.assertAllow("sed -n '1,+3p' tickets/active/APP-001.md")
+
     # --- KLK-010: すり抜けを塞ぐ（AC4・AC5） ---
 
     def test_sed_inplace_empty_suffix_deny(self):
@@ -846,6 +893,83 @@ class TestGuardBashWrites(unittest.TestCase):
         # T-SEDW: sed の w コマンド（スクリプト引数に埋め込まれた書き出し）
         self.assertDeny("sed 's/a/b/w tickets/active/APP-001.md' in.md")
         self.assertDeny("sed '/x/w docs/SPEC.md' in.md")
+
+    def test_sed_address_prefixed_write_deny(self):
+        # T-SED7a（KLK-015・INV-SED-09〜11の固定点）: SED_WRITE_RE が取りこぼす
+        # アドレス前置きの w/W を SED-7 が字句非依存で捕捉すること
+        self.assertDeny("sed -n '1w tickets/active/APP-001.md' in.md")
+        self.assertDeny("sed -n '$w tickets/active/APP-001.md' in.md")
+        self.assertDeny("sed -n '1,2w tickets/active/APP-001.md' in.md")
+
+    def test_sed_arbitrary_delimiter_write_deny(self):
+        # T-SED7b（KLK-015・INV-SED-17〜19の固定点）: s/y の区切り文字が `/`
+        # 以外でも w コマンドを取りこぼさないこと
+        self.assertDeny("sed 's#a#XYZ#w tickets/active/APP-001.md' in.md")
+        self.assertDeny("sed 's,a,b,w tickets/active/APP-001.md' in.md")
+        self.assertDeny("sed 's|a|b|w tickets/active/APP-001.md' in.md")
+
+    def test_sed_flag_area_allowed_flags_only_allow(self):
+        # T-SED7e（設計書§9テスト観点(c)の後半形）: s/// のフラグ領域に
+        # 許可済み文字（g/p/数字）のみが現れる形は、w/e が単独で現れる形
+        # （INV-SED-01・06・25）と対で、正しく allow のまま維持されること
+        self.assertAllow("sed 's/a/b/g' tickets/active/APP-001.md")
+        self.assertAllow("sed 's/a/b/gp' tickets/active/APP-001.md")
+        self.assertAllow("sed 's/a/b/3' tickets/active/APP-001.md")
+
+    def test_sed_multiple_dash_e_write_split_across_boundary_deny(self):
+        # T-SED7f（設計書§9テスト観点(b)・R3）: w コマンドをアドレスと
+        # 本体で2つの -e 引数へ分割しても、GNU sed が改行結合して1つの
+        # プログラムとして実行する経路を取りこぼさないこと
+        # （`sed_program_texts` が複数 -e を列挙し、`len(texts) > 1` の
+        # 結合チェック分岐を経由する）
+        self.assertDeny(
+            "sed -n -e '1' -e 'w tickets/active/APP-001.md' in.md")
+        self.assertDeny(
+            "sed -e 's/a/b' -e '/w tickets/active/APP-001.md' in.md")
+
+    def test_sed_multiple_dash_e_readonly_combined_allow(self):
+        # T-SED7g（設計書§9テスト観点(b)の対照・allow側）: 複数 -e に
+        # 分割された読み取り専用プログラムは、結合チェック分岐を経由しても
+        # 誤denyしないこと
+        self.assertAllow(
+            "sed -n -e '1,2p' -e '4,5p' tickets/active/APP-001.md")
+
+    def test_sed_bracket_expression_containing_delimiter_allow(self):
+        # T-SED7h（tester発見・KLK-015 AC6違反。implementer差し戻し1回目で
+        # 修正）: `sed_strip_literals` は当初POSIX/GNU の文字クラス
+        # （ブラケット式 `[...]`）を認識せず、デリミタ文字がブラケット式の
+        # 内側にあってもデリミタとしてクロージングしてしまい、実際には
+        # 安全な読み取り専用プログラム（`/[/]/p`＝スラッシュを含む行を表示
+        # するだけ）を字句未確定（None）として誤denyしていた。設計書
+        # §6 R1 の新規deny列挙にこの形は無く、実機 GNU sed では書き込み・
+        # 実行を一切伴わない純粋な読み取りである（`sed -n '/[/]/p' file`
+        # は該当行を標準出力へ出すだけ）。`_sed_skip_bracket_expression`
+        # の追加によりブラケット式の内側を読み飛ばして解消した（詳細:
+        # docs/reports/KLK-015/implementation.md）。テストを緩めて
+        # allow の期待値を deny へ変えないこと。
+        self.assertAllow("sed -n '/[/]/p' tickets/active/APP-001.md")
+        self.assertAllow("sed -n '/[^/]/p' tickets/active/APP-001.md")
+        self.assertAllow("sed 's/[/]/X/' tickets/active/APP-001.md")
+
+    def test_sed_bracket_expression_does_not_hide_real_write_deny(self):
+        # ブラケット式対応（上記テスト）が新たなバイパス経路を生まないことの
+        # 固定点。ブラケット式を読み飛ばして正しくアドレス正規表現
+        # `/[/]/`（＝末尾のブラケットの外側にある `/` が閉じデリミタ）を
+        # 確定した後に続く `w tickets/active/APP-001.md` は実機 GNU sed 4.9
+        # で実際にファイル書き出しを行う（`/tmp`配下で実行確認済み）。
+        # ブラケット式の内側だけを読み飛ばすべきところを誤って外側の実在の
+        # `w` コマンドまで読み飛ばしてしまうと、この形が誤って allow に
+        # 倒れてしまう。
+        self.assertDeny("sed -n '/[/]/w tickets/active/APP-001.md' in.md")
+        # s の**パターンフィールド**の内側にリテラルとして
+        # `w tickets/active/APP-001.md` という文字列が現れても（実際は
+        # 正規表現の一部であり `w` コマンドではない。区切り文字を `#` に
+        # することでパス中の `/` と衝突させず検証。実機 GNU sed 4.9で
+        # 書き込みが発生しないことを確認済み）、置換フィールドにブラケット式
+        # は無いためデリミタ探索は従来どおりであり、誤って allow になる
+        # ことを固定する（対照）。
+        self.assertAllow(
+            "sed 's#[/]w tickets/active/APP-001.md#X#' unrelated.txt")
 
     # --- KLK-010: awk のプログラム内リダイレクト（D1） ---
 
@@ -1393,6 +1517,13 @@ class TestGuardBashWrites(unittest.TestCase):
         # 空白結合したテキストも併せて評価する
         self.assertDeny("cd tickets/active && sed 's/a/b/w APP-001.md' in.md")
         self.assertDeny("cd tickets/active; sed 's/a/b/w APP-001.md' in.md #'")
+
+    def test_cwd_guarded_sed_address_and_delimiter_write_deny(self):
+        # T-SED7c（KLK-015・INV-SED-16・20の固定点）: cwd 相対 × アドレス
+        # 前置き／区切り文字任意性の組み合わせも取りこぼさないこと
+        self.assertDeny("cd tickets/active && sed -n '1w APP-001.md' in.md")
+        self.assertDeny(
+            "cd tickets/active && sed -n '1s#a#XYZ#w APP-001.md' in.md")
 
     def test_cwd_guarded_sort_and_uniq_output_deny(self):
         # T-H2c: sort -o / uniq 第2位置引数（cwd 相対形）
