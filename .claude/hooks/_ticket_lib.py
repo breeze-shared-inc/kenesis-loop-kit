@@ -317,6 +317,8 @@ def parse_frontmatter(text):
                 data[current_map][key.strip()] = _unquote(
                     _strip_comment(val.strip()))
             continue
+        if current_map is not None and not data[current_map]:
+            data[current_map] = None  # 子行が1件も来なかった＝スカラーの空値（KLK-028 AC1）
         current_map = None
         if ":" not in raw:
             continue
@@ -329,6 +331,8 @@ def parse_frontmatter(text):
             current_map = key
         else:
             data[key] = _unquote(val)
+    if current_map is not None and not data[current_map]:
+        data[current_map] = None
     return data
 
 
