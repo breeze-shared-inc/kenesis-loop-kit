@@ -85,3 +85,64 @@ Noneを返す挙動は、設計書§9で「tester・reviewerへの指示」と�
 テスト観点であり、`tests/test_spec_drift.py`（統合テスト）でカバーされない
 純粋関数の単体境界確認をtester工程で追加することを前提とする（実装側では
 既存の`tests/test_ticket_lib.py`相当の単体テストファイルへ新規追加していない）。
+
+---
+
+## 改訂: 改善ループ・フォローアップ対応（第2版・2026-08-17）
+
+上記Phase1〜3（コミット a4e8ba9 / 3e15b04 / d993ece）は変更しない。以下は
+reviewer承認時に付記した3件のフォローアップ事項への対応として追加した
+Phase F1・F2（設計書 `docs/designs/KLK-016.md` 第2版 §4「実装Phase
+（フォローアップ・第2版で追加）」）の実装記録。作業はチケット専用worktree
+`../kenesis-loop-kit.wt/KLK-016`・ブランチ `feature/KLK-016-spec-drift-detection`
+で実施。
+
+### Phase F1（コミット d05b8ee）: 呼び出し順序の是正
+
+- `.claude/hooks/check_loop_integrity.py` の `main()`: `check_spec_drift(cwd)`
+  の呼び出しを、`tickets/active` 存在チェック（`if not os.path.isdir(active_dir):
+  sys.exit(0)`）より前へ移動した（設計書§4-7の一意な引用文字列どおり）。
+  既存の `events_by_ticket`/`state` 計算・`check_ticket`/`check_done_ticket_drift`
+  ループは `if os.path.isdir(active_dir):` ブロックへそのまま包むのみで、
+  ロジック自体は1行も変更していない。
+- モジュールdocstringの「SPEC.mdドリフト検知（KLK-016）」段落末尾へ
+  「この検知は tickets/active ディレクトリの有無から独立して実行される
+  （…）」の1文を追記（§4-7指定文言どおり）。
+- `.claude/hooks/README.md` の hook一覧表・`check_loop_integrity.py` 行へ
+  「呼び出しは`tickets/active`の存在有無に依存しない〔…〕」の1文を追記
+  （§4-7指定文言どおり）。
+- 完了条件確認: `python3 -m unittest tests.test_loop_integrity
+  tests.test_spec_drift -v` で既存27件＋既存10件（当時は改訂前のためF2の
+  新規3件は未追加）が無改変で全件pass（回帰なし）。
+
+### Phase F2（コミット 1e54088）: 回帰テスト追加
+
+`tests/test_spec_drift.py` へ設計書§4-8のとおり追加・更新:
+
+- (a) `TestSpecDriftDetection` のクラスdocstringを更新（呼び出しが
+  `tickets/active` 非依存である旨・本クラスの `setUp` が体裁を揃える
+  目的で作成しているに過ぎない旨）。
+- (b) 新設 `TestSpecDriftIndependentOfTicketsDir`（`TestSpecDriftDetection`
+  の直後）: `test_matching_hash_allows_without_tickets_active_dir`・
+  `test_bash_edit_detected_without_tickets_active_dir` の2ケース。両ケース
+  とも `setUp` で `tickets/active` を作成せず、`assertFalse(os.path.isdir(...))`
+  で明示的に確認してからテスト本体を実行する。
+- (c) `TestSpecStateRecording` へ `test_records_hash_with_relative_file_path`
+  を `test_ticket_write_unaffected` の直後に追加（`is_project_spec` の相対
+  パス分岐＝文字列 `"docs/SPEC.md"` そのものとの一致を統合経路で検証）。
+- (d) モジュールdocstring末尾へフォローアップで追加したクラス・ケースの
+  説明1文を追記。
+
+完了条件確認: `python3 -m unittest discover -s tests -v` で全662件がpass
+（新規3件含む）。設計書の想定件数（647件+3件=650件）とは総数が異なるが、
+これは設計書執筆時点のリポジトリ全体テスト数と現在のテスト数の差異
+（本チケット以外の別チケットのテストが間に追加されたため）であり、
+本チケットのスコープ内テストはすべてpassしている。
+
+### 確認事項
+
+- `git diff` で機密情報（APIキー・パスワード・接続文字列等）が含まれて
+  いないことを確認済み（対象: `.claude/hooks/check_loop_integrity.py`・
+  `.claude/hooks/README.md`・`tests/test_spec_drift.py`）。
+- `tickets/`・`docs/SPEC.md` には一切触れていない。
+- `git push` は行っていない。

@@ -25,7 +25,9 @@ hook管理のサイドカー docs/.spec_state.json（record_metrics.py が最後
 SPEC.md は対象外）の内容を突き合わせ、Write/Edit を経ない書き換えを検出
 する。SPEC.md が存在しない、またはサイドカーに記録が無い（hook導入前・
 SPEC.md作成直後で一度もWrite/Editを経ていない等）場合は照合しない
-（fail-open）。
+（fail-open）。この検知は tickets/active ディレクトリの有無から独立して
+実行される（ticket機構を使わないプロジェクトへの本hook単体流用を想定。
+フォローアップで是正、docs/designs/KLK-016.md §3 D6）。
 
 fail-open: 内部エラーでは継続を許可（exit 0）。サイドカーに記録が無い
 チケット（hook導入前の旧チケット等）はドリフト照合をスキップする。
@@ -200,24 +202,25 @@ def main():
     cwd = data.get("cwd")
     if not isinstance(cwd, str) or not cwd:
         cwd = os.getcwd()
-    active_dir = os.path.join(cwd, "tickets", "active")
-    done_dir = os.path.join(cwd, "tickets", "done")
-    if not os.path.isdir(active_dir):
-        sys.exit(0)
-
-    events_by_ticket = lib.group_events_by_ticket(
-        lib.load_events(os.path.join(cwd, "tickets", ".metrics.jsonl")))
-    state = lib.load_state(os.path.join(cwd, "tickets"))
 
     problems = []
-    for path in sorted(glob.glob(os.path.join(active_dir, "*.md"))):
-        if os.path.basename(path) == "_index.md":
-            continue
-        problems.extend(check_ticket(path, events_by_ticket, state))
-    for path in sorted(glob.glob(os.path.join(done_dir, "*.md"))):
-        problems.extend(check_done_ticket_drift(path, state))
-
+    # SPEC.mdドリフト検知は tickets/ ディレクトリの有無から独立して実行する
+    # （D2: ticket機構からの疎結合。フォローアップで是正、§3 D6）
     problems.extend(check_spec_drift(cwd))
+
+    active_dir = os.path.join(cwd, "tickets", "active")
+    done_dir = os.path.join(cwd, "tickets", "done")
+    if os.path.isdir(active_dir):
+        events_by_ticket = lib.group_events_by_ticket(
+            lib.load_events(os.path.join(cwd, "tickets", ".metrics.jsonl")))
+        state = lib.load_state(os.path.join(cwd, "tickets"))
+
+        for path in sorted(glob.glob(os.path.join(active_dir, "*.md"))):
+            if os.path.basename(path) == "_index.md":
+                continue
+            problems.extend(check_ticket(path, events_by_ticket, state))
+        for path in sorted(glob.glob(os.path.join(done_dir, "*.md"))):
+            problems.extend(check_done_ticket_drift(path, state))
 
     if problems:
         reason = (
