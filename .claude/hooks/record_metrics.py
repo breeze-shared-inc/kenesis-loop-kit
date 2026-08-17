@@ -43,7 +43,16 @@ def main():
 
     tool_input = lib.as_dict(data.get("tool_input"))
     path = tool_input.get("file_path")
-    if not isinstance(path, str) or not path or not lib.is_ticket(path):
+    if not isinstance(path, str) or not path:
+        sys.exit(0)
+
+    cwd = data.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        cwd = os.getcwd()
+
+    if not lib.is_ticket(path):
+        if lib.is_project_spec(path, cwd):
+            record_spec_state(path, cwd)
         sys.exit(0)
 
     # tickets/ ディレクトリはチケットパスから導出する（cwd はフォールバック）
@@ -141,6 +150,26 @@ def retry_ints(rc):
             except (TypeError, ValueError):
                 continue
     return result
+
+
+def record_spec_state(path, cwd):
+    """docs/SPEC.md（プロジェクト直下）への Write/Edit 後、内容の sha256 ハッシュ
+    を docs/.spec_state.json へ記録する（KLK-016）。Write/Edit を経ない Bash
+    改変とのドリフト検知（check_loop_integrity.py）の基準を提供する。
+    fail-open: ファイルが読めない等の内部エラーでは何もしない。"""
+    try:
+        if not os.path.exists(path):
+            return
+        digest = lib.sha256_file(path)
+        if digest is None:
+            return
+        state_path = lib.spec_state_path(cwd)
+        if not state_path:
+            return
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+        write_state(state_path, {"hash": digest, "ts": now})
+    except Exception:
+        pass
 
 
 def write_state(state_path, state):
