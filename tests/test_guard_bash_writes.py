@@ -2845,6 +2845,42 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertAllow("cd tickets/active && awk 'NR>1 {print}' in.txt")
         self.assertAllow("ls file{1,2}.txt")
 
+    # --- KLK-018: MAX_BRACE_DEPTH／MAX_BRACE_COMBINATIONS 上限到達時の
+    # フォールバック分岐（設計書 §4-1・§6。tester申し送り＝implementerの
+    # Remaining Risksで境界値テスト未追加と明記されていた項目）。
+    # 上限超過時は保護対象と無関係な内容でも「一致し得る」ものとして安全側
+    # （deny）に倒すため、tickets/ を一切含まない語でも非ホワイトリスト
+    # head と組み合わせると deny になる。これは設計書§9 AC4のN1〜N4の
+    # 文言（「保護対象パスとなる語を含み」）を字面上は満たさない新しい
+    # deny 経路であり、reviewerに判断を委ねるためテストで実際の挙動を
+    # 固定する（実測値は本テスト作成時にguard._brace_combination_countで
+    # 事前確認済み）。
+
+    def test_klk018_brace_depth_within_limit_allow(self):
+        # ネスト深さ4（MAX_BRACE_DEPTH と同値）は上限内であり、通常の
+        # expand_braces による展開結果（"axb"/"ayb"）はどちらも保護対象
+        # ではないため allow のまま（フォールバックは発動しない）
+        self.assertAllow("rm a{{{{x,y}}}}b")
+
+    def test_klk018_brace_depth_exceeded_denies_conservatively(self):
+        # ネスト深さ5（MAX_BRACE_DEPTH超）は _brace_combination_count が
+        # depth ガードにより無条件で MAX_BRACE_COMBINATIONS+1 を返すため
+        # フォールバックに入り、tickets/ を一切含まない候補でも
+        # 「一致し得る」ものとして扱われる。非ホワイトリストhead（rm）と
+        # 組み合わせると deny になることを固定する
+        self.assertDeny("rm a{{{{{x,y}}}}}b")
+
+    def test_klk018_brace_combinations_within_limit_allow(self):
+        # 直積の組み合わせ数243（MAX_BRACE_COMBINATIONS=512未満）は
+        # フォールバックが発動せず、実際に展開して非保護対象と判定され allow
+        self.assertAllow("rm a{1,2,3}{1,2,3}{1,2,3}{1,2,3}{1,2,3}b")
+
+    def test_klk018_brace_combinations_exceeded_denies_conservatively(self):
+        # 直積の組み合わせ数729（MAX_BRACE_COMBINATIONS超）はフォールバック
+        # により、tickets/ を一切含まない候補でも「一致し得る」ものとして
+        # 扱われ、非ホワイトリストhead（rm）と組み合わせると deny になる
+        self.assertDeny("rm a{1,2,3}{1,2,3}{1,2,3}{1,2,3}{1,2,3}{1,2,3}b")
+
 
 if __name__ == "__main__":
     unittest.main()
