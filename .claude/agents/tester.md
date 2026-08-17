@@ -38,7 +38,7 @@ Verify implementation correctness and generate quality evidence for reviewer.
 
 ## Required Output Format
 
-各項目は要点5行以内の箇条書きで記述する。5行を超える詳細（全文・生ログ・網羅的な根拠列挙等）はチケット本文へ書かず `docs/reports/{ID}/test-report.md` へ外部化し、該当項目には「詳細: docs/reports/{ID}/test-report.md」という1行のポインタのみを残す（このファイルはtester自身がworktree内で作成する。下記 Git Rules 参照）。
+各項目は要点5行以内の箇条書きで記述する。5行を超える詳細（全文・生ログ・網羅的な根拠列挙等）はチケット本文へ書かず `docs/reports/{ID}/test-report.md` へ外部化し、該当項目には「詳細: docs/reports/{ID}/test-report.md」という1行のポインタのみを残す。
 
 1. Test Execution Results
 2. Coverage Summary

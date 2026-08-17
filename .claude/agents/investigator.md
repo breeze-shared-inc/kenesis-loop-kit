@@ -63,9 +63,7 @@ Use this mode when the invocation prompt includes an output schema
 
 各項目は要点5行以内の箇条書きで記述する。5行を超える詳細（全文・生ログ・網羅的な根拠列挙等）は
 チケット本文へ書かず `docs/reports/{ID}/investigation.md` へ外部化し、該当項目には
-「詳細: docs/reports/{ID}/investigation.md」という1行のポインタのみを残す
-（investigatorはWrite/Editツールを持たないため、このファイルはorchestratorが代筆する。
-下記 Ticket Integration を参照）。
+「詳細: docs/reports/{ID}/investigation.md」という1行のポインタのみを残す。
 
 1. Findings
 2. Evidence
@@ -85,7 +83,7 @@ resulting updates to the ticket.
 - On completion: include a summary of the research report for orchestrator to append to
   the ticket's implementation notes section
 - 5行を超える調査詳細（Evidence全量・Dependency Graph全量等）がある場合、その旨をレポートに
-  明記する。orchestratorが全文をdocs/reports/{ID}/investigation.mdへ書き出し、チケットの
+  明記する。orchestratorが全文をdocs/reports/{ID}/investigation.mdへ代筆で書き出し、チケットの
   調査メモには要点＋ポインタのみが残る（investigator自身はこのファイルを作成しない。
   Write/Editツールを持たないため）
 - If Unknowns exist: flag them clearly in the report so orchestrator records them on the

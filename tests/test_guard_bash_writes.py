@@ -709,6 +709,11 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertFalse(guard.mentions_guarded("rm " + guarded_word))
         # 正しい呼び方（事前分割済みトークン列）であれば True になる
         self.assertTrue(guard.mentions_guarded(["rm", guarded_word]))
+        # （KLK-027で決定: 本チケット時点の全3呼び出し箇所（guard_bash_writes.py内、
+        # expanded_words/skeleton.split()/words_list由来）は事前分割済みトークン契約を既に遵守しており、
+        # 生文字列呼び出しの誤用は現存しない。isinstance等の防御的強化は「現存しないバグの予防的修正」
+        # であり自動split実装の追加が新たな不一致リスクを生みうるため見送り、本テストは意図的な
+        # 仕様固定として維持する）
 
     def test_docs_reports_rm_allow(self):
         # ホワイトリスト外の先頭コマンド（rm）でも docs/reports/ 配下は非対象のため deny されない

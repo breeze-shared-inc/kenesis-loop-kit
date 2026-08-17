@@ -99,6 +99,22 @@ class TestRecorder(unittest.TestCase):
         _util.run_script(_util.RECORDER, payload, cwd=self.cwd)
         self.assertEqual(self.events(), [])
 
+    # --- KLK-027 AC5: docs/reports/{ID}/ はチケット風frontmatterでも非対象 ---
+
+    def test_docs_reports_path_ignored(self):
+        # docs/reports/{ID}/ 配下はチケット風frontmatterを持っていても
+        # is_ticket() ゲートで除外され、record_metrics.py はイベントを記録しない
+        reports_dir = os.path.join(self.cwd, "docs", "reports", "APP-001")
+        os.makedirs(reports_dir, exist_ok=True)
+        path = os.path.join(reports_dir, "investigation.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('---\nid: "APP-001"\nstatus: todo\n---\n# investigation\n')
+        payload = {"tool_name": "Write", "cwd": self.cwd,
+                   "tool_input": {"file_path": path}}
+        rc, _, _ = _util.run_script(_util.RECORDER, payload, cwd=self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.events(), [])
+
     # --- KLK-012 AC1: 相対パスでもイベントが記録される ---
 
     def test_relative_path_recorded(self):
