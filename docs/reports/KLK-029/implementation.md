@@ -52,3 +52,41 @@ OK
 | `sed '1e echo tickets\/active\/APP-001.md' unrelated.txt`（investigation.md詳細調査ログ5系） | （調査時未実機投入・理論上バイパス） | `sed プログラムの字句を確定できません…`（deny。SED-7本体のfail-closed経由で到達・確認） |
 
 いずれもdenyへ転じたことを確認済み。5件目は文字列パターンが厳密なアドレス正規表現として解釈されずSED-7本体の字句解析失敗によるfail-closed denyとなったが、ゲート自体は正しく通過しSED-7本体（無変更）へ到達している。
+
+## Phase 2: 回帰テスト追加
+
+### 変更内容
+`tests/test_guard_bash_writes.py`の`INVENTORY_CASES`へ設計書§4-5のとおりINV-SED-27〜31
+（INV-SED-26の直後）・INV-AWK-21〜25（INV-AWK-20の直後）の計10件を追加。コマンド文字列は
+設計書表の記載と1文字単位で一致することを`repr()`出力で確認済み。
+
+### 実行結果と設計書記載値との差異（重要・テスターへの申し送り）
+`INVENTORY_CASES`は単一のテストメソッド`test_inventory_cases_match_expected_decisions`内で
+`subTest`によりループ処理される実装（Phase 1着手前から既存の構造・変更していない）。そのため
+`python3 -m unittest`の`Ran N tests`はエントリ数を追加しても**213のまま**動かない
+（`subTest`は失敗時のみ個別に表示され、成功時はテストケース数としてカウントされない仕様）。
+設計書§4-7完了条件の「全件（213+10件）がpass」は、`Ran 223 tests`という数値としては現れない
+（unittestの仕様上の制約であり実装の不備ではない）。実際には10件個別に`guard.find_violation()`
+を直接呼び出して期待値と突き合わせ、全10件が一致することを確認した（下記）。
+
+```
+INV-AWK-21: expected=deny actual=deny [OK]
+INV-AWK-22: expected=deny actual=deny [OK]
+INV-AWK-23: expected=deny actual=deny [OK]
+INV-AWK-24: expected=deny actual=deny [OK]
+INV-AWK-25: expected=allow actual=allow [OK]
+INV-SED-27: expected=deny actual=deny [OK]
+INV-SED-28: expected=deny actual=deny [OK]
+INV-SED-29: expected=deny actual=deny [OK]
+INV-SED-30: expected=allow actual=allow [OK]
+INV-SED-31: expected=deny actual=deny [OK]
+```
+
+### 全件再実行（回帰なしの確認）
+```
+$ python3 -m unittest tests.test_guard_bash_writes
+Ran 213 tests in ~24-25s
+OK
+```
+既存213件のexpected値は一切変更していない（追加のみ）。新規10件は設計書§6 R1の列挙（①〜⑤）と
+1対1に対応し、列挙外の新規denyは発生していない（AC5）。

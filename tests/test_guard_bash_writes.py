@@ -347,6 +347,21 @@ INVENTORY_CASES = (
      "tickets/active/APP-001.md", "allow"),
     ("INV-AWK-20", "プログラム以外のオペランド中の system(（M12）",
      "awk '{print}' 'system(1).md' tickets/active/APP-001.md", "allow"),
+    # --- KLK-029: awk プログラム本文中のバックスラッシュエスケープによる
+    # 言及ゲート回避（investigation.md 詳細調査ログ3）。§4-3・§4-5 ---
+    ("INV-AWK-21", "system() 引数中のエスケープ（tickets/active型）",
+     "awk 'BEGIN{system(\"rm tickets\\/active\\/APP-001.md\")}' "
+     "unrelated.txt", "deny"),
+    ("INV-AWK-22", "print > のリダイレクト先文字列中のエスケープ",
+     "awk '{print > \"tickets\\/active\\/APP-001.md\"}' unrelated.txt",
+     "deny"),
+    ("INV-AWK-23", "system() 引数中のエスケープ（docs/SPEC.md型・回帰固定）",
+     "awk 'BEGIN{system(\"rm docs\\/SPEC.md\")}' unrelated.txt", "deny"),
+    ("INV-AWK-24", "対照: -v 束縛のエスケープ言及（AW-2は束縛自体を証拠とする）",
+     "awk -v f=\"tickets\\/active\\/APP-001.md\" 'BEGIN{print f}' "
+     "unrelated.txt", "deny"),
+    ("INV-AWK-25", "対照: 保護対象と無関係な \\ 使用（誤denyが起きないことの固定）",
+     "awk 'BEGIN{print \"a\\tb\"}' unrelated.txt", "allow"),
     # --- sed のプログラム内構文（§3-9 ③列。KLK-015 で SED-7
     # （プログラム本文のホワイトリスト）へ反転。正常経路はここで判定し、
     # degraded 経路のみ従来の SED_WRITE_RE ブラックリストを維持する
@@ -404,6 +419,22 @@ INVENTORY_CASES = (
      "sed 's/a/b/i' tickets/active/APP-001.md", "deny"),
     ("INV-SED-26", "日常読み取りの追加固定（GNU拡張アドレス）",
      "sed -n '0~2p' tickets/active/APP-001.md", "allow"),
+    # --- KLK-029: sed プログラム本文中のバックスラッシュエスケープによる
+    # 言及ゲート回避（チケット再現手順・investigation.md 詳細調査ログ2・5）。
+    # §4-2・§4-5 ---
+    ("INV-SED-27", "docs/SPEC.md（スラッシュ1箇所）をs///eの置換文字列内でエスケープ"
+     "（チケット再現手順そのもの）",
+     "sed 's/.*/rm docs\\/SPEC.md/e' unrelated.txt", "deny"),
+    ("INV-SED-28", "tickets/active/*.md（スラッシュ2箇所）を同様にエスケープ",
+     "sed 's/.*/rm tickets\\/active\\/APP-001.md/e' unrelated.txt", "deny"),
+    ("INV-SED-29", "デリミタ衝突なしのeコマンド単体＋不要なエスケープ挿入",
+     "sed '1e echo tickets\\/active\\/APP-001.md' unrelated.txt", "deny"),
+    ("INV-SED-30", "対照: 同じエスケープ言及だがSED-7安全文字のみ"
+     "（ゲートが広がってもdenyにならないことの固定）",
+     "sed -n 's/x/y/; /tickets\\/active\\/APP-001.md/p' unrelated.txt",
+     "allow"),
+    ("INV-SED-31", "対照: |区切りは元々検出済み・回帰確認",
+     "sed 's|.*|rm docs\\|SPEC.md|e' unrelated.txt", "deny"),
     # --- シェル展開の次元（§3-9-2。bash が解釈するがコマンド文字列上は
     # 見えない変換）。この次元は第4版まで棚卸し表に1行も無く、C6 はその空白
     # から出た。相違の**向き**（allow 方向＝危険／deny 方向＝保守的）を
