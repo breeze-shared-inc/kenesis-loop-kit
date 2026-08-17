@@ -908,6 +908,49 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertDeny("sed 's,a,b,w tickets/active/APP-001.md' in.md")
         self.assertDeny("sed 's|a|b|w tickets/active/APP-001.md' in.md")
 
+    def test_sed_flag_area_allowed_flags_only_allow(self):
+        # T-SED7e（設計書§9テスト観点(c)の後半形）: s/// のフラグ領域に
+        # 許可済み文字（g/p/数字）のみが現れる形は、w/e が単独で現れる形
+        # （INV-SED-01・06・25）と対で、正しく allow のまま維持されること
+        self.assertAllow("sed 's/a/b/g' tickets/active/APP-001.md")
+        self.assertAllow("sed 's/a/b/gp' tickets/active/APP-001.md")
+        self.assertAllow("sed 's/a/b/3' tickets/active/APP-001.md")
+
+    def test_sed_multiple_dash_e_write_split_across_boundary_deny(self):
+        # T-SED7f（設計書§9テスト観点(b)・R3）: w コマンドをアドレスと
+        # 本体で2つの -e 引数へ分割しても、GNU sed が改行結合して1つの
+        # プログラムとして実行する経路を取りこぼさないこと
+        # （`sed_program_texts` が複数 -e を列挙し、`len(texts) > 1` の
+        # 結合チェック分岐を経由する）
+        self.assertDeny(
+            "sed -n -e '1' -e 'w tickets/active/APP-001.md' in.md")
+        self.assertDeny(
+            "sed -e 's/a/b' -e '/w tickets/active/APP-001.md' in.md")
+
+    def test_sed_multiple_dash_e_readonly_combined_allow(self):
+        # T-SED7g（設計書§9テスト観点(b)の対照・allow側）: 複数 -e に
+        # 分割された読み取り専用プログラムは、結合チェック分岐を経由しても
+        # 誤denyしないこと
+        self.assertAllow(
+            "sed -n -e '1,2p' -e '4,5p' tickets/active/APP-001.md")
+
+    def test_sed_bracket_expression_containing_delimiter_allow(self):
+        # T-SED7h（tester発見・KLK-015 AC6違反）: `sed_strip_literals` は
+        # POSIX/GNU の文字クラス（ブラケット式 `[...]`）を認識しないため、
+        # デリミタ文字がブラケット式の内側にあってもデリミタとして
+        # クロージングしてしまい、実際には安全な読み取り専用プログラム
+        # （`/[/]/p`＝スラッシュを含む行を表示するだけ）を字句未確定
+        # （None）として誤denyする。設計書 §6 R1 の新規deny列挙に
+        # この形は無く、実機 GNU sed では書き込み・実行を一切伴わない
+        # 純粋な読み取りである（`sed -n '/[/]/p' file` は該当行を
+        # 標準出力へ出すだけ）。**このテストは現状の実装に対して失敗する
+        # ことを意図している**（AC6「列挙外の新規denyが1件でもあれば
+        # ブロッカー」の実証。テストを緩めて allow の期待値を deny へ
+        # 変えないこと）。詳細: docs/reports/KLK-015/test-report.md
+        self.assertAllow("sed -n '/[/]/p' tickets/active/APP-001.md")
+        self.assertAllow("sed -n '/[^/]/p' tickets/active/APP-001.md")
+        self.assertAllow("sed 's/[/]/X/' tickets/active/APP-001.md")
+
     # --- KLK-010: awk のプログラム内リダイレクト（D1） ---
 
     def test_awk_internal_redirect_deny(self):
