@@ -1,6 +1,98 @@
 # KLK-018 テストレポート
 
-生成: tester / 最終更新: 2026-08-17
+生成: tester / 最終更新: 2026-08-17（reviewer差し戻し→implementer修正後の再検証を追記）
+
+---
+
+## 0. 再検証（reviewer差し戻し2回目対応・RecursionError修正の独立検証）
+
+### 0-1. 全体テスト実行結果
+
+```
+$ python3 -m unittest discover -s tests -v
+Ran 678 tests in 24.687s
+OK
+```
+
+implementer修正後676件（差し戻し前672件＋implementer新規4件）＋tester追加2件＝678件、全件pass。
+失敗・エラーなし。
+
+### 0-2. Critical Issue修正の独立PoC検証（実装報告を鵜呑みにせず再現）
+
+`.claude/hooks/guard_bash_writes.py`をサブプロセス起動し、reviewerと同様の実機PoCを
+implementerの報告とは独立に再実施した（詳細スクリプトはコミット対象外・tmp scratchpad）。
+
+- 修正前コード（commit `d094c82`時点の`guard_bash_writes.py`を複製）に対し、隣接ブレース
+  1000〜5000個規模で`RecursionError`相当のフェイルオープン（`permissionDecision`が
+  返らずallow）を再現。修正後コード（`9000bac`）では同一入力が全てdeny・実行時間
+  約30msで返ることを確認（RecursionErrorは発生せず）
+- **呼び出し経路の確認**: `_brace_combination_count`／`expand_braces`の呼び出し箇所を
+  全文grepし、本番コード上の呼び出し元が`guarded_paths_after_shell_expansion`内の2箇所
+  （事前チェック・try/except共に実装済み）のみであることを確認。バイパス経路は
+  発見されなかった
+- **閾値回避の可能性を確認**: `MAX_BRACE_CHAR_COUNT`は候補中の`{`出現数（構造的な
+  再帰深さに直結する量）を直接カウントするため、カンマの有無・組み合わせ数に
+  依存しない。境界値N=49/50/51/52でも`MAX_BRACE_COMBINATIONS`超過（直積2^N型のため
+  N=10前後で既に超過）により別経路でdenyになることを確認し、閾値をわずかに下回る
+  個数での再現は見つからなかった
+- **重要な発見（新たなテストギャップ）**: implementer追加の
+  `test_klk018_adjacent_braces_regression_does_not_mask_existing_deny`は、
+  既存deny対象語を隣接ブレース語より**前**に置く語順のため、`any()`の短絡評価により
+  隣接ブレース語（RecursionErrorを起こしうる語）を一度も評価しない。独立PoCで、
+  修正前コードに対して**同じ語順**では確かにdenyになる（＝当該テストは修正前
+  コードでも偶然passしてしまい、reviewerが指摘した「masking」シナリオを実際には
+  判別できていなかった）ことを確認した。語順を逆転（隣接ブレース語を先に）すると
+  修正前コードはallowへフェイルオープンし、修正後コードのみdenyを維持することを
+  確認した（下記§0-4でテストとして追加・固定）
+- **カンマ無し隣接ブレースでの再現**: `"{x,y}"`（直積で急増）以外に、カンマ無し
+  `"{x}"`（bashが展開しないリテラル。旧実装の組み合わせ数見積もりは1のまま増えない
+  独立した形）でも隣接1000個規模で修正前コードがallowへフェイルオープンし、
+  修正後コードがdenyを維持することを確認した（下記§0-4で追加）
+
+### 0-3. MAX_BRACE_CHAR_COUNT=50の誤deny予算への影響
+
+既存の固定allowケース群（`test_klk018_erroneous_deny_budget_allow`の6件、
+`test_klk018_brace_*_within_limit_allow`等）はいずれも`{`出現数が10未満であり、
+本閾値到達には遠く及ばないため無影響（678件全件passで確認）。50個超の隣接
+ブレースを使う正当なユースケースは設計書・investigator調査のいずれにも
+記載が無く、想定される日常操作の範囲では影響なしと判断する。
+
+### 0-4. Added Tests（本ラウンド追加分）
+
+`tests/test_guard_bash_writes.py`へ2件追加（上記§0-2の発見に対応）:
+
+- `test_klk018_adjacent_braces_regression_does_not_mask_existing_deny_blob_first`:
+  既存deny対象語を隣接ブレース語より**後**に置く語順（`any()`の短絡評価を実際に
+  回避する順）。修正前コードでは独立PoCでallowへ転じることを確認済み、修正後は
+  deny維持を固定
+- `test_klk018_adjacent_braces_regression_no_comma_literal_denies_conservatively`:
+  カンマ無し隣接ブレース`"{x}"`×1000個（直積で組み合わせ数が増えない独立した形）
+  でも修正後コードがdeny維持することを固定
+
+いずれも修正前コード（複製）に対する独立PoCで実際にallow（フェイルオープン）に
+転じることを確認した上で追加しており、恣意的に通るだけの弱いテストではない。
+
+### 0-5. Regression Risks（本ラウンド）
+
+- 新規2件・既存676件を含め678件全件pass。既存共有シンボル
+  （`PATHISH_RE`／`guarded_paths`／`is_guarded_token`等）は本ラウンドでも無変更
+- `_brace_combination_count`・`expand_braces`自体の非有界再帰構造は温存されたまま
+  （implementerのRemaining Risksどおり）。将来この2関数を新しい呼び出し元から
+  直接呼ぶ場合は同じ2段防御パターンの踏襲が必須（既存docstringに明記済み）
+- 本ラウンドで発見した「語順依存の短絡評価によるテストの見かけ上のpass」は、
+  今回追加した語順逆転テストで解消済み。ただし短絡評価（`any()`）自体の一般的な
+  性質のため、将来同種の複合語検証を追加する際は同じ落とし穴に注意が必要
+  （reviewerへの申し送り事項）
+
+### 0-6. Quality Gate Status（本ラウンド）: **pass**
+
+reviewerへの引き継ぎ可否: **可**。Critical Issue（RecursionError→フェイルオープン）
+の修正を実装報告とは独立の実機PoCで再現・確認し、バイパス経路は発見されなかった。
+テストギャップ（既存回帰テスト1件が語順により無力化されていた点）を発見し、
+語順逆転・カンマ無し形の2件を追加して補強済み。reviewerへは§0-2「重要な発見」を
+申し送り事項として明記する。
+
+---
 
 ## 1. 全体テスト実行結果
 

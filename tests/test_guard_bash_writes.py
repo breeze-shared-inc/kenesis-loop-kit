@@ -2927,6 +2927,41 @@ class TestGuardBashWrites(unittest.TestCase):
         candidate = "a" + "{x,y}" * 1200 + "b"
         self.assertDeny("rm tickets/active/APP-001.md " + candidate)
 
+    def test_klk018_adjacent_braces_regression_does_not_mask_existing_deny_blob_first(self):
+        # tester再検証で追加（KLK-018 再差し戻し検証）: 上記
+        # test_..._does_not_mask_existing_deny は「デコイの隣接ブレース語」を
+        # 既存 deny 対象の語より**後ろ**に置いているため、
+        # mentions_guarded_expanded 内の any() が先に deny 対象語で True を
+        # 返して短絡し、隣接ブレース語（＝RecursionError を起こしうる語）を
+        # 実際には一度も評価しない。そのため当該テストは修正前の
+        # バグ入りコードでも（短絡のおかげで）偶然 pass してしまい、
+        # reviewerが指摘した「masking」シナリオを実際には判別できていな
+        # かった（tester がpre-fixコードの複製に対する独立PoCで実証確認
+        # 済み）。本テストは語順を逆転させ、隣接ブレース語を既存 deny 対象語
+        # より**先**に置くことで、修正前コードなら RecursionError が deny
+        # 対象語の評価前に発生し allow へフェイルオープンする経路を実際に
+        # 通過させ、修正後コードが deny を維持することを固定する
+        candidate = "a" + "{x,y}" * 1200 + "b"
+        self.assertDeny("rm " + candidate + " tickets/active/APP-001.md")
+
+    def test_klk018_adjacent_braces_regression_no_comma_literal_denies_conservatively(self):
+        # tester再検証で追加（KLK-018 再差し戻し検証）: 既存の回帰テスト4件は
+        # いずれも "{x,y}"（カンマ有り＝直積で combinations が急増する形）の
+        # 隣接連続のみを対象にしている。カンマ無しの隣接ブレース（例:
+        # "{x}"。bash は展開せずリテラルのまま扱う）は
+        # _brace_combination_count が各グループで parts<2 の分岐（乗算せず
+        # 1のまま）を通るため、旧実装でも MAX_BRACE_COMBINATIONS 超過に
+        # よる安全側フォールバックには**そもそも到達し得ない**独立した形
+        # だった（reviewerが指摘した「隣接兄弟ブレース数」次元がカンマの
+        # 有無に関わらず独立して壊れうることの確認）。修正後の
+        # MAX_BRACE_CHAR_COUNT はカンマの有無・combinations の値に関係なく
+        # `{` の出現数のみで判定するため、この形でも RecursionError を
+        # 起こさず deny に倒れることを固定する（tester がpre-fixコードの
+        # 複製に対する独立PoCで、旧実装がこの形でも allow に化けることを
+        # 確認済み）
+        candidate = "a" + "{x}" * 1000 + "b"
+        self.assertDeny("rm " + candidate)
+
 
 if __name__ == "__main__":
     unittest.main()
