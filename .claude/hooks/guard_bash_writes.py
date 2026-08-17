@@ -547,6 +547,35 @@ VAR_REF_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?")
 SED_INPLACE_SHORT_RE = re.compile(r"-[A-Za-z]*i")     # -i / -i.bak / -ni / -si.bak
 SED_WRITE_RE = re.compile(r"(?:^|[;{}\s/])[wW]\s+\S")  # s/a/b/w FILE ・ /re/w FILE
 
+# --- KLK-019: シェル制御構文（for/while/until/if/elif/do/then/else/case）の
+#     本体再帰判定 -------------------------------------------------------------
+CONTROL_CONDITION_KEYWORDS = frozenset({"if", "elif", "while", "until"})
+CONTROL_BODY_KEYWORDS = frozenset({"do", "then", "else"})
+# **実装時の補正（設計書§6 R-CTRL3の前提の見直し）:** 設計書は当初
+# 「fi/done/esac は常に統計の末尾にしかならず、単独語のみの統計は言及ゲートが
+# 立たないため特別扱いは不要」としていたが、AC1 の実測
+# （`while read l; do echo $l; done < tickets/active/APP-001.md`）で
+# この前提が破れることを確認した。`done`/`fi`/`esac` はステートメント区切り
+# （`;` 等）の直後にしか現れないが、**その直後に区切り無しでリダイレクト
+# （`done < FILE`）が続く形は bash 文法上有効**であり、この場合
+# 「`done` + リダイレクト先」が1ステートメントになる。リダイレクト先の語は
+# pipe_segments では読み飛ばされる（コマンド語ではない）が、gate_hit 判定用の
+# `words`（ステートメント中の全 "w" トークン）には含まれるため、保護対象へ
+# 言及するリダイレクト先を持つだけで gate_hit が立ち、ストリップされない
+# 生の "done" が head になって ALLOWED_HEADS 外として誤denyになっていた
+# （`<` は redirect_in であり、そもそも書き込みを一切発生させないため、
+# ここを deny する実益は無い）。したがって CONTROL_CLOSING_KEYWORDS も
+# CONTROL_CONDITION_KEYWORDS／CONTROL_BODY_KEYWORDS と同様に
+# strip_control_prefix で剥がす（下記）。**この補正は ALLOWED_HEADS／
+# CWD_SAFE_HEADS を一切変更せず、剥がした残余の判定は既存の
+# ALLOWED_HEADS 判定にそのまま委ねる**ため、新しい許可経路を作らない
+# （`done | rm ...` のように閉じキーワードの後ろに実コマンドを伴う形は
+# パイプ区間として独立に判定されるため、この剥がしとは無関係に deny の
+# ままである。検出器: test_klk019_while_done_trailing_redirect_allow・
+# test_klk019_closing_keyword_pipe_write_still_denies）。
+CONTROL_CLOSING_KEYWORDS = frozenset({"fi", "done", "esac"})
+BASH_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
+
 # --- SED-7: sed プログラム本文のホワイトリスト（KLK-015・AW-7と同型） ------
 #
 # sed のコマンド集合は単一文字であるため、AW-7 の「呼び出し名の許可集合」
@@ -2595,6 +2624,110 @@ def redirect_violation(statement, guarded_vars, substs=(), cwd=""):
     return None
 
 
+# --- KLK-019: シェル制御構文（for/while/until/if/elif/do/then/else/case）の
+# 本体再帰判定。ALLOWED_HEADS 判定は「コマンド」に対して行う設計であり、制御
+# 構文キーワード自体はコマンドではない。ALLOWED_HEADS/CWD_SAFE_HEADS へ制御
+# 構文キーワードを追加するのではなく、先頭に連なる制御構文キーワードだけを
+# 再帰的に剥がし、残余の「実行されうる本体コマンド」を既存の ALLOWED_HEADS
+# 判定へそのまま回す（設計書 docs/designs/KLK-019.md §3・§4）。
+
+def _parse_for_header(words):
+    """`for NAME in LIST` の古典形なら (NAME, LIST語のリスト) を返す。
+    C形式（`for ((...))`）・`in`を伴わず余分な語がある不明な形は None。
+    `for NAME; do ...`（`in`省略＝$@相当）は (NAME, []) を返す
+    （LISTが無いためguarded_loop_varsには登録されない＝安全側）。
+    """
+    if len(words) < 2 or words[0] != "for":
+        return None
+    name = words[1]
+    if not BASH_NAME_RE.fullmatch(name):
+        return None
+    rest = words[2:]
+    if not rest:
+        return name, []
+    if rest[0] == "in":
+        return name, rest[1:]
+    return None  # `for NAME extra...`（in を伴わない不明な形）
+
+
+def _strip_case_clause(tokens):
+    """`case SUBJECT in PATTERN) ...` の先頭を剥がし、本体トークンを返す。
+
+    単一トークンの単純パターン（`*.md)`・`*)` 等）だけを認識する。認識でき
+    ない形（複数パターンの `|`・分割された `(`/`)`・`in` の欠落等）は None を
+    返す（P8: 曖昧な位置は保守側。呼び出し元は元の statement で判定する）。
+    """
+    if (len(tokens) < 4 or tokens[1][0] != "w" or
+            tokens[2] != ("w", "in") or tokens[3][0] != "w"):
+        return None
+    pattern = tokens[3][1]
+    if not pattern.endswith(")") or pattern == ")":
+        return None
+    return tokens[4:]
+
+
+def strip_control_prefix(statement):
+    """先頭に連なる制御構文キーワードを再帰的に剥がし、残余トークンを返す。
+
+    残余は「実行されうる本体コマンド」の (kind, value) トークン列（空リストも
+    ありうる＝forヘッダーのように実行コマンドを含まない場合）。剥がすものが
+    無い、または構造を確定できない場合は None を返す（呼び出し元は元の
+    statement で判定する＝既存の deny 側の挙動を維持する。P8）。
+
+    **実装時の補正:** CONTROL_CLOSING_KEYWORDS（fi/done/esac）も同様に剥がす。
+    設計書§6 R-CTRL3は「これらは常に統計の末尾で単独語にしかならない」と
+    仮定していたが、`done`/`fi`/`esac` の直後に区切り無しでリダイレクトが
+    続く形（`while read l; do echo $l; done < tickets/active/APP-001.md`。
+    AC1 の実例）は bash 文法上有効であり、この場合「閉じキーワード＋
+    リダイレクト」が1ステートメントになる。リダイレクト先の語は
+    pipe_segments では読み飛ばされるが gate_hit 判定用の words には含まれる
+    ため、剥がさないと生の "done" が head になり ALLOWED_HEADS 外として
+    誤denyになる（`<` は read_in であり書き込みを発生させないため、
+    denyする実益が無い）。剥がした残余は既存の ALLOWED_HEADS 判定に
+    そのまま委ねるため新しい許可経路は作らない（詳細は
+    CONTROL_CLOSING_KEYWORDS の定義コメントを参照）。
+    """
+    tokens, changed = statement, False
+    while tokens:
+        if tokens[0][0] != "w":
+            break
+        head = tokens[0][1]
+        if head == "case":
+            residual = _strip_case_clause(tokens)
+            if residual is None:
+                return tokens if changed else None
+            tokens, changed = residual, True
+            continue
+        if head == "for":
+            plain = [v for k, v in tokens if k == "w"]
+            parsed = _parse_for_header(plain)
+            if parsed is not None:
+                return []  # ヘッダーに実行コマンドは無い
+            return tokens if changed else None  # C形式等、判定できない形
+        if (head in CONTROL_CONDITION_KEYWORDS or
+                head in CONTROL_BODY_KEYWORDS or
+                head in CONTROL_CLOSING_KEYWORDS):
+            tokens, changed = tokens[1:], True
+            continue
+        break
+    return tokens if changed else None
+
+
+def control_stripped_segments(statement):
+    """制御構文の先頭キーワードを剥がした残余からパイプ区間を得る。
+
+    剥がせなかった場合（strip_control_prefix が None を返す場合）は元の
+    statement からそのまま得る（安全側フォールバック。既存の全ステートメント
+    に対して1バイトも挙動を変えない）。**この関数は ALLOWED_HEADS 判定
+    （segment_violation 群）と cwd 追跡（next_cwd）の両方の呼び出し元から
+    使うこと。** 片方だけに適用すると、`if cd tickets/active; then rm
+    APP-001.md; fi` のように「if の条件で cd し、cwd 追跡だけが古い statement
+    を見る」ことで cwd_is_guarded が発火しない穴になる（§6 R-CTRL4）。
+    """
+    stripped = strip_control_prefix(statement)
+    return pipe_segments(stripped if stripped is not None else statement)
+
+
 def statement_violation(statement, guarded_vars, substs=(), cwd=""):
     """ステートメント単位の違反理由を返す。問題なければ None。
 
@@ -2605,7 +2738,10 @@ def statement_violation(statement, guarded_vars, substs=(), cwd=""):
     if reason:
         return reason
     words = [v for k, v in statement if k == "w"]
-    segments = pipe_segments(statement)
+    # KLK-019: 制御構文（for/while/until/if/elif/do/then/else/case）の先頭
+    # キーワードを剥がした残余で ALLOWED_HEADS 判定を行う（cwd 追跡
+    # （find_violation）と同じヘルパーを共有する。§4 R-CTRL4）
+    segments = control_stripped_segments(statement)
     # KLK-029: sed/awk はプログラム本文に独自のエスケープ規約を持つため、
     # 通常の mentions_guarded では検出できない言及がありうる（§3・§4-1）。
     # この文に sed/awk のパイプ区間が含まれる場合に限り、エスケープを
@@ -2850,7 +2986,10 @@ def find_violation(command, depth=0, cwd=""):
         reason = statement_violation(statement, guarded_vars, substs, cwd)
         if reason:
             return reason
-        segments = pipe_segments(statement)
+        # KLK-019: cwd 追跡も制御構文の先頭キーワードを剥がした残余で行う
+        # （statement_violation の ALLOWED_HEADS 判定と同じヘルパーを共有する。
+        # 片方だけに適用すると R-CTRL4 の穴になる。§4・§6参照）
+        segments = control_stripped_segments(statement)
         cwd = next_cwd(segments[0] if segments else [], cwd)
     # どの文の語にも現れなかった置換（構造上起きないが取りこぼしを作らない）。
     # 帰属が取れないため cwd は与えずに評価する
