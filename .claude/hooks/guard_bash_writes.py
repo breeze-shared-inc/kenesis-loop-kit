@@ -2600,8 +2600,14 @@ def record_assignments(statement, guarded_vars, substs=()):
                 guarded_vars.add(word[:match.end() - 1])
 
 
-def redirect_violation(statement, guarded_vars, substs=(), cwd=""):
-    """出力リダイレクト先が保護対象・保護対象を代入された変数なら理由を返す。"""
+def redirect_violation(statement, guarded_vars, substs=(), cwd="",
+                        guarded_loop_vars=()):
+    """出力リダイレクト先が保護対象・保護対象を代入された変数なら理由を返す。
+
+    guarded_loop_vars は KLK-019: `for NAME in LIST` の LIST が保護対象へ
+    言及する場合の NAME 集合（§3方針4）。guarded_vars（前置き代入の追跡）
+    とは別集合のままORで組み込む（INV-SH-11の挙動を変えないため統合しない）。
+    """
     for index, (kind, value) in enumerate(statement):
         if kind != "op" or op_kind(value) != "redirect_out":
             continue
@@ -2618,7 +2624,8 @@ def redirect_violation(statement, guarded_vars, substs=(), cwd=""):
         # （`cd tickets/active && echo x > APP-001.md`）
         resolved = expand_substs(target, substs)
         if (is_guarded_token_expanded(resolved) or
-                any(n in guarded_vars for n in VAR_REF_RE.findall(resolved)) or
+                any(n in guarded_vars or n in guarded_loop_vars
+                    for n in VAR_REF_RE.findall(resolved)) or
                 guarded_write_target(target, cwd, substs)):
             return "リダイレクト（> %s）による書き込み" % display_text(target)
     return None
@@ -2728,13 +2735,56 @@ def control_stripped_segments(statement):
     return pipe_segments(stripped if stripped is not None else statement)
 
 
-def statement_violation(statement, guarded_vars, substs=(), cwd=""):
+def mentions_guarded_var(words, names):
+    """語のいずれかが names に含まれる変数を参照するか（`$NAME`/`${NAME}`）。
+
+    読み取り・書き込みを問わず**参照が構文上に存在するだけ**で真になる
+    （値の追跡は行わない＝AC3の保守的deny設計。実際に許可されるかどうかは
+    このゲートの後段にある既存の ALLOWED_HEADS 判定に委ねる）。
+    """
+    if not names:
+        return False
+    for word in words:
+        for ref in VAR_REF_RE.findall(word):
+            if ref in names:
+                return True
+    return False
+
+
+def record_loop_binding(statement, guarded_loop_vars, substs=()):
+    """`for NAME in LIST` の LIST が保護対象に言及する場合、NAME を
+    guarded_loop_vars へ登録する（KLK-019 AC3）。
+
+    値そのもの（実行時に $NAME に束縛される個々の要素）は追跡できない
+    （for の展開結果はコマンド文字列上に現れないため原理的に不可能。
+    モジュール docstring「パラメータ展開」・INV-SH-11 と同型の限界）。
+    ここでは「LIST全体が保護対象パスへ言及している」という構文的事実だけを
+    証拠にし、`guarded_loop_vars` へ加える。既存の `guarded_vars`
+    （NAME=value 前置き代入の追跡）とは完全に別集合であり、統合しない
+    （INV-SH-11 の挙動を変えないため。§3 設計方針5）。
+    """
+    words = [v for k, v in statement if k == "w"]
+    parsed = _parse_for_header(words)
+    if parsed is None:
+        return
+    name, rest = parsed
+    if not rest:
+        return
+    if mentions_guarded_expanded(expand_all(rest, substs)):
+        guarded_loop_vars.add(name)
+
+
+def statement_violation(statement, guarded_vars, substs=(), cwd="",
+                         guarded_loop_vars=()):
     """ステートメント単位の違反理由を返す。問題なければ None。
 
     cwd は「このステートメントを実行する時点の作業ディレクトリ」（追跡不能なら
     None）。保護対象配下なら相対パスが保護対象を指しうるため判定を強める。
+    guarded_loop_vars は KLK-019: `for NAME in LIST` の LIST が保護対象へ
+    言及する場合の NAME 集合（構文的な参照だけでゲートを開く。§3方針4）。
     """
-    reason = redirect_violation(statement, guarded_vars, substs, cwd)
+    reason = redirect_violation(statement, guarded_vars, substs, cwd,
+                                 guarded_loop_vars)
     if reason:
         return reason
     words = [v for k, v in statement if k == "w"]
@@ -2757,6 +2807,10 @@ def statement_violation(statement, guarded_vars, substs=(), cwd=""):
                     mentions_guarded_expanded(expanded_words))
     else:
         gate_hit = cwd_is_guarded(cwd) or mentions_guarded_expanded(expanded_words)
+    # KLK-019: ループ変数（for NAME in LIST の NAME）への参照が構文上に
+    # 存在するだけでゲートを開く（値の追跡は行わない＝保守的deny設計。
+    # `do rm $f` のような「読み取りに見えない参照」を拾うため。§3方針4・AC3）
+    gate_hit = gate_hit or mentions_guarded_var(expanded_words, guarded_loop_vars)
     if not gate_hit:
         return None
     # QT-1: この文には bash が展開時にデコード／翻訳する語がある。hook が見て
@@ -2971,7 +3025,7 @@ def find_violation(command, depth=0, cwd=""):
         tokens, substs = lex(command)
     except ValueError:
         return degraded_violation(command, cwd, depth)
-    guarded_vars, seen = set(), set()
+    guarded_vars, guarded_loop_vars, seen = set(), set(), set()
     for statement in split_statements(tokens):
         # 内側方向（置換の中身が書き込み）は、**その置換が現れた文の cwd**で
         # 評価する（`cd tickets/active && ls $(rm APP-001.md)` を閉じるため）。
@@ -2983,7 +3037,11 @@ def find_violation(command, depth=0, cwd=""):
             if reason:
                 return reason
         record_assignments(statement, guarded_vars, substs)
-        reason = statement_violation(statement, guarded_vars, substs, cwd)
+        # KLK-019: `for NAME in LIST` の LIST が保護対象へ言及する場合、
+        # NAME を guarded_loop_vars へ登録する（§3方針4・AC3）
+        record_loop_binding(statement, guarded_loop_vars, substs)
+        reason = statement_violation(statement, guarded_vars, substs, cwd,
+                                      guarded_loop_vars)
         if reason:
             return reason
         # KLK-019: cwd 追跡も制御構文の先頭キーワードを剥がした残余で行う
