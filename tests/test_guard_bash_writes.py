@@ -579,6 +579,64 @@ INVENTORY_CASES = (
     # 正準形と同型 ---
     ("INV-AWKLEX-14", "閉じた正規表現直後の連鎖除算（C10・AWL-2 の prev_regex）",
      "awk 'BEGIN{/x/ / system(\"rm SPEC.md\") / 1}'", "deny"),
+    # --- KLK-019: シェル制御構文（for/while/until/if/elif/case）の本体再帰
+    # 判定（設計書 docs/designs/KLK-019.md §9 AC4 の分岐列挙と1対1対応させる）。
+    # ALLOWED_HEADS/CWD_SAFE_HEADS は変更していない（§3方針1）。
+    ("INV-CTRL-01", "classic for 読み取り（AC1）",
+     "for f in tickets/active/*.md; do echo $f; done", "allow"),
+    ("INV-CTRL-02", "for 本体の書き込み（リテラルパス。ループ変数不使用）",
+     "for i in 1 2 3; do rm tickets/active/APP-001.md; done", "deny"),
+    ("INV-CTRL-03", "for 本体の書き込み（ループ変数経由。AC2/AC3の核心）",
+     "for f in tickets/active/*.md; do rm $f; done", "deny"),
+    ("INV-CTRL-04", "for 本体の読み取り（ループ変数経由。AC3の裏付け）",
+     "for f in tickets/active/*.md; do cat $f; done", "allow"),
+    ("INV-CTRL-05", "for NAME; do（in 省略。LIST が無いため guarded_loop_vars"
+     "へ未登録＝安全側）",
+     "for f; do cat $f; done", "allow"),
+    ("INV-CTRL-06", "C形式for（構造を確定できずフォールバックdeny）",
+     "for ((i=0; i<3; i++)); do rm tickets/active/APP-001.md; done", "deny"),
+    ("INV-CTRL-07", "while 読み取り",
+     "while read l; do echo $l; done < tickets/active/APP-001.md", "allow"),
+    ("INV-CTRL-08", "while 条件節の書き込み",
+     "while rm tickets/active/APP-001.md; do echo done; done", "deny"),
+    ("INV-CTRL-09", "until 読み取り",
+     "until false; do cat tickets/active/APP-001.md; break; done", "allow"),
+    ("INV-CTRL-10", "if-then-fi 読み取り",
+     "if [ -f tickets/active/APP-001.md ]; then echo yes; fi", "allow"),
+    ("INV-CTRL-11", "if-then-else-fi 読み取り",
+     "if true; then cat tickets/active/APP-001.md; else echo no; fi", "allow"),
+    ("INV-CTRL-12", "if-elif-else-fi 読み取り",
+     "if false; then echo a; elif true; then cat tickets/active/APP-001.md;"
+     " else echo b; fi", "allow"),
+    ("INV-CTRL-13", "if 条件節の書き込み",
+     "if rm tickets/active/APP-001.md; then echo ok; fi", "deny"),
+    ("INV-CTRL-14", "if 本体（then）の書き込み",
+     "if true; then rm tickets/active/APP-001.md; fi", "deny"),
+    ("INV-CTRL-15", "case 単一パターン読み取り",
+     "case x in *.md) cat tickets/active/APP-001.md ;; esac", "allow"),
+    ("INV-CTRL-16", "case 単一パターン書き込み",
+     "case x in *) rm tickets/active/APP-001.md ;; esac", "deny"),
+    ("INV-CTRL-17", "case 複数パターン a|b)（構造を確定できずフォールバックdeny）",
+     "case x in a|b) cat tickets/active/APP-001.md ;; esac", "deny"),
+    ("INV-CTRL-18", "case で in 欠落（構造を確定できずフォールバックdeny）",
+     "case x *) rm tickets/active/APP-001.md ;; esac", "deny"),
+    ("INV-CTRL-19", "入れ子制御構文（読み取り。for内if）",
+     "for f in tickets/active/*.md; do if true; then cat $f; fi; done",
+     "allow"),
+    ("INV-CTRL-20", "入れ子制御構文（深い階層での書き込み。for内ifのループ変数）",
+     "for f in tickets/active/*.md; do if true; then rm $f; fi; done", "deny"),
+    ("INV-CTRL-21", "if cd DIR; then ...; fi による cwd 追跡（R-CTRL4回帰"
+     "ガード・deny側）",
+     "if cd tickets/active; then rm APP-001.md; fi", "deny"),
+    ("INV-CTRL-22", "if cd DIR; then ...; fi による cwd 追跡（R-CTRL4回帰"
+     "ガード・allow側）",
+     "if cd tickets/active; then cat APP-001.md; fi", "allow"),
+    ("INV-CTRL-23", "単独 fi のみのステートメント（R-CTRL3）",
+     "fi", "allow"),
+    ("INV-CTRL-24", "単独 done のみのステートメント（R-CTRL3）",
+     "done", "allow"),
+    ("INV-CTRL-25", "単独 esac のみのステートメント（R-CTRL3）",
+     "esac", "allow"),
 )
 
 
@@ -2966,6 +3024,153 @@ class TestGuardBashWrites(unittest.TestCase):
         # 確認済み）
         candidate = "a" + "{x}" * 1000 + "b"
         self.assertDeny("rm " + candidate)
+
+    # --- KLK-019: シェル制御構文（for/while/until/if/elif/do/then/else/
+    # case）の誤deny解消（設計書 docs/designs/KLK-019.md §9）。INV-CTRL-*
+    # は上記 INVENTORY_CASES で機械的に固定済みであり、以下は AC の各観点
+    # ごとに意図を明示した専用の回帰ガードを追加する。
+
+    def test_klk019_ac1_read_only_control_structures_allow(self):
+        # AC1: 読み取り専用の for/while/if/case/until がいずれも allow。
+        # `;` 区切り形（本テスト）と改行区切り形（次のテスト）の両方を固定する
+        self.assertAllow("for f in tickets/active/*.md; do echo $f; done")
+        self.assertAllow(
+            "while read l; do echo $l; done < tickets/active/APP-001.md")
+        self.assertAllow("if [ -f tickets/active/APP-001.md ]; then echo yes; fi")
+        self.assertAllow("case x in *) cat tickets/active/APP-001.md ;; esac")
+        self.assertAllow(
+            "until false; do cat tickets/active/APP-001.md; break; done")
+
+    def test_klk019_ac1_read_only_control_structures_newline_form_allow(self):
+        # AC1: split_statements は改行を `;` と同一視するため、`;` 区切り形と
+        # 改行区切り形で結果が一致するはずであることをテストで固定する
+        self.assertAllow(
+            "for f in tickets/active/*.md\ndo echo $f\ndone")
+        self.assertAllow(
+            "while read l\ndo echo $l\ndone < tickets/active/APP-001.md")
+        self.assertAllow(
+            "if [ -f tickets/active/APP-001.md ]\nthen echo yes\nfi")
+        self.assertAllow(
+            "case x in *) cat tickets/active/APP-001.md ;;\nesac")
+        self.assertAllow(
+            "until false\ndo cat tickets/active/APP-001.md\nbreak\ndone")
+
+    def test_klk019_ac2_write_via_loop_var_denies(self):
+        # AC2: ループ変数経由の書き込み（rm・sed -i・リダイレクト）はいずれも deny
+        self.assertDeny("for f in tickets/active/*.md; do rm $f; done")
+        self.assertDeny(
+            "for f in tickets/active/*.md; do sed -i 's/a/b/' $f; done")
+        self.assertDeny("for f in tickets/active/*.md; do echo x > $f; done")
+
+    def test_klk019_ac2_write_via_literal_path_without_loop_var_denies(self):
+        # AC2: ループ変数を介さないリテラルパスの書き込みは Phase1 の
+        # ALLOWED_HEADS 判定だけで denied のままであることを確認する
+        # （Phase2 の guarded_loop_vars が無くても deny される経路）
+        self.assertDeny(
+            "while true; do rm tickets/active/APP-001.md; break; done")
+        self.assertDeny(
+            "for i in 1 2 3; do rm tickets/active/APP-001.md; done")
+
+    def test_klk019_ac3_loop_var_reference_gate_is_conservative(self):
+        # AC3: ループ変数への参照は「読み取りコマンドの引数であっても」
+        # ゲートを開くが、最終的な許可・不許可は既存の ALLOWED_HEADS 判定に
+        # 委ねる（cat は許可・rm は不許可のまま）
+        self.assertAllow("for f in tickets/active/*.md; do cat $f; done")
+        self.assertAllow("for f in tickets/active/*.md; do echo $f; done")
+        self.assertDeny("for f in tickets/active/*.md; do rm $f; done")
+
+    def test_klk019_inv_sh_11_unaffected_by_loop_var_separation(self):
+        # §3方針5: guarded_vars（前置き代入の追跡）と guarded_loop_vars
+        # （for ループ変数の追跡）は完全に分離した別集合であり、既存の
+        # INV-SH-11（f=path; rm $f が恒久的に allow）の挙動を一切変えない
+        self.assertAllow("f=tickets/active/APP-001.md; rm $f")
+
+    def test_klk019_r_ctrl4_if_cd_then_rm_denies_via_cwd_tracking(self):
+        # R-CTRL4（deny側）: if の条件節で cd した場合も、statement_violation
+        # の ALLOWED_HEADS 判定と find_violation の cwd 追跡の両方が
+        # control_stripped_segments を共有しているため、then 節の cwd 相対
+        # 書き込みが正しく検出される
+        self.assertDeny("if cd tickets/active; then rm APP-001.md; fi")
+
+    def test_klk019_r_ctrl4_if_cd_then_cat_allows_via_cwd_tracking(self):
+        # R-CTRL4（allow側）: 同じ cwd 追跡経路で、CWD_SAFE_HEADS 収載の
+        # 読み取り専用コマンド（cat）は許可のまま
+        self.assertAllow("if cd tickets/active; then cat APP-001.md; fi")
+
+    def test_klk019_c_style_for_and_multi_pattern_case_fallback_deny(self):
+        # §3方針2: C形式for・caseの複数パターン（`a|b)`）・in欠落のcaseは
+        # 構造を確定できないため strip_control_prefix が None を返し、
+        # 元の statement で判定する保守側フォールバックへ倒れる
+        self.assertDeny(
+            "for ((i=0; i<3; i++)); do rm tickets/active/APP-001.md; done")
+        self.assertAllow("for ((i=0; i<3; i++)); do echo $i; done")
+        self.assertDeny("case x in a|b) cat tickets/active/APP-001.md ;; esac")
+        self.assertDeny("case x *) rm tickets/active/APP-001.md ;; esac")
+
+    def test_klk019_nested_control_structures_write_at_deepest_level_denies(self):
+        # テスト観点(1): 入れ子（for内if等）で最深部のみ書き込みがある場合に
+        # 正しく deny されるか
+        self.assertAllow(
+            "for f in tickets/active/*.md; do if true; then cat $f; fi; done")
+        self.assertDeny(
+            "for f in tickets/active/*.md; do if true; then rm $f; fi; done")
+
+    def test_klk019_closing_keyword_trailing_redirect_allow(self):
+        # 実装時の補正（R-CTRL3の前提の見直し）: `done`/`fi`/`esac` の直後に
+        # 区切り無しでリダイレクトが続く形（`done < FILE`）は bash 文法上
+        # 有効であり、この場合「閉じキーワード＋リダイレクト」が1ステート
+        # メントになる。リダイレクト先が保護対象を言及していても、`<` は
+        # 読み取り専用（redirect_in）であり書き込みを発生させないため allow
+        # のままであることを固定する（AC1 の while-read 例の回帰ガード）
+        self.assertAllow(
+            "while read l; do echo $l; done < tickets/active/APP-001.md")
+        self.assertAllow("if true; then echo x; fi < tickets/active/APP-001.md")
+        self.assertAllow(
+            "case x in *) echo hi ;; esac < tickets/active/APP-001.md")
+
+    def test_klk019_closing_keyword_pipe_write_still_denies(self):
+        # 上記の補正が新しい許可経路を作らないことの安全性確認: 閉じ
+        # キーワードの直後がリダイレクトではなくパイプで実コマンドへ続く形
+        # （`done | rm ...`）は、そのコマンドが独立したパイプ区間として
+        # 引き続き ALLOWED_HEADS 判定の対象になるため deny のまま
+        self.assertDeny(
+            "while true; do echo hi; done | rm tickets/active/APP-001.md")
+        self.assertAllow(
+            "while true; do echo hi; done | cat tickets/active/APP-001.md")
+
+    def test_klk019_standalone_closing_keywords_allow(self):
+        # R-CTRL3: 単独の fi/done/esac のみのステートメントは引数を取らない
+        # ため言及ゲートが立たず、allow のまま（クラッシュしないことも含めて
+        # 固定する）
+        self.assertAllow("fi")
+        self.assertAllow("done")
+        self.assertAllow("esac")
+
+    def test_klk019_erroneous_deny_budget_allow(self):
+        # AC6: 誤deny予算の逆方向確認。N1〜N6に対応する代表例が新たに
+        # allow へ転じることを固定する（列挙外の新規allowが無いことは
+        # INVENTORY_CASES・LEGACY_DENY_COMMANDS の全件回帰と本ファイルの
+        # 他の test_klk019_* が担保する）
+        self.assertAllow(  # N1
+            "for f in tickets/active/*.md; do echo $f; done")
+        self.assertAllow(  # N2
+            "while true; do cat tickets/active/APP-001.md; break; done")
+        self.assertAllow(  # N3
+            "if false; then echo a; elif true; then "
+            "cat tickets/active/APP-001.md; else echo b; fi")
+        self.assertAllow(  # N4
+            "case x in *.md) cat tickets/active/APP-001.md ;; esac")
+        self.assertAllow(  # N5（入れ子）
+            "for f in tickets/active/*.md; do case $f in "
+            "*) cat $f ;; esac; done")
+        self.assertAllow(  # N6（cd 追跡）
+            "if cd tickets/active; then cat APP-001.md; fi")
+        # 対象外（引き続き deny）: C形式for・caseの複数パターン・ループ変数
+        # 経由の書き込み
+        self.assertDeny(
+            "for ((i=0; i<3; i++)); do rm tickets/active/APP-001.md; done")
+        self.assertDeny("case x in a|b) cat tickets/active/APP-001.md ;; esac")
+        self.assertDeny("for f in tickets/active/*.md; do rm $f; done")
 
 
 if __name__ == "__main__":
