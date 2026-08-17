@@ -516,6 +516,14 @@ INVENTORY_CASES = (
      "rm 'x#y' tickets/acti\\\nve/APP-001.md", "deny"),
     ("INV-SH-21", "degraded の単独 & ステートメント区切り（H5）",
      "ls & rm docs/SPEC.md #'", "deny"),
+    # --- KLK-017（H6）: degraded がコマンド置換／バッククォート／プロセス
+    # 置換の内側を評価しない形。KLK-014（`_extract_degraded_substs`）で
+    # 対処済みのため、期待値は "allow" ではなく "deny" として登録する
+    # （チケット本文の「先に KLK-014／KLK-015 が完了した場合は deny として
+    # 登録する」に該当。設計書 §3-11 INV-SH-22・T-H6a と同型） ---
+    ("INV-SH-22", "degraded がコマンド置換の内側を評価しない形"
+     "（H6・KLK-014 で deny 済み）",
+     "ls $(rm docs/SPEC.md) #'", "deny"),
     # --- awk の**字句次元**（§3-9-3）。hook はプログラム本文の字面を見るが、
     # awk が実行するのは「リテラルでもコメントでもない部分」だけである。
     # 両者が食い違う条件をサブケースへ分解して固定する（P7／P8）。
@@ -561,6 +569,13 @@ INVENTORY_CASES = (
      "allow"),
     ("INV-AWKLEX-13", "複数行プログラム（D-1 の固定点＝(c)）",
      "awk 'BEGIN{FS=\":\"}\n{print $2}' tickets/active/APP-001.md", "allow"),
+    # --- C10（Phase 14 実施中に発見・KLK-017 で書き戻し）: 閉じた正規表現
+    # リテラルの直後に除算に見える `/` が連なる形。開始条件の食い違い
+    # （`prev_regex` の欠落）による over-removal＝allow の穴だった。
+    # T-C10a（test_awk_chained_division_after_regex_bypasses_awl4_deny）の
+    # 正準形と同型 ---
+    ("INV-AWKLEX-14", "閉じた正規表現直後の連鎖除算（C10・AWL-2 の prev_regex）",
+     "awk 'BEGIN{/x/ / system(\"rm SPEC.md\") / 1}'", "deny"),
 )
 
 
