@@ -459,6 +459,67 @@ INVENTORY_CASES = (
      "allow"),
     ("INV-SED-31", "対照: |区切りは元々検出済み・回帰確認",
      "sed 's|.*|rm docs\\|SPEC.md|e' unrelated.txt", "deny"),
+    # --- KLK-030: sed_strip_literals のパス末尾 s/y 疑似境界探索
+    # （`tickets`・`sub` 等パス文字列由来の生の s/y 文字を無条件にコマンド
+    # 開始とみなす既知の挙動。tests/test_guard_bash_writes.py 内の
+    # test_sed_strip_literals_path_pseudo_boundary_documented で単体固定化
+    # 済み）に対し、危険文字（w/W/r/R/e）を疑似トリガーの**後**に置く逆順を
+    # 固定する。既存 INV-SED-09〜21 は危険文字がトリガーより**前**にある
+    # 順序のみを網羅しており、本ブロックはその対を成す（docs/designs/
+    # KLK-030.md §4-2・§3 安全性主張）。investigation.md の追加調査
+    # （境界文字×デリミタ23種×危険文字12種×境界位置13カテゴリ・計3,345件の
+    # 実機GNU sed 4.9二方向照合。checker ALLOW ∧ 実機危険動作の組は0件）が
+    # 挙げた13カテゴリ（本編8種＋補完5種）の代表的サブセットを
+    # `tickets/active/sub/APP-001.md`（チケット再現手順そのもの）を軸に
+    # 構築する。全ケースについて実機GNU sed 4.9との二方向照合を実施済み
+    # （いずれも label 未解決またはコマンド構文エラーで停止し、実際の書込・
+    # 読取は一切発生しない。checker 側も全件 deny＝検出漏れ0件）。
+    # 各ケースの実機照合結果・stripped中間値の詳細は
+    # docs/reports/KLK-030/implementation.md を参照 ---
+    ("INV-SED-32", "先頭境界（プログラム先頭が疑似トリガー由来のs）",
+     "sed 'tickets/active/sub/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-33", "デリミタ自体への危険文字使用（wを疑似デリミタに採用。"
+     "w自体が除去区間ごと飲み込まれても他の非許可文字でdenyが確定する固定）",
+     "sed 'tickets/active/sub/APP-001.mdswFOOwBARw' unrelated.txt", "deny"),
+    ("INV-SED-34", "閉じ後のフラグ位置（正規のs/a/b/gコマンドの後に"
+     "疑似トリガー→危険文字）",
+     "sed '1,2s/a/b/g;tickets/active/sub/APP-001.mdwr' unrelated.txt",
+     "deny"),
+    ("INV-SED-35", "トリガー前後への危険文字配置（トリガー直前にeを接着し、"
+     "wを疑似デリミタに使い除去区間へさらに飲み込ませる）",
+     "sed 'tickets/active/sub/APP-001.mdeswzwZwr' unrelated.txt", "deny"),
+    ("INV-SED-36", "実パス構造の模倣（多階層パスの末尾に危険文字）",
+     "sed 'tickets/active/sub/dir/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-37", "ブラケット式（[abc]を含む正規のsコマンドの後に"
+     "疑似トリガー→危険文字）",
+     "sed 's/[abc]/Q/;tickets/active/sub/APP-001.mdwr' unrelated.txt",
+     "deny"),
+    ("INV-SED-38", "カスタムデリミタアドレス（\\cXXXc形式の後に"
+     "疑似トリガー→危険文字）",
+     "sed '\\cZcZ;tickets/active/sub/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-39", "`/`トリガーの類似ケース（// 直前アドレスの後に"
+     "疑似トリガー→危険文字）",
+     "sed '//;tickets/active/sub/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-40", "アドレス前置き（1）+ 疑似トリガー→危険文字",
+     "sed '1tickets/active/sub/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-41", "アドレス前置き（$）+ 疑似トリガー→危険文字",
+     "sed '$tickets/active/sub/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-42", "アドレス前置き（1,3）+ 疑似トリガー→危険文字",
+     "sed '1,3tickets/active/sub/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-43", "アドレス前置き（/Z/）+ 疑似トリガー→危険文字",
+     "sed '/Z/tickets/active/sub/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-44", "アドレス前置き（0~2・GNU拡張ステップ）+ "
+     "疑似トリガー→危険文字",
+     "sed '0~2tickets/active/sub/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-45", "アドレス前置き（2!）+ 疑似トリガー→危険文字",
+     "sed '2!tickets/active/sub/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-46", "`;`直後に疑似トリガー→危険文字",
+     "sed 'p;tickets/active/sub/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-47", "`}`直後に疑似トリガー→危険文字",
+     "sed '1{p};tickets/active/sub/APP-001.mdwr' unrelated.txt", "deny"),
+    ("INV-SED-48", "危険文字を区切りなしでトリガー直後に接着"
+     "（逆順・無区切りの重点ケース）",
+     "sed 'tickets/active/sub/APP-001.mdwe' unrelated.txt", "deny"),
     # --- シェル展開の次元（§3-9-2。bash が解釈するがコマンド文字列上は
     # 見えない変換）。この次元は第4版まで棚卸し表に1行も無く、C6 はその空白
     # から出た。相違の**向き**（allow 方向＝危険／deny 方向＝保守的）を
@@ -2779,6 +2840,33 @@ class TestGuardBashWrites(unittest.TestCase):
         fused_tickets = "tickets" + "/" + "active" + "/APP-001.md"
         self.assertTrue(guard._is_guarded_path_component(fused_tickets))
         self.assertTrue(guard._is_guarded_path(fused_tickets))
+
+    # --- KLK-030: sed_strip_literals のパス末尾 s/y 疑似境界探索の固定化
+    # （設計書 docs/designs/KLK-030.md §4-1・チケット再現手順そのもの）。
+    # `sed_strip_literals` はトップレベル走査で生の文字 `s`/`y` の出現位置を
+    # 構文的位置に関わらず無条件に s/y コマンド開始とみなすため、保護対象
+    # パス文字列自体が `s` を含む場合（`tickets` は末尾が `s`）、パス文字列
+    # 内で疑似的な境界探索が発生する。**この挙動を「正しい」と主張するのでは
+    # なく、「既知の現象として凍結し、回帰があれば検知する」ことが本テストの
+    # 目的である。** 危険文字検出漏れ（allow化）に至らないことの立証は
+    # INV-SED-32〜48（本ファイル上部の INVENTORY_CASES）が担う。
+
+    def test_sed_strip_literals_path_pseudo_boundary_documented(self):
+        # チケット再現手順そのもの: "tickets" の末尾の "s" が疑似的な s コマ
+        # ンド開始とみなされ、次の1文字 "/" がデリミタに選ばれる。その後
+        # 未エスケープの "/" が2回現れるまで（"active/" の直後・"sub/" の
+        # 直後）の区間 "active/sub/" がまるごと除去される（既知の現象。
+        # docs/reports/KLK-030/investigation.md Findings 2 と一致）。
+        text = "1w tickets/active/sub/APP-001.md"
+        self.assertEqual(
+            guard.sed_strip_literals(text), "1w ticketsAPP-001.md")
+        # 併せて、危険文字 "w" が疑似トリガー（"tickets" の "s"）より**前**
+        # にあるため stripped に残り続け、sed_program_violation が None
+        # ではない（= deny 理由文字列を返す）ことを確認する。順序非依存の
+        # 判定（stripped 全体を安全文字集合と比較）により、疑似境界探索の
+        # 誤動作に関わらず既に deny が確定していることの直接証拠になる
+        # （docs/designs/KLK-030.md §3「安全性主張」(1)）。
+        self.assertIsNotNone(guard.sed_program_violation(text))
 
     # --- KLK-018: シェル展開（ブレース展開・分断glob）による保護対象パスの
     # 分断への対応（設計書 docs/designs/KLK-018.md §9 AC1・AC2・AC4）。
