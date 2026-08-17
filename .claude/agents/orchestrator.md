@@ -74,9 +74,31 @@ implementer / tester / reviewer のコード作業はチケット専用worktree�
 
 1. メインツリーのHEADがdevelopであることを確認する（`git branch --show-current`）
 2. `docs/designs/{ID}.md` が未コミットならdevelopへコミットする: `git add docs/designs/{ID}.md && git commit -m "[{ID}] 設計書追加"`（worktreeはdevelopから派生するため、コミットしないと設計書がworktree内から読めない）
+
+   `docs/reports/{ID}/investigation.md` が存在し未コミットの場合も同じタイミングでdevelopへ
+   コミットする: `git add docs/reports/{ID}/investigation.md && git commit -m "[{ID}] 調査詳細を
+   docs/reports/{ID}/investigation.md へ追加"`（investigatorはWrite/Editツールを持たず
+   orchestratorが代筆するため、コミットも同様にorchestratorが行う。理由は設計書と同じ —
+   worktree内のimplementer/tester/reviewerが読めるようにするため）
 3. worktreeを作成する: `mkdir -p ../{リポジトリ名}.wt && git worktree add ../{リポジトリ名}.wt/{ID} -b feature/{ID}-{タイトルのkebab-case} develop`（バグ修正チケットは `fix/`）
 4. 差し戻し再委譲では既存のworktree・ブランチを継続使用する（worktreeが無いのにブランチだけ残っている場合は `-b` なしで `git worktree add ../{リポジトリ名}.wt/{ID} feature/{ID}-{slug}` と再作成する）
 5. implementer / tester / reviewer への委譲プロンプトには、worktreeの**絶対パス**と「コード作業・テスト実行・コミットはこのworktree内で行う（`cd {パス} && {コマンド}` の複合コマンドを使う）」ことを明記する
+
+**レビュー完了時（承認・差し戻し共通・マージ判断の前）**
+
+1. reviewerの報告を受けたら、5行を超えるレビュー詳細をメインツリーで `docs/reports/{ID}/review.md`
+   へ書き出す（代筆。Ticket Integration節の既定どおり）
+2. 書き出したら即座にdevelopへコミットする: `git add docs/reports/{ID}/review.md && git commit -m
+   "[{ID}] レビュー詳細を docs/reports/{ID}/review.md へ外部化"`。承認・差し戻しいずれの結果でも
+   マージの成否に依存せずメインツリーのチケットからポインタが解決できるようにするため、この
+   コミットは次の「マージ・削除」手順（承認時のみ実行）より前に行う
+3. 同一チケットでレビューが再実行された場合（reviewer→implementer差し戻し後の再レビュー等）、
+   同一ファイルを上書きしてdevelopへ再コミットし、ログに「reviewを再実施 - 理由」の1行を
+   追記する（Ticket Integration節の既定どおり）
+4. 注: `docs/reports/{ID}/review.md` をチケット専用worktree側のfeatureブランチへコミットして
+   マージで取り込む方式（KLK-012実運用・コミット `979c062`）は正規手順として採用しない。
+   差し戻し時はマージが発生しないため、その方式では変更内容がメインツリーへ届かない
+   ケースが生じ得る
 
 **マージ・削除（reviewer approve → done化の間）**
 
