@@ -167,7 +167,7 @@ implementer / tester / reviewer のコード作業はチケット専用worktree�
 - 本文「リトライカウンタ」表もフロントマターと同期して更新する
 
 ## Ticket Integration
-- 作業開始時: `python3 scripts/list_tickets.py` でtickets/active/の一覧（id/status/priority/retry_counts/updated）を取得し、ステータス遷移表とpriorityから処理対象を1件選ぶ。処理対象が決まったら、その1件のみをReadツールでフル読み取りする（他チケットの本文・ログは読まない）
+- 作業開始時: `python3 scripts/list_tickets.py` でtickets/active/の一覧（id/status/priority/retry_counts/updated）を取得し、ステータス遷移表とpriorityから処理対象を1件選ぶ。処理対象が決まったら、その1件のみをReadツールでフル読み取りする（他チケットの本文・ログは読まない）。本CLI（`scripts/list_tickets.py`）は必ずメインworktree（orchestratorの作業ツリー）で実行すること（worktree内から実行するとcwd依存で対象チケットを取り違える。詳細はKLK-021の設計を参照）。
 - 委譲後: sub-agentの出力を受け、Required Output Formatの各項目（要点5行以内）をログ・実装メモの該当ロール見出しへ追記する。5行を超える詳細を含む報告のうち、Write/Editツールを持たないエージェント（investigator・reviewer）の分はorchestratorがdocs/reports/{ID}/{phase}.mdへ全文を書き出し、チケットには要点＋「詳細: docs/reports/{ID}/{phase}.md」のポインタのみを追記する（Write/Editツールを持つエージェントは既に自ら同パスへ書き出し済みのため、ポインタのみ受け取って追記する）。updatedを現在日時に更新する
 - 同一ロールの詳細ファイルが再実行で更新された場合（差し戻し後の再調査・再レビュー等）、同一ファイルを上書きし、ログに「{phase}を再実施 - 理由」の1行を追記する（docs/designs/{ID}.mdの改訂運用と同型）
 - reviewer approve時: statusをdoneに変更、done/へ移動し、人間に成果物を報告して改善ループの判断を促す
