@@ -3,6 +3,7 @@
 hookスクリプトをサブプロセスとして起動するヘルパと、チケット生成テンプレートを提供する。
 依存なし（標準ライブラリのみ）。
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -125,3 +126,30 @@ def state_record(status, tti=0, rti=0, rtv=0, ts="2026-06-14T00:00:00"):
             "retry_counts": {"tester_to_implementer": tti,
                              "reviewer_to_implementer": rti,
                              "reviewer_to_investigator": rtv}}
+
+
+def write_spec(cwd, content="# SPEC\n\nテスト用SPEC本文\n"):
+    """docs/SPEC.md をテスト用に書き出し、絶対パスを返す。"""
+    target = os.path.join(cwd, "docs")
+    os.makedirs(target, exist_ok=True)
+    path = os.path.join(target, "SPEC.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return path
+
+
+def write_spec_state(cwd, record):
+    """hook管理サイドカー docs/.spec_state.json をテスト用に書き出す。
+    record: {"hash": ..., "ts": ...}"""
+    docs = os.path.join(cwd, "docs")
+    os.makedirs(docs, exist_ok=True)
+    path = os.path.join(docs, ".spec_state.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(record, f, ensure_ascii=False)
+    return path
+
+
+def spec_hash(content):
+    """SPEC.md本文のsha256ハッシュ（テスト用。実装（sha256_file）を呼ばず
+    独立に計算し、テストが実装のタウトロジーにならないようにする）。"""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()

@@ -16,8 +16,8 @@ fail-open: 内部エラー（パース不能など）では allow。
 注意: Bashツール経由の書き込み（リダイレクト・sed -i・インタプリタ等）は
       このhookの対象外。guard_bash_writes.py（PreToolUse・Bash）が
       ベストエフォートで遮断し、各エージェント定義の Never ルールで補強する
-      （チケット側と異なり Stop hook のドリフト検知は無い — SPEC.md には
-      観測サイドカーが存在しないため）。
+      （KLK-016 で Stop hook にも SPEC.md のハッシュドリフト検知を追加した。
+      観測サイドカーは docs/.spec_state.json。ネストした SPEC.md は対象外）。
 """
 import os
 import sys

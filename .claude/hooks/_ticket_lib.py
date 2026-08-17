@@ -4,6 +4,7 @@ stdlib のみ。外部依存なし。
 呼び出し側は「内部エラー時は allow（fail-open）」「検知した違反のみ deny（fail-closed）」
 という方針で利用する。
 """
+import hashlib
 import json
 import os
 import sys
@@ -134,6 +135,69 @@ def is_ticket(path):
     if not n.endswith(".md"):
         return False
     return _under_dir(n, "tickets/active/") or _under_dir(n, "tickets/done/")
+
+
+def spec_path_for(cwd):
+    """cwd 直下の docs/SPEC.md のパスを返す（cwd が非str/空なら None）。
+    ネストした SPEC.md は対象外（D3）。"""
+    if not isinstance(cwd, str) or not cwd:
+        return None
+    return os.path.join(cwd, "docs", "SPEC.md")
+
+
+def spec_state_path(cwd):
+    """SPEC.md ドリフト検知用サイドカー docs/.spec_state.json のパスを返す
+    （cwd が非str/空なら None）。hook（record_metrics.py）が自動生成する。
+    LLM・エージェントは直接編集しない。"""
+    if not isinstance(cwd, str) or not cwd:
+        return None
+    return os.path.join(cwd, "docs", ".spec_state.json")
+
+
+def is_project_spec(path, cwd):
+    """path が cwd 直下の docs/SPEC.md と同一ファイルを指すか。
+
+    guard_spec_writes.is_spec（basename一致・ネスト許容）とは意図的に基準を
+    分ける（D3。KLK-010 D2と同型の判断）。絶対形は cwd 直下の docs/SPEC.md と
+    正規化して比較し、相対形は "docs/SPEC.md" という字句そのものだけを認める
+    （is_ticket と同様、相対形は cwd 非依存の純字句判定にとどめる）。
+    ネストした SPEC.md（docs/foo/SPEC.md 等）はいずれの形でも一致しない。
+    """
+    if not isinstance(path, str) or not path:
+        return False
+    target = spec_path_for(cwd)
+    if not target:
+        return False
+    n = _normalize_path(path)
+    return n == _normalize_path(target) or n == "docs/SPEC.md"
+
+
+def load_spec_state(cwd):
+    """docs/.spec_state.json を読む。読めない・無い・dict でない場合は None
+    （fail-open）。"""
+    path = spec_state_path(cwd)
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def sha256_file(path):
+    """path の内容（バイト列）の sha256 ハッシュ(hex)を返す。読めない場合は
+    None（fail-open）。record_metrics.py（記録側）と check_loop_integrity.py
+    （検知側）が同一アルゴリズムを共有するためここへ集約する。"""
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
 
 
 def emit_pretooluse_decision(decision, reason):
