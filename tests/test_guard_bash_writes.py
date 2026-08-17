@@ -306,9 +306,12 @@ LEGACY_DENY_COMMANDS = [
 #
 # **期待値 "allow" の行には3種類があり、混同してはならない**（混同すると
 # 「穴を塞いだつもりで正しい allow を deny へ変える」事故が起きる）:
-#   (a) **意図的に未対応の穴**（INV-SH-07・09・11・INV-SED-05
-#       〔`-f SCRIPT` のみ。INV-SED-06・07 は KLK-015 の SED-7 で対応済み
-#       ＝ "deny" 側へ移動した〕ほか）—
+#   (a) **意図的に未対応の穴**（INV-SH-11〔パラメータ展開・引数側。原理的に
+#       PreToolUse では閉じられないため恒久的に allow のまま維持する。
+#       KLK-016 の事後検出に委ねる〕・INV-SED-05
+#       〔`-f SCRIPT` のみ。INV-SED-06・07 は KLK-015 の SED-7 で、
+#       INV-SH-07・09（ブレース展開・分断glob）は KLK-018 で、それぞれ
+#       対応済み＝ "deny" 側へ移動した〕ほか）—
 #       塞いだ時点で "deny" へ変える（変更は意識的な行為になる）。
 #   (b) **bash と一致した結果としての allow**（INV-SH-15・16・19 ほか）—
 #       bash も後続コマンドを実行しない／触るのは保護対象ではない別名で
@@ -475,12 +478,12 @@ INVENTORY_CASES = (
      'awk $"BEGIN{print}" tickets/active/APP-001.md', "deny"),
     ("INV-SH-06", "行継続（\\+改行）による語の分断（QT-2）",
      "rm tickets/acti\\\nve/APP-001.md", "deny"),
-    ("INV-SH-07", "ブレース展開による分断（**未対応**・別チケット）",
-     "rm tickets/{active,done}/APP-001.md", "allow"),
+    ("INV-SH-07", "ブレース展開による分断（KLK-018で対応済み）",
+     "rm tickets/{active,done}/APP-001.md", "deny"),
     ("INV-SH-08", "glob（保護対象ディレクトリが素で残り証拠になる形）",
      "rm tickets/active/*.md", "deny"),
-    ("INV-SH-09", "glob（パス中に * が入り分断される形・**未対応**）",
-     "rm tickets/acti*e/APP-001.md", "allow"),
+    ("INV-SH-09", "glob（パス中に * が入り分断される形・KLK-018で対応済み）",
+     "rm tickets/acti*e/APP-001.md", "deny"),
     ("INV-SH-10", "チルダ展開（残りのパスが証拠として残る）",
      "rm ~/kit/tickets/active/APP-001.md", "deny"),
     ("INV-SH-11", "パラメータ展開（値は不可視＝構造的限界・**未対応**）",
@@ -493,8 +496,8 @@ INVENTORY_CASES = (
     # 内かどうかというサブケースが分解されていなかったために穴が出た）。
     #
     # **期待値 allow の行には2種類があり、混同してはならない**:
-    #   (a) **意図的に未対応の穴**（INV-SH-07・09・11）— 塞いだ時点で "deny"
-    #       へ変える。
+    #   (a) **意図的に未対応の穴**（INV-SH-11。INV-SH-07・09 は KLK-018 で
+    #       対応済みのため "deny" 側へ移動した）— 塞いだ時点で "deny" へ変える。
     #   (b) **bash と一致した結果としての allow**（INV-SH-15・16・19）—
     #       bash も後続コマンドを実行しない／触るのは保護対象ではない別名で
     #       あるため、**"deny" へ変えたら誤り**（過剰deny＝AC2 違反）。
@@ -2771,6 +2774,193 @@ class TestGuardBashWrites(unittest.TestCase):
         fused_tickets = "tickets" + "/" + "active" + "/APP-001.md"
         self.assertTrue(guard._is_guarded_path_component(fused_tickets))
         self.assertTrue(guard._is_guarded_path(fused_tickets))
+
+    # --- KLK-018: シェル展開（ブレース展開・分断glob）による保護対象パスの
+    # 分断への対応（設計書 docs/designs/KLK-018.md §9 AC1・AC2・AC4）。
+    # INVENTORY_CASES の INV-SH-07・09 も allow → deny へ更新済み（AC6）。
+
+    def test_klk018_brace_expansion_simple_deny(self):
+        # AC1: 単純なブレース展開（investigator実機検証・チケット再現手順1）
+        self.assertDeny("rm tickets/{active,done}/APP-001.md")
+        self.assertDeny("rm docs/{SPEC,OTHER}.md")
+
+    def test_klk018_brace_expansion_direct_product_deny(self):
+        # AC1: 直積（隣接する2つ以上の {...}）。investigator実機検証と同型
+        # （bash: tickets/{acti,don}{ve,e}/... -> active/actie/donve/done）
+        self.assertDeny("rm tickets/{acti,don}{ve,e}/APP-001.md")
+
+    def test_klk018_brace_expansion_nested_deny(self):
+        # AC1: 入れ子形（外側のカンマの1要素がさらに {} を持つ）
+        self.assertDeny("rm tickets/{a,{active,x}}/APP-001.md")
+
+    def test_klk018_brace_expansion_no_comma_stays_literal_allow(self):
+        # AC1 の裏付け: カンマの無い {word} は bash も展開しないため、
+        # 保護対象と無関係なブレースを含む日常コマンドを誤denyしない
+        # （AC4 の固定 allow ケースの1つ）
+        self.assertAllow("ls file{1,2}.txt")
+
+    def test_klk018_fragmented_glob_deny(self):
+        # AC2: 分断 glob（*・?・[...]）。tickets/active 側
+        self.assertDeny("rm tickets/acti*e/APP-001.md")
+        self.assertDeny("rm tickets/activ?/APP-001.md")
+        self.assertDeny("rm tickets/activ[e]/APP-001.md")
+
+    def test_klk018_fragmented_glob_write_target_deny(self):
+        # AC2 (N3): guarded_write_target 経由（sort -o の値がブレース展開・
+        # 分断globで保護対象と判定される形）
+        self.assertDeny("sort -o tickets/acti*e/out.md in.md")
+
+    def test_klk018_fragmented_glob_spec_side_read_allow(self):
+        # AC2 で例示された "cat docs/SPEC*.md"（SPEC.md側）は、guarded_paths_
+        # after_shell_expansion が "docs/SPEC.md" を保護対象として検出する
+        # （guard._guarded_paths_from_expanded で確認済み）が、cat は
+        # ALLOWED_HEADS の中でも追加規則を持たない読み取り専用 head であり、
+        # 既存の "cat tickets/active/APP-001.md"（test_read_commands_allow）
+        # と同じ理由で常に allow のままである（本チケットは head 単位の
+        # 判定を変更しないため、この対称性は変わらない）。設計書 §9 AC2 の
+        # 例示文言は「言及ゲートが検出できること」を指しており、head が
+        # 読み取り専用であるため最終判定は allow のまま——という点を本テストで
+        # 明示的に固定する（deny 化される head 側の同型確認は
+        # test_klk018_erroneous_deny_budget_allow の対照ケースを参照）。
+        self.assertAllow("cat docs/SPEC*.md")
+        # 書き込み系 head（rm）に差し替えると同じ分断globが正しく deny に
+        # なることを対照として固定する
+        self.assertDeny("rm docs/SPEC*.md")
+
+    def test_klk018_degraded_mode_fragmented_glob_deny(self):
+        # AC2: degraded mode（未閉じクォート）でも正常経路と対称に deny する
+        # （英文コメントの "don't" が未閉じシングルクォートを誘発する形。
+        # 既存の INV-SH パターンと同型の誘発）
+        self.assertDeny("rm tickets/acti*e/APP-001.md # don't")
+
+    def test_klk018_erroneous_deny_budget_allow(self):
+        # AC4: 誤deny予算の固定 allow ケース。tickets/ を一切含まない日常の
+        # awk/cut/sort/grep のプログラム・オプション文字列（{}・,・[...] を
+        # 含むが保護対象とは無関係）と、保護対象 cwd 下の読み取り専用 awk
+        # （T-H2f系の再固定）が新たに誤denyにならないことを固定する
+        self.assertAllow('awk \'BEGIN{FS=","}{print $1,$2}\' file')
+        self.assertAllow("cut -f1,2 -d, file")
+        self.assertAllow("sort -k1,2 file")
+        self.assertAllow("grep -E '[0-9]{3}' file")
+        self.assertAllow("cd tickets/active && awk 'NR>1 {print}' in.txt")
+        self.assertAllow("ls file{1,2}.txt")
+
+    # --- KLK-018: MAX_BRACE_DEPTH／MAX_BRACE_COMBINATIONS 上限到達時の
+    # フォールバック分岐（設計書 §4-1・§6。tester申し送り＝implementerの
+    # Remaining Risksで境界値テスト未追加と明記されていた項目）。
+    # 上限超過時は保護対象と無関係な内容でも「一致し得る」ものとして安全側
+    # （deny）に倒すため、tickets/ を一切含まない語でも非ホワイトリスト
+    # head と組み合わせると deny になる。これは設計書§9 AC4のN1〜N4の
+    # 文言（「保護対象パスとなる語を含み」）を字面上は満たさない新しい
+    # deny 経路であり、reviewerに判断を委ねるためテストで実際の挙動を
+    # 固定する（実測値は本テスト作成時にguard._brace_combination_countで
+    # 事前確認済み）。
+
+    def test_klk018_brace_depth_within_limit_allow(self):
+        # ネスト深さ4（MAX_BRACE_DEPTH と同値）は上限内であり、通常の
+        # expand_braces による展開結果（"axb"/"ayb"）はどちらも保護対象
+        # ではないため allow のまま（フォールバックは発動しない）
+        self.assertAllow("rm a{{{{x,y}}}}b")
+
+    def test_klk018_brace_depth_exceeded_denies_conservatively(self):
+        # ネスト深さ5（MAX_BRACE_DEPTH超）は _brace_combination_count が
+        # depth ガードにより無条件で MAX_BRACE_COMBINATIONS+1 を返すため
+        # フォールバックに入り、tickets/ を一切含まない候補でも
+        # 「一致し得る」ものとして扱われる。非ホワイトリストhead（rm）と
+        # 組み合わせると deny になることを固定する
+        self.assertDeny("rm a{{{{{x,y}}}}}b")
+
+    def test_klk018_brace_combinations_within_limit_allow(self):
+        # 直積の組み合わせ数243（MAX_BRACE_COMBINATIONS=512未満）は
+        # フォールバックが発動せず、実際に展開して非保護対象と判定され allow
+        self.assertAllow("rm a{1,2,3}{1,2,3}{1,2,3}{1,2,3}{1,2,3}b")
+
+    def test_klk018_brace_combinations_exceeded_denies_conservatively(self):
+        # 直積の組み合わせ数729（MAX_BRACE_COMBINATIONS超）はフォールバック
+        # により、tickets/ を一切含まない候補でも「一致し得る」ものとして
+        # 扱われ、非ホワイトリストhead（rm）と組み合わせると deny になる
+        self.assertDeny("rm a{1,2,3}{1,2,3}{1,2,3}{1,2,3}{1,2,3}{1,2,3}b")
+
+    # --- KLK-018 差し戻し: 隣接ブレースの RecursionError 回帰（reviewer指摘）
+    #
+    # `_brace_combination_count`／`expand_braces` は非入れ子で隣接する
+    # ブレース群が大量に連続すると depth が進まないため、隣接数に比例した
+    # Python コールスタックを消費し RecursionError になっていた（実測:
+    # 隣接997個・sys.getrecursionlimit()=1000）。この RecursionError は
+    # main() の広域 except Exception: allow() に捕捉され、deny 方向ではなく
+    # allow 方向へフェイルオープンしていた（設計書§4-1 P8「曖昧な位置は
+    # 安全側=deny」に反する）。修正後は事前チェック（MAX_BRACE_CHAR_COUNT）
+    # と try/except RecursionError の2段で安全側フォールバックへ倒す。
+    # 以下は隣接900〜1500個規模で RecursionError が発生しないこと・deny に
+    # 倒れることを固定する。
+
+    def test_klk018_adjacent_braces_regression_n1000_denies_conservatively(self):
+        # 隣接1000個（実測の閾値997をまたぐ規模）。tickets/ を一切含まない
+        # 候補でもフォールバックにより「一致し得る」ものとして扱われ、
+        # 非ホワイトリストhead（rm）と組み合わせると deny になる。修正前は
+        # RecursionError が main() の広域 except で allow に化けていた
+        candidate = "a" + "{x,y}" * 1000 + "b"
+        self.assertDeny("rm " + candidate)
+
+    def test_klk018_adjacent_braces_regression_n1500_denies_conservatively(self):
+        # 隣接1500個（申し送りの上限規模）でも同様に RecursionError を起こさず
+        # deny に倒れることを固定する
+        candidate = "a" + "{x,y}" * 1500 + "b"
+        self.assertDeny("rm " + candidate)
+
+    def test_klk018_adjacent_braces_regression_allow_symmetry(self):
+        # 同じ隣接1500個の候補でも、先頭コマンドが読み取り専用（cat）で
+        # tickets/ を一切含まない場合は従来どおり allow のまま（フォール
+        # バックは「保護対象パスの候補とみなす」だけであり、書き込み判定自体
+        # を変えないことを確認する。deny 側の
+        # test_klk018_adjacent_braces_regression_n1500_denies_conservatively
+        # との対照ケース）
+        candidate = "a" + "{x,y}" * 1500 + "b"
+        self.assertAllow("cat " + candidate)
+
+    def test_klk018_adjacent_braces_regression_does_not_mask_existing_deny(self):
+        # reviewer指摘の核心シナリオ: 既存の明確な deny 対象
+        # （tickets/active/APP-001.md への rm）と同一コマンド文字列中に
+        # 大量の隣接ブレースを含めても、RecursionError 経由で丸ごと allow に
+        # 転じてはならない（誤りの向きは常に allow=危険な方向という指摘への
+        # 固定）
+        candidate = "a" + "{x,y}" * 1200 + "b"
+        self.assertDeny("rm tickets/active/APP-001.md " + candidate)
+
+    def test_klk018_adjacent_braces_regression_does_not_mask_existing_deny_blob_first(self):
+        # tester再検証で追加（KLK-018 再差し戻し検証）: 上記
+        # test_..._does_not_mask_existing_deny は「デコイの隣接ブレース語」を
+        # 既存 deny 対象の語より**後ろ**に置いているため、
+        # mentions_guarded_expanded 内の any() が先に deny 対象語で True を
+        # 返して短絡し、隣接ブレース語（＝RecursionError を起こしうる語）を
+        # 実際には一度も評価しない。そのため当該テストは修正前の
+        # バグ入りコードでも（短絡のおかげで）偶然 pass してしまい、
+        # reviewerが指摘した「masking」シナリオを実際には判別できていな
+        # かった（tester がpre-fixコードの複製に対する独立PoCで実証確認
+        # 済み）。本テストは語順を逆転させ、隣接ブレース語を既存 deny 対象語
+        # より**先**に置くことで、修正前コードなら RecursionError が deny
+        # 対象語の評価前に発生し allow へフェイルオープンする経路を実際に
+        # 通過させ、修正後コードが deny を維持することを固定する
+        candidate = "a" + "{x,y}" * 1200 + "b"
+        self.assertDeny("rm " + candidate + " tickets/active/APP-001.md")
+
+    def test_klk018_adjacent_braces_regression_no_comma_literal_denies_conservatively(self):
+        # tester再検証で追加（KLK-018 再差し戻し検証）: 既存の回帰テスト4件は
+        # いずれも "{x,y}"（カンマ有り＝直積で combinations が急増する形）の
+        # 隣接連続のみを対象にしている。カンマ無しの隣接ブレース（例:
+        # "{x}"。bash は展開せずリテラルのまま扱う）は
+        # _brace_combination_count が各グループで parts<2 の分岐（乗算せず
+        # 1のまま）を通るため、旧実装でも MAX_BRACE_COMBINATIONS 超過に
+        # よる安全側フォールバックには**そもそも到達し得ない**独立した形
+        # だった（reviewerが指摘した「隣接兄弟ブレース数」次元がカンマの
+        # 有無に関わらず独立して壊れうることの確認）。修正後の
+        # MAX_BRACE_CHAR_COUNT はカンマの有無・combinations の値に関係なく
+        # `{` の出現数のみで判定するため、この形でも RecursionError を
+        # 起こさず deny に倒れることを固定する（tester がpre-fixコードの
+        # 複製に対する独立PoCで、旧実装がこの形でも allow に化けることを
+        # 確認済み）
+        candidate = "a" + "{x}" * 1000 + "b"
+        self.assertDeny("rm " + candidate)
 
 
 if __name__ == "__main__":

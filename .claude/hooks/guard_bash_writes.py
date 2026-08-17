@@ -216,17 +216,59 @@ bash と一致させる正規化（L0）を置く。
     ドリフト検知がバックストップになる。docs/SPEC.md 宛て（プロジェクト直下のみ）
     にも KLK-016 で同様のバックストップ（sha256ハッシュ監視）を追加した。
   - **シェル展開の次元**（bash が解釈するがコマンド文字列上は見えない変換）の
-    うち、次は**未対応**である。いずれも本 hook の導入当初から allow で、
-    保護対象パスがコマンド文字列上で再構成できないため検出できない:
-    ブレース展開（`rm tickets/{active,done}/APP-001.md`）、パス中に `*` が
-    入って分断される glob（`rm tickets/acti*e/APP-001.md`）、パラメータ展開
-    （`f=tickets/active/APP-001.md; rm $f` の**引数側**。値が別コマンドで
-    export された場合は原理的に見えない。リダイレクト先については同一コマンド
-    内の代入を guarded_vars が追跡して deny する）。`tickets/active/*.md` の
-    ように保護対象ディレクトリが素で残る形は従来どおり deny される。
-    ANSI-C 引用・ロケール翻訳は上記「判定不能なステートメント」で、行継続と
-    `#` コメントは上記 L0 の正規化で対処済み。履歴展開（`!!`・`!$`）は
-    非対話シェルでは既定で無効のため相違を生まない。
+    うち、**ブレース展開**（`rm tickets/{active,done}/APP-001.md`）と**分断
+    glob**（パス中に `*`／`?`／`[...]` が入って分断される形。
+    `rm tickets/acti*e/APP-001.md`）は KLK-018 で対応済みである
+    （`guarded_paths_after_shell_expansion`／`is_guarded_token_expanded`／
+    `mentions_guarded_expanded`。ブレース展開は `expand_braces` が入れ子・
+    直積に対応して文字通り展開し、分断 glob は展開後もなお残る glob メタ
+    文字を含む `/` 区切り成分を `active`／`done`／`SPEC.md` へ fnmatch
+    し得るかで判定する）。**パラメータ展開**（`f=tickets/active/APP-001.md;
+    rm $f` の**引数側**。値が別コマンドで export された場合を含め、
+    値そのものがコマンド文字列上に現れないため PreToolUse では**原理的に
+    閉じられない**。リダイレクト先については同一コマンド内の代入を
+    guarded_vars が追跡して deny する）は本チケットの対象外のまま残り、
+    事後検出（KLK-016 の `docs/SPEC.md` ドリフト検知・sha256ハッシュ監視）
+    に委ねる。**bash のシーケンス形ブレース展開**（`{1..3}`・`{a..z}`）も
+    意図的にスコープ外であり、`expand_braces` はカンマ区切りが無い `{...}`
+    を非展開のリテラルとして扱う（`INVENTORY_CASES` へ allow 固定ケースと
+    して可視化する）。`tickets/active/*.md` のように保護対象ディレクトリが
+    素で残る形は従来どおり deny される。ANSI-C 引用・ロケール翻訳は上記
+    「判定不能なステートメント」で、行継続と `#` コメントは上記 L0 の
+    正規化で対処済み。履歴展開（`!!`・`!$`）は非対話シェルでは既定で無効の
+    ため相違を生まない。
+    **`guarded_paths_after_shell_expansion` の安全性主張（P8型）:** 非空を
+    返すのは「ブレース展開後に文字通り保護対象パスになる」または「残存する
+    glob メタ文字を含む区切り成分が active／done／SPEC.md のいずれかに
+    fnmatch し得て、かつ置換後の文字列が `_is_guarded_path` を満たす」場合
+    に限るため、`tickets/` を一切含まない語（awk プログラム本文の
+    `{print $1,$2}` 等）が誤って一致することは無い。破れる形（否定形）は
+    本関数の呼び出し箇所を「素の `is_guarded_token` を置き換える」形で
+    使った場合（OR ではなく置換にした場合）。向きは常に allow 方向（危険）。
+    検出器は `tests/test_guard_bash_writes.py` の KLK-018 回帰ケースと誤deny
+    予算の固定 allow ケース群（`docs/designs/KLK-018.md` §9）。
+    **KLK-018 差し戻し（reviewer指摘・隣接ブレースの RecursionError）:**
+    `_brace_combination_count`／`expand_braces` は入れ子（body）方向の再帰
+    でのみ `depth` を進め、直積（suffix）方向の再帰では `depth` を進めない
+    （MAX_BRACE_DEPTH は「ネストの深さ」であり「隣接するブレース群の個数」
+    ではないため）。したがって非入れ子で隣接するブレース群が大量に連続する
+    入力（`"a" + "{x,y}" * 2000 + "b"`）は MAX_BRACE_DEPTH の早期リターンに
+    到達せず、隣接数に比例した Python コールスタックを消費し続け
+    `RecursionError` になる（実測: 隣接997個・`sys.getrecursionlimit()=1000`）。
+    この `RecursionError` を `guard_bash_writes.py` 内で捕捉しない場合、
+    `main()` の広域 `except Exception: allow()` が deny 方向ではなく allow
+    方向へフェイルオープンし、同一コマンド文字列中の既存の明確な deny 対象
+    （例: `rm tickets/active/APP-001.md`）ごと allow になる（P8「曖昧な位置は
+    安全側=deny」に反する）。対策は2段: ① `guarded_paths_after_shell_expansion`
+    が候補中の `{` 出現数を数える軽量な事前チェック（`MAX_BRACE_CHAR_COUNT`）
+    で重い再帰へ入る前にフォールバックへ倒す ② ①をすり抜けた場合の防御
+    第2層として `_brace_combination_count`／`expand_braces` の呼び出しを
+    `try/except RecursionError` で囲み、例外発生時も同じ安全側フォールバック
+    （候補全体を無条件に「保護対象パスの候補」とみなす）へ倒す。**両者とも
+    MAX_BRACE_COMBINATIONS 超過時の既存フォールバックと同じ deny 方向の分岐へ
+    合流するため、新しい判定パスを増やさない。** 検出器は
+    `tests/test_guard_bash_writes.py` の
+    `test_klk018_adjacent_braces_recursion_regression_*`。
   - **`#` コメントの本文は除去しない**（L0 参照）。したがってコメント内の
     `> path`・`rm` 等が証拠として拾われ誤denyになりうる（**旧版も同じ挙動
     のため回帰ではない**）。また、コメント内の未閉じクォート（`#'` 等）が
@@ -378,6 +420,7 @@ degraded_violation へ落とす。degraded は旧版の判定要素（全体の�
 閉じているコマンド置換・バッククォート・プロセス置換の境界を抽出し、正常経路
 と同じ subst_violation／find_violation へ回す）も持つ。
 """
+import fnmatch
 import os
 import re
 import shlex
@@ -475,6 +518,30 @@ SUBST_PLACEHOLDER_RE = re.compile(r"__KLK_SUBST_(\d+)__")
 MAX_SUBST_DEPTH = 3
 
 PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/]+")
+
+# --- KLK-018: bash のブレース展開・分断 glob を考慮した言及判定 -------------
+#
+# PATHISH_RE／guarded_paths／_is_guarded_path／is_guarded_token／
+# mentions_guarded（無変更）は `{` `}` `,` `*` `?` `[` `]` を含まないため、
+# bash のブレース展開（`rm tickets/{active,done}/APP-001.md`）・分断 glob
+# （`rm tickets/acti*e/APP-001.md`）で初めて保護対象パスになる形を検出でき
+# ない（KLK-010 §3-9-2 SH-2・チケット KLK-018）。KLK-029（sed/awk 専用ゲート
+# 緩和）と同型の「専用の展開後判定関数を新設し OR 追加する」方式で閉じる
+# （設計書 docs/designs/KLK-018.md §3・§4-1）。
+SHELL_EXPAND_PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/{},*?\[\]]+")
+MAX_BRACE_DEPTH = 4           # MAX_SUBST_DEPTH(=3)に倣うネスト深さの上限
+MAX_BRACE_COMBINATIONS = 512  # 直積展開の総数の上限（コスト爆発の防止）
+# 隣接（非入れ子）ブレース群の個数に対する軽量な事前上限（KLK-018差し戻し・
+# reviewer指摘）。MAX_BRACE_DEPTH は「ネストの深さ」であり「隣接するブレース群の
+# 個数」には効かないため、_brace_combination_count／expand_braces を呼ぶ**前**に
+# 候補中の `{` 出現数だけを数える定数時間の判定で重い再帰への入口を塞ぐ。
+# 既存の固定テスト（隣接最大6個）を大きく上回り、かつ RecursionError の実測
+# 閾値（隣接997個）を大きく下回る値。
+MAX_BRACE_CHAR_COUNT = 50
+GUARDED_DIR_NAMES = ("active", "done")   # tickets/active・tickets/done の成分名
+GUARDED_FILENAME = "SPEC.md"
+GLOB_META_CHARS = frozenset("*?[")
+
 ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9]*=")
 VAR_REF_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z_0-9]*)\}?")
 SED_INPLACE_SHORT_RE = re.compile(r"-[A-Za-z]*i")     # -i / -i.bak / -ni / -si.bak
@@ -752,6 +819,283 @@ def is_guarded_token(text):
 def mentions_guarded(values):
     """語の集合のいずれかが保護対象に言及するか。"""
     return any(is_guarded_token(v) for v in values)
+
+
+# --- KLK-018: ブレース展開・分断 glob の展開後判定 ---------------------------
+#
+# PATHISH_RE／guarded_paths／_is_guarded_path／is_guarded_token／
+# mentions_guarded 自体は変更しない（他 13 箇所超の呼び出し元・他 head の
+# 判定に一切影響しない＝ AC4）。以下は「bash 未展開の生語」を対象に、
+# ブレース展開・分断 glob を考慮した判定を専用に行う（KLK-029 の
+# is_guarded_token_in_program と同型の OR 追加。設計書 §4-1）。
+
+def _find_matching_brace(text, open_pos):
+    """text[open_pos] が `{` であるとして、対応する `}` の位置を返す。
+
+    ネストを深さで数えるだけの単純な走査（この入力は bash が既に
+    クォート解除した後の1語であるため、クォート／バッククォートは意識
+    しない）。対応する `}` が見つからなければ -1（未閉じ＝bash も構文
+    エラーになる形。呼び出し側は展開せずリテラルのまま扱う）。
+    """
+    depth, i, n = 0, open_pos, len(text)
+    while i < n:
+        c = text[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def _split_top_level_commas(text):
+    """text をトップレベルのカンマ（ネストした `{}` の内側は除く）で分割する。"""
+    parts, current, depth = [], [], 0
+    for c in text:
+        if c == "{":
+            depth += 1
+            current.append(c)
+        elif c == "}":
+            depth -= 1
+            current.append(c)
+        elif c == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(c)
+    parts.append("".join(current))
+    return parts
+
+
+def _brace_combination_count(text, depth=0):
+    """expand_braces(text) が生成する組み合わせ数を、実際に展開せず見積もる。
+
+    MAX_BRACE_DEPTH・MAX_BRACE_COMBINATIONS のガードは呼び出し元
+    （guarded_paths_after_shell_expansion）が本関数を expand_braces の**前**に
+    呼ぶことで行う。見積もりは実際の展開と同じ再帰構造をたどるため、ここで
+    上限内と判定された入力は expand_braces の実行でも同じ深さ・組み合わせ数
+    に収まる。ネスト（part の再帰）は depth を1つ進め、直積（suffix の再帰）
+    は同じ depth のまま進める（MAX_BRACE_DEPTH は「ネストの深さ」であり
+    「隣接するブレースの個数」ではないため）。深さが MAX_BRACE_DEPTH を
+    超えた場合は無条件に MAX_BRACE_COMBINATIONS を超える値を返し、呼び出し
+    元が一律にフォールバックへ倒れるようにする（過大評価は安全側＝deny
+    方向にのみ働く。過小評価は絶対に行わないこと＝安全性の前提）。
+
+    既知の限界（KLK-018 差し戻し・reviewer指摘）: 上記のとおり depth は
+    suffix（直積）方向の再帰では進まないため、非入れ子で隣接するブレース群が
+    大量に連続する入力（`"a" + "{x,y}" * 2000 + "b"`）は MAX_BRACE_DEPTH の
+    早期リターンに到達せず、隣接数に比例した Python コールスタックを消費し
+    続けて `RecursionError` になりうる（実測: 隣接997個）。この関数自体は
+    非有界のままであり、呼び出し元 `guarded_paths_after_shell_expansion` が
+    ①候補中の `{` 出現数の事前チェック（`MAX_BRACE_CHAR_COUNT`）と
+    ②try/except RecursionError の2段で安全側へ倒す（同関数の docstring
+    「RecursionError 安全性」参照）。
+    """
+    if depth > MAX_BRACE_DEPTH:
+        return MAX_BRACE_COMBINATIONS + 1
+    open_pos = text.find("{")
+    if open_pos < 0:
+        return 1
+    close_pos = _find_matching_brace(text, open_pos)
+    if close_pos < 0:
+        return 1  # 未閉じ＝展開されない（expand_braces と同じ扱い）
+    body = text[open_pos + 1:close_pos]
+    suffix = text[close_pos + 1:]
+    suffix_count = _brace_combination_count(suffix, depth)
+    parts = _split_top_level_commas(body)
+    if len(parts) < 2:
+        # カンマ無し＝bash はこの {} を展開しない。body 自身は入れ子として
+        # 深さを1つ進めて見積もる
+        return _brace_combination_count(body, depth + 1) * suffix_count
+    parts_count = sum(_brace_combination_count(p, depth + 1) for p in parts)
+    return parts_count * suffix_count
+
+
+def expand_braces(text, depth=0):
+    r"""bash のブレース展開を模した文字列展開（入れ子・直積対応。KLK-018）。
+
+    入力の最左の `{` を見つけ、深さを数えながら対応する `}` を探す。対応
+    する `}` が見つからない（未閉じ）場合は bash も構文エラーになる形なので
+    展開せず `[text]` を返す。
+
+    見つかった場合、中身（body）をトップレベルのカンマ（ネストした `{}` の
+    内側のカンマでは分割しない）で分割する。
+      - 分割結果が2個未満（カンマ無し）なら bash はこの `{}` を展開しない。
+        ただし body 自身に別の `{}` が含まれる可能性があるため、リテラルの
+        `{`/`}` を残しつつ body（ネスト）・suffix（直積）だけをそれぞれ
+        再帰的に展開する。
+      - 分割結果が2個以上なら、各 part を再帰的に展開し（ネスト）、かつ
+        suffix（`}` の次以降。隣接する別の `{...}` を含みうる＝直積）も
+        再帰的に展開して、prefix + 各part展開 + 各suffix展開 の全組み合わせ
+        を返す。
+
+    シーケンス形（`{1..3}`・`{a..z}`）は意図的にスコープ外（§3 代替案）。
+    カンマ区切りが無いためこの実装では非展開のリテラルとして扱われる
+    （bash の意味論とは異なるが、`INVENTORY_CASES` へ allow 固定ケースとして
+    登録して可視化する）。
+
+    上限（MAX_BRACE_DEPTH・MAX_BRACE_COMBINATIONS）は本関数自体には持たない
+    契約になっている。呼び出し元（guarded_paths_after_shell_expansion）が
+    `_brace_combination_count` で事前に見積もり、上限を超える入力はこの
+    関数を呼ばずにフォールバック（候補全体を無条件に一致とみなす）する。
+
+    既知の限界（KLK-018 差し戻し・reviewer指摘）: `_brace_combination_count`
+    と同型の理由（suffix 方向の再帰で depth が進まない）により、非入れ子で
+    隣接するブレース群が大量に連続する入力は本関数自体も `RecursionError`
+    になりうる（`_brace_combination_count` が見積もりを誤って通過させた場合、
+    またはそれ自体が RecursionError になった場合はこの関数へ到達する前に
+    フォールバックするため通常は到達しない）。呼び出し元が try/except
+    RecursionError で本関数の呼び出しを囲み、防御第2層として同じ安全側
+    フォールバックへ倒す（`_brace_combination_count` の docstring「既知の
+    限界」・`guarded_paths_after_shell_expansion` の docstring
+    「RecursionError 安全性」参照）。
+    """
+    open_pos = text.find("{")
+    if open_pos < 0:
+        return [text]
+    close_pos = _find_matching_brace(text, open_pos)
+    if close_pos < 0:
+        return [text]
+    prefix = text[:open_pos]
+    body = text[open_pos + 1:close_pos]
+    suffix = text[close_pos + 1:]
+    suffix_expansions = expand_braces(suffix, depth)
+    parts = _split_top_level_commas(body)
+    if len(parts) < 2:
+        body_expansions = expand_braces(body, depth + 1)
+        return [prefix + "{" + b + "}" + s
+                for b in body_expansions for s in suffix_expansions]
+    part_expansions = []
+    for part in parts:
+        part_expansions.extend(expand_braces(part, depth + 1))
+    return [prefix + p + s for p in part_expansions for s in suffix_expansions]
+
+
+def _guarded_paths_from_expanded(expanded):
+    """ブレース展開済みの1候補を、分断 glob を考慮して保護対象パス判定する
+    （設計書 §4-1 手順2）。
+
+    ① os.path.normpath 後に _is_guarded_path を満たせば採用する。
+    ② 満たさず、`/` 区切り成分のいずれかに GLOB_META_CHARS の文字が含まれる
+      場合、その成分について fnmatch.fnmatchcase(literal, component) を
+      GUARDED_DIR_NAMES の各要素（"active"/"done"）に対して試す。その成分が
+      候補の**最後の**区切り成分であれば GUARDED_FILENAME ("SPEC.md") に
+      対しても試す。一致する literal が見つかったら、その成分だけを literal
+      へ置換した文字列を再構成し、os.path.normpath 後に _is_guarded_path を
+      満たすか再評価する（置換は情報を追加する操作であり既存の文字は変更
+      しない＝置換前に一致しなかった判定が置換後に不一致へ戻ることはない）。
+    ③ 成分が複数 GLOB_META_CHARS を含む場合はそれぞれ独立に試し、一致した
+      ものを採用する（1候補から複数の一致が見つかることもある）。
+    """
+    found = []
+    path = os.path.normpath(expanded)
+    if _is_guarded_path(path):
+        found.append(path)
+        return found
+    components = path.split("/")
+    last_index = len(components) - 1
+    for index, component in enumerate(components):
+        if not any(ch in component for ch in GLOB_META_CHARS):
+            continue
+        literals = list(GUARDED_DIR_NAMES)
+        if index == last_index:
+            literals = literals + [GUARDED_FILENAME]
+        for literal in literals:
+            if not fnmatch.fnmatchcase(literal, component):
+                continue
+            rebuilt = "/".join(
+                literal if i == index else c
+                for i, c in enumerate(components))
+            rebuilt_path = os.path.normpath(rebuilt)
+            if _is_guarded_path(rebuilt_path):
+                found.append(rebuilt_path)
+    return found
+
+
+def guarded_paths_after_shell_expansion(text):
+    """任意テキストから、ブレース展開・分断 glob を考慮した保護対象パスを
+    列挙する（guarded_paths の展開後版。KLK-018）。
+
+    安全性主張（P8 型）:
+      - 主張: 非空を返すのは「ブレース展開後に文字通り保護対象パスになる」
+        または「残存する glob メタ文字を含む区切り成分が active／done／
+        SPEC.md のいずれかに fnmatch し得て、かつ置換後の文字列が
+        _is_guarded_path を満たす」場合に限る。いずれも「tickets/ という
+        文字列が候補中に既に存在する」か「候補の basename 相当が SPEC と
+        .md に一致する構造を持つ」ことを必要とするため、tickets/ を一切
+        含まない語（awk プログラム本文の `{print $1,$2}`・`cut -f1,2 -d,`
+        等）が誤って一致することは無い（docs/designs/KLK-018.md §6 リスク
+        参照）。
+      - 破れる形（否定形）: 本関数の呼び出し箇所を「素の is_guarded_token
+        を置き換える」形で使った場合（OR ではなく置換にした場合）。
+      - 向き: 誤りの向きは常に allow 方向（危険）。
+      - 検出器: tests/test_guard_bash_writes.py の KLK-018 回帰ケースと
+        誤deny予算の固定 allow ケース群（docs/designs/KLK-018.md §9）。
+
+    RecursionError 安全性（KLK-018 差し戻し・reviewer指摘）:
+      `_brace_combination_count`／`expand_braces` は非入れ子で隣接する
+      ブレース群が大量に連続すると Python コールスタックを隣接数に比例して
+      消費し、`RecursionError` になりうる（モジュール docstring「既知の
+      限界」の該当パラグラフを参照）。本関数はこれを2段で防ぐ:
+        ① 候補中の `{` 出現数が `MAX_BRACE_CHAR_COUNT` を超える場合、
+           重い再帰へ入る前に安全側フォールバックへ倒す（定数時間の事前
+           チェック）。
+        ② ①をすり抜けた場合の防御第2層として、`_brace_combination_count`
+           ／`expand_braces` の呼び出しを try/except RecursionError で囲み、
+           例外発生時も同じ安全側フォールバックへ倒す。ここで捕捉しないと
+           main() の広域 except Exception: allow() が deny 方向ではなく
+           allow 方向へフェイルオープンしてしまう。
+      いずれも MAX_BRACE_COMBINATIONS 超過時と同じ「候補全体を無条件に
+      保護対象パスの候補とみなす」分岐へ合流するため、新しい判定パスは
+      増えない。
+    """
+    found = []
+    for candidate in SHELL_EXPAND_PATHISH_RE.findall(text):
+        if candidate.count("{") > MAX_BRACE_CHAR_COUNT:
+            # 事前チェック（①）。隣接ブレース数がここを超える入力は
+            # _brace_combination_count／expand_braces を一切呼ばない。
+            found.append(candidate)
+            continue
+        try:
+            combination_count = _brace_combination_count(candidate)
+        except RecursionError:
+            # 防御第2層（②）。事前チェックをすり抜けた場合でも allow 方向へ
+            # フェイルオープンさせない。
+            found.append(candidate)
+            continue
+        if combination_count > MAX_BRACE_COMBINATIONS:
+            # 曖昧な位置（コスト爆発の恐れ）では除去しない（P8）。候補全体を
+            # 無条件に「保護対象パスの候補」として扱い、_is_guarded_path を
+            # 経由せず直接一致とみなす
+            found.append(candidate)
+            continue
+        try:
+            expansions = expand_braces(candidate)
+        except RecursionError:
+            # 防御第2層（②）。_brace_combination_count が見積もりを誤って
+            # 通過させた場合でも allow 方向へフェイルオープンさせない。
+            found.append(candidate)
+            continue
+        for expanded in expansions:
+            found.extend(_guarded_paths_from_expanded(expanded))
+    return found
+
+
+def is_guarded_token_expanded(text):
+    """text（bash 未展開の生語）がブレース展開・分断 glob を考慮しても保護
+    対象に言及するか（KLK-018）。is_guarded_token(text) が真ならば必ず真
+    （OR 追加のみ）。したがって既存の deny が allow に転じることは構造的に
+    起こらない。sed/awk のプログラム本文には使わない（is_guarded_token_
+    in_program が専用の判定を持つ。docs/designs/KLK-018.md §3 代替案参照）。
+    """
+    return bool(is_guarded_token(text) or guarded_paths_after_shell_expansion(text))
+
+
+def mentions_guarded_expanded(values):
+    """語の集合のいずれかが is_guarded_token_expanded で真か（KLK-018）。"""
+    return any(is_guarded_token_expanded(v) for v in values)
 
 
 # --- KLK-029: sed/awk 専用の言及ゲート緩和 -----------------------------------
@@ -1428,7 +1772,7 @@ def guarded_write_target(target, cwd, substs=()):
     target = expand_substs(target, substs).strip()
     if not target or "$" in target or SUBST_PLACEHOLDER_RE.search(target):
         return False
-    if is_guarded_token(target):
+    if is_guarded_token_expanded(target):
         return True
     if not cwd_is_guarded(cwd):
         return False
@@ -2244,7 +2588,7 @@ def redirect_violation(statement, guarded_vars, substs=(), cwd=""):
         # guarded_write_target は cwd 相対のリダイレクト先も解決する
         # （`cd tickets/active && echo x > APP-001.md`）
         resolved = expand_substs(target, substs)
-        if (is_guarded_token(resolved) or
+        if (is_guarded_token_expanded(resolved) or
                 any(n in guarded_vars for n in VAR_REF_RE.findall(resolved)) or
                 guarded_write_target(target, cwd, substs)):
             return "リダイレクト（> %s）による書き込み" % display_text(target)
@@ -2273,9 +2617,10 @@ def statement_violation(statement, guarded_vars, substs=(), cwd=""):
     expanded_words = expand_all(words, substs)
     if has_program_head:
         gate_hit = (cwd_is_guarded(cwd) or
-                    mentions_guarded_in_program(expanded_words))
+                    mentions_guarded_in_program(expanded_words) or
+                    mentions_guarded_expanded(expanded_words))
     else:
-        gate_hit = cwd_is_guarded(cwd) or mentions_guarded(expanded_words)
+        gate_hit = cwd_is_guarded(cwd) or mentions_guarded_expanded(expanded_words)
     if not gate_hit:
         return None
     # QT-1: この文には bash が展開時にデコード／翻訳する語がある。hook が見て
@@ -2422,13 +2767,13 @@ def degraded_violation(command, cwd="", depth=0):
     # ステートメント単位のゲートに到達する前に early return してしまう。
     # 本関数のゲートは①（ここ）②LEGACY_REDIRECT_RE ③heredoc ④文単位ゲート
     # ⑤segment/awk の5つで、cwd を見ないのは①だけであった
-    if not (cwd_is_guarded(cwd) or mentions_guarded(skeleton.split())):
+    if not (cwd_is_guarded(cwd) or mentions_guarded_expanded(skeleton.split())):
         return None
     for match in LEGACY_REDIRECT_RE.finditer(skeleton):
         target = match.group(1)
         if target.startswith("&"):
             continue  # 2>&1 等の fd 複製
-        if is_guarded_token(target):
+        if is_guarded_token_expanded(target):
             return "リダイレクト（> %s）による書き込み" % target
     if "<<" in skeleton:
         return "ヒアドキュメントによる書き込みの可能性"
@@ -2438,7 +2783,8 @@ def degraded_violation(command, cwd="", depth=0):
             continue
         words_list = [p.split() for p in parts]
         stmt_cwd = stmt_cwds[stmt_index]
-        if cwd_is_guarded(stmt_cwd) or any(mentions_guarded(w) for w in words_list):
+        if cwd_is_guarded(stmt_cwd) or any(
+                mentions_guarded_expanded(w) for w in words_list):
             # QT-1: degraded はクォート状態を追えないため、`$'` / `$"` の検出は
             # **部分文字列判定**で行う（クォート内側の `$'` にも発火する＝
             # 保守側）。**この規則を degraded にも置くことが必須である** —
@@ -2471,7 +2817,7 @@ def subst_violation(substs, index, depth, cwd):
     inner = substs[index]
     if depth >= MAX_SUBST_DEPTH:
         # 深追いはせず保守側で打ち切る（$($($(rm ...))) を抜け道にしないため）
-        if is_guarded_token(inner) or cwd_is_guarded(cwd):
+        if is_guarded_token_expanded(inner) or cwd_is_guarded(cwd):
             return "深いコマンド置換の内側で保護対象パスに言及しています"
         return None
     return find_violation(inner, depth + 1, cwd)
