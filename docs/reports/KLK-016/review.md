@@ -51,3 +51,31 @@
 - `/home/bzg55/workspace/breeze/kenesis-loop-kit.wt/KLK-016/tests/test_ticket_lib.py`
 - `/home/bzg55/workspace/breeze/kenesis-loop-kit.wt/KLK-016/docs/reports/KLK-016/implementation.md`
 - `/home/bzg55/workspace/breeze/kenesis-loop-kit.wt/KLK-016/docs/reports/KLK-016/test-report.md`
+
+---
+
+## 第2版レビュー（改善ループ・フォローアップ対応、2026-08-17）
+
+第1版で指摘したMedium Risks 2件・Missing Tests 2件（呼び出し位置の設計意図不一致・回帰テスト2件）への対応を、人間指示による改善ループ（architect設計改訂→implementer実装Phase F1/F2→tester Quality Gate pass）を経て再レビューした。
+
+### Critical Issues / High Risks / Medium Risks
+なし。第1版で指摘した3件（呼び出し位置の設計意図不一致・回帰テスト2件）はいずれも本ラウンドで解消を確認した。KLK-029とのマージコンフリクト想定は第1版マージ時（2026-08-17 17:27）に既に解消済みで、本ラウンドの差分には現れない。残存する軽微な観測: `docs/reports/KLK-016/implementation.md`が「650件想定→662件」の差異を明記済みで、原因（developの並行マージによるテスト増）も妥当。実害なし。
+
+### Missing Tests
+なし。AC-F1〜AC-F3はいずれも新規3ケースで検証されており、tester側の追加テストは不要と判断した根拠も妥当。`test_matching_hash_allows_without_tickets_active_dir`は単体では「呼ばれたが[]だった」のか「呼ばれなかった」のかを区別できないが、`test_bash_edit_detected_without_tickets_active_dir`とのペアでAC-F1を実証できている（blockできた事実がcheck_spec_drift実行の証拠になる）。
+
+### Spec Violations
+なし。`docs/designs/KLK-016.md`§4-7・§4-8の「一意な引用文字列」どおりに`.claude/hooks/check_loop_integrity.py`・`tests/test_spec_drift.py`が変更されていることを`git diff develop...HEAD`で確認した。Phase表（F1/F2）でAC-F1〜AC-F3が全て網羅されており、§4の例外に該当するACはない。
+
+### 検証詳細
+
+1. **呼び出し位置の是正（AC-F1本体）**: `git diff develop...HEAD -- .claude/hooks/check_loop_integrity.py`を確認。`problems = []` の直後に `problems.extend(check_spec_drift(cwd))` が移動し、`tickets/active`存在チェック（`if os.path.isdir(active_dir):`）は`check_ticket`/`check_done_ticket_drift`のループのみを包む形に変わっている。`check_ticket`・`check_done_ticket_drift`の関数定義自体は差分に一切現れず、設計書§4-7「既存ロジックは1行も変更しない」との記述と一致する。振る舞いの等価性も確認: 旧コードは`active_dir`不在時に`sys.exit(0)`で即終了しticket系ループが実行されなかったが、新コードでも`if os.path.isdir(active_dir):`ブロックがfalseなら同ループは実行されない（等価）。唯一の違いは`check_spec_drift`が`active_dir`の有無に関係なく必ず実行される点で、これがAC-F1のfixそのもの。
+
+2. **新規テスト3件の実効性確認**（形だけでないか）: `TestSpecDriftIndependentOfTicketsDir`の2ケースは`setUp`で意図的に`tickets/active`を作らず、`.claude/hooks/check_loop_integrity.py`をサブプロセスとして実際に起動する統合テスト（`run_stop()`経由）。`test_bash_edit_detected_without_tickets_active_dir`は`decision: block`と`reason`への`"docs/SPEC.md"`包含を両方assertしており、AC-F2の文言と一致。`test_records_hash_with_relative_file_path`は`tool_input.file_path`に相対文字列`"docs/SPEC.md"`を直接指定し、`record_metrics.py`をサブプロセス起動（`cwd=self.cwd`）することで`is_project_spec`の相対分岐（`n == "docs/SPEC.md"`）を実際に経由させている。`_util.spec_hash`は実装の`sha256_file`を呼ばず独立算出のためタウトロジーでもない。3件とも`python3 -m unittest tests.test_spec_drift -v`（13件、既存10件＋新規3件）で実行し全passを確認した。
+
+3. **既存ロジックへの回帰確認**: `git diff develop...HEAD -- tests/test_loop_integrity.py`・`tests/test_metrics.py`はいずれも0行（差分なし）。`git diff develop...HEAD --stat`は変更対象を`.claude/hooks/README.md`（1行）・`.claude/hooks/check_loop_integrity.py`（docstring+main()のみ）・`tests/test_spec_drift.py`・レポート2件の5ファイルに限定しており、`guard_spec_writes.py`・`guard_bash_writes.py`・`_ticket_lib.py`・`record_metrics.py`は無変更（第1版で確定した実装に手を加えていない）。フルスイート`python3 -m unittest discover -s tests -v`を独立実行し662件全pass（既存AC1〜AC6を検証する既存テスト群を含め後退なし）を確認した。
+
+4. **設計書・チケット整合性**: `docs/designs/KLK-016.md`第2版§9 AC-F1〜AC-F3・§4実装Phase表（F1/F2）を確認し、フォローアップAC全てがPhase表でカバーされていることを確認した。
+
+### Approval Status: **approved**
+Critical/High/Medium Risksともになし。フォローアップAC-F1〜AC-F3は全て実装・テストで充足を確認、既存AC1〜AC6への後退なし。
