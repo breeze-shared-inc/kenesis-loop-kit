@@ -140,3 +140,84 @@ AC2の書き込み例4件を実機bash（`bash -c`）で実行し、以下を確
   （設計書のスコープ外。将来別チケットの余地）
 - degraded mode（字句解析失敗時）には本チケットの制御構文緩和が及ばない
   （設計書§4末尾で明記済み。既存の限界の継続であり新規の穴ではない）
+
+## 6. tester差し戻し対応（AC6独自検証で検出されたQuality Gate FAIL）
+
+### 6-1. 原因
+
+`record_loop_binding`（forループ変数の登録）・`record_assignments`（前置き
+代入の登録）は、`statement_violation`のALLOWED_HEADS判定・`find_violation`
+のcwd追跡と異なり、`control_stripped_segments`／`strip_control_prefix`を
+経由しない**生のstatement語**を見て「先頭語が`for`か」「先頭語が
+`NAME=value`形か」を判定していた（§3-3で報告した`control_stripped_segments`
+共有ルールの適用対象からこの2関数が漏れていた）。このため、内側の
+`for NAME in LIST`ヘッダーや前置き代入が外側制御構文の`do`/`then`/`while`と
+`;`区切りで同一statementを共有する入れ子ループ（`for i in 1 2; do for f in
+tickets/active/*.md; do rm $f; done; done`等）で、`NAME`/代入変数の登録が
+丸ごと失敗し、後続の書き込み文にゲートが一切立たずallowへ転じていた
+（tester報告・実機bashでの書き込み発生を確認済み）。
+
+### 6-2. 対応方針とコード変更
+
+`strip_control_prefix`をそのまま転用すると`for`/`case`に到達した時点で
+ヘッダーごと消費・破棄される（ALLOWED_HEADS判定には正しい挙動だが、
+`record_loop_binding`/`record_assignments`には逆の要件がある）ため、
+**新設の軽量ヘルパーを追加**した:
+
+- `_strip_leading_outer_keyword(tokens)`: 先頭1語が外側制御構文キーワード
+  （`CONTROL_CONDITION_KEYWORDS`・`CONTROL_BODY_KEYWORDS`・
+  `CONTROL_CLOSING_KEYWORDS`）ならそれだけを剥がす。`for`/`case`は対象外
+  （判定しない＝呼び出し元に残す）
+- `strip_outer_control_keywords(statement)`: 上記を繰り返し適用し、
+  `for`/`case`に到達しても止まらず残余トークン列を返す（変化の有無を
+  Noneで示す設計を採らず、常にトークン列を返す）
+- `strip_control_prefix`自身も`_strip_leading_outer_keyword`を内部で呼ぶ
+  ようリファクタリングし、重複ロジックを解消（`for`/`case`分岐の判定・
+  戻り値の意味〔剥がすものが無ければNone〕は無変更）
+- `record_assignments`: `pipe_segments(statement)` →
+  `pipe_segments(strip_outer_control_keywords(statement))`
+- `record_loop_binding`: `words = [v for k, v in statement if k == "w"]` の
+  前段に `tokens = strip_outer_control_keywords(statement)` を追加し、
+  `tokens`から語を抽出するよう変更
+
+配置は`_strip_case_clause`の直後・`strip_control_prefix`の直前
+（`_strip_leading_outer_keyword`・`_OUTER_CONTROL_KEYWORDS`）と、
+`strip_control_prefix`の直後（`strip_outer_control_keywords`）。
+`ALLOWED_HEADS`/`CWD_SAFE_HEADS`は無変更。
+
+### 6-3. 検証結果（実測）
+
+- `python3 -m unittest discover -s tests -v`: **731件全件PASS**
+  （既存726件＋tester追加5件。新規テスト追加なし＝実装側の修正のみ）
+- tester追加の回帰固定テスト5件（`test_klk019_regression_nested_for_loop_var_write_denies_do_prefix`・`_then_prefix`・`_while_prefix`・
+  `test_klk019_regression_nested_for_loop_var_redirect_write_denies`・
+  `test_klk019_regression_nested_assignment_redirect_write_denies`）は
+  **全件PASS**
+- `test_legacy_deny_commands_all_still_deny`（`LEGACY_DENY_COMMANDS`130件）・
+  `test_inventory_cases_match_expected_decisions`（`INVENTORY_CASES`117件。
+  `INV-SH-11`・`INV-CTRL-01`〜`25`含む）を個別実行し、いずれもPASS
+  （無回帰）
+- 実機bash検証（scratchpadの`tempfile.mkdtemp()`使い捨てディレクトリ。
+  本番`tickets/`・`docs/SPEC.md`には一切触れていない）: tester報告の5件の
+  再現手順すべてで、修正後の`find_violation()`がdenyを返すこと、
+  「ゲート適用済みワークフロー」（denyなら実行しない）ではサンドボックスの
+  ファイルが1バイトも変化しないこと、対照実験として同じコマンドを
+  ゲート無しで実行すると実際に削除・上書きが発生すること（＝真陽性である
+  ことの裏付け）の3点を確認した
+- 追加の安全性確認（別statementへの巻き込み・C形式for/複数パターンcaseの
+  フォールバックdeny・変数名`do`との衝突なし等）をscratchpadの使い捨て
+  スクリプトで個別確認し、いずれも期待どおり（既存挙動の維持）であることを
+  確認した
+
+### 6-4. 設計書への反映要否（次工程への申し送り）
+
+`docs/designs/KLK-019.md`§4は`strip_control_prefix`・`control_stripped_segments`
+のコードをそのまま転記しており、§6 R-CTRL4も「`control_stripped_segments`を
+ALLOWED_HEADS判定とcwd追跡の両方から呼ぶこと」を明記しているが、
+**`record_loop_binding`・`record_assignments`もこの共有ルールの適用対象で
+あるべきだったことは明記されていない**（本チケットのPhase1/2実装時点の
+設計漏れ）。新設した`_strip_leading_outer_keyword`・
+`strip_outer_control_keywords`は§4のコード転記・Phase表（Phase1/2）・
+§6 R-CTRL4の記述と整合させるための更新が必要と判断する（architectの
+権限のため本実装では設計書自体は編集していない。反映有無・要否の最終判断は
+architect/orchestratorへ委ねる）。

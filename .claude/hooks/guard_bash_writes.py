@@ -2589,8 +2589,17 @@ def next_cwd(words, cwd):
 
 
 def record_assignments(statement, guarded_vars, substs=()):
-    """`NAME=保護対象パス` の前置き代入を記録する（リダイレクト先の追跡用）。"""
-    for words in pipe_segments(statement):
+    """`NAME=保護対象パス` の前置き代入を記録する（リダイレクト先の追跡用）。
+
+    KLK-019差し戻し: `for`/`case` へは踏み込まず外側制御構文キーワードだけを
+    剥がす strip_outer_control_keywords を経由してから pipe_segments へ渡す。
+    こうしないと、内側の前置き代入が外側ループの `do` 等と同一ステートメント
+    を共有する形（`for i in 1 2; do f=tickets/active/APP-001.md; ...; done`）
+    で、生の先頭語 "do" が代入語の連続を即座に打ち切り、代入が一切記録され
+    ない（strip_control_prefix はこの前置き代入の値自体を見る用途には使えない
+    ため転用しない。詳細は _strip_leading_outer_keyword のコメントを参照）。
+    """
+    for words in pipe_segments(strip_outer_control_keywords(statement)):
         for word in words:
             match = ASSIGN_RE.match(word)
             if not match:
@@ -2673,6 +2682,30 @@ def _strip_case_clause(tokens):
     return tokens[4:]
 
 
+# KLK-019差し戻し（tester起因・AC6独自検証）: record_loop_binding・
+# record_assignments はいずれも `for NAME in LIST` ヘッダー自体・前置き代入
+# 自体を「見る」必要があるため、strip_control_prefix をそのまま使うと
+# `for`/`case` に到達した時点でヘッダーごと消費・破棄されてしまい使えない
+# （ALLOWED_HEADS判定用には「ヘッダーに実行コマンドは無い」という扱いが
+# 正しいが、この2関数には逆の要件がある）。そこで「条件／本体／閉じ
+# キーワードだけを先頭から剥がし、for/case はそのまま残す」部分だけを
+# _strip_leading_outer_keyword として切り出し、strip_control_prefix と
+# 新設の strip_outer_control_keywords の両方から呼ぶ（重複ロジックの回避）。
+_OUTER_CONTROL_KEYWORDS = (CONTROL_CONDITION_KEYWORDS | CONTROL_BODY_KEYWORDS |
+                           CONTROL_CLOSING_KEYWORDS)
+
+
+def _strip_leading_outer_keyword(tokens):
+    """先頭1語が外側制御構文キーワード（if/elif/while/until/do/then/else/
+    fi/done/esac）ならそれだけを剥がした残余を返す。`for`/`case`は対象外
+    （呼び出し元によって扱いが違うため、ここでは判定しない）。剥がせなければ
+    None を返す。
+    """
+    if tokens and tokens[0][0] == "w" and tokens[0][1] in _OUTER_CONTROL_KEYWORDS:
+        return tokens[1:]
+    return None
+
+
 def strip_control_prefix(statement):
     """先頭に連なる制御構文キーワードを再帰的に剥がし、残余トークンを返す。
 
@@ -2711,13 +2744,31 @@ def strip_control_prefix(statement):
             if parsed is not None:
                 return []  # ヘッダーに実行コマンドは無い
             return tokens if changed else None  # C形式等、判定できない形
-        if (head in CONTROL_CONDITION_KEYWORDS or
-                head in CONTROL_BODY_KEYWORDS or
-                head in CONTROL_CLOSING_KEYWORDS):
-            tokens, changed = tokens[1:], True
-            continue
-        break
+        stripped = _strip_leading_outer_keyword(tokens)
+        if stripped is None:
+            break
+        tokens, changed = stripped, True
     return tokens if changed else None
+
+
+def strip_outer_control_keywords(statement):
+    """先頭に連なる外側制御構文キーワードだけを剥がし、`for`/`case`はそのまま
+    残す軽量ヘルパー（KLK-019差し戻し）。
+
+    strip_control_prefix と異なり `for`/`case` に到達しても止まらず（残余の
+    先頭に残したまま）常に残余トークン列を返す（「変化が無い」ことを None
+    で示す設計を採らない——呼び出し元 record_loop_binding・
+    record_assignments は残余の先頭が for ヘッダー／代入かどうかだけを
+    見るため、変化の有無を区別する必要が無い）。剥がすものが無ければ
+    引数をそのまま返す（制御構文キーワードで始まらない大多数の
+    ステートメントに対して1バイトも挙動を変えない）。
+    """
+    tokens = statement
+    while True:
+        stripped = _strip_leading_outer_keyword(tokens)
+        if stripped is None:
+            return tokens
+        tokens = stripped
 
 
 def control_stripped_segments(statement):
@@ -2762,8 +2813,18 @@ def record_loop_binding(statement, guarded_loop_vars, substs=()):
     証拠にし、`guarded_loop_vars` へ加える。既存の `guarded_vars`
     （NAME=value 前置き代入の追跡）とは完全に別集合であり、統合しない
     （INV-SH-11 の挙動を変えないため。§3 設計方針5）。
+
+    KLK-019差し戻し: `_parse_for_header` へ渡す前に
+    strip_outer_control_keywords で外側制御構文キーワードだけを剥がす。
+    こうしないと、内側の `for NAME in LIST` ヘッダーが外側ループの `do`・
+    `then`・`while` 等と同一ステートメントを共有する形
+    （`for i in 1 2; do for f in tickets/active/*.md; do rm $f; done; done`）
+    で、生の先頭語が "do"（"for" ではない）になり `_parse_for_header` が
+    即座に None を返し、NAME="f" が guarded_loop_vars に一切登録されない
+    （record_assignments と同じ根本原因）。
     """
-    words = [v for k, v in statement if k == "w"]
+    tokens = strip_outer_control_keywords(statement)
+    words = [v for k, v in tokens if k == "w"]
     parsed = _parse_for_header(words)
     if parsed is None:
         return
