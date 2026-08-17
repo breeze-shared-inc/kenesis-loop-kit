@@ -163,6 +163,30 @@ bash と一致させる正規化（L0）を置く。
     （degraded mode は空白分割でプログラム本文の同一性が失われるため
     SED-7 を適用せず、従来の `SED_WRITE_RE` ブラックリストを維持する）。
 
+  sed/awk のプログラム本文ゲート緩和（is_guarded_token_in_program・KLK-029）—
+    sed/awk は「プログラム本文」という独自の小言語を持ち、その小言語自身が
+    `\` によるデリミタ／文字列終端のエスケープ規約を持つ。bash が引用解除した
+    後の文字列（シングルクォート内では `\` がそのまま残る）を sed/awk 自身が
+    もう一段解釈するため、is_guarded_token が見る字面（`docs\/SPEC.md`）と
+    実行時の意味（sed の `s///` 区切り文字解釈・awk の未知エスケープ警告つき
+    正規化）が乖離する（実機 GNU sed 4.9・GNU Awk 5.2.1 で確認済み。
+    docs/reports/KLK-029/investigation.md 参照）。**主張:**
+    `is_guarded_token_in_program(t)` は `is_guarded_token(t)` が真ならば必ず
+    真（OR 追加のみ）。したがって既存の deny が allow に転じることは構造的に
+    起こらない。**破れる形（否定形）:** 本関数の呼び出し箇所を「素の
+    `is_guarded_token` を置き換える」形で使った場合（OR ではなく置換にした
+    場合）。`segment_violation` のsed分岐・`awk_violation`・
+    `statement_violation` のいずれもOR追加の形を取る。**向き:** 誤りの向きは
+    常に allow 方向（危険）。SPEC.md 型の判定を basename 完全一致から
+    「`/` 区切り成分のいずれかに一致」へ緩めたことでゲートの発火条件は
+    広がる方向にのみ動く（判定基準を狭める変更は無い）。**検出器:**
+    `tests/test_guard_bash_writes.py` の INV-SED-27〜31・INV-AWK-21〜25
+    （docs/designs/KLK-029.md §4-5）。**degraded mode（字句解析できない
+    入力）にはこの緩和が及ばない**——`degraded_violation`は独立した文処理を
+    持ち `statement_violation` を経由しないため、字句解析に失敗する形へ
+    意図的に落とし込んだ場合のエスケープ回避は残存する
+    （docs/designs/KLK-029.md §6 R-U1）。
+
   書き込み先オペランドと cwd — 語のうち**構文的に書き込み先と確定している**もの
     （出力リダイレクトの直後の語・sort の -o の値・uniq の第2位置引数）だけを
     「書き込み先オペランド」と呼び、cwd との結合（相対パスの解決）は

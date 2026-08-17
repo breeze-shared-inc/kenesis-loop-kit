@@ -90,3 +90,30 @@ OK
 ```
 既存213件のexpected値は一切変更していない（追加のみ）。新規10件は設計書§6 R1の列挙（①〜⑤）と
 1対1に対応し、列挙外の新規denyは発生していない（AC5）。
+
+## Phase 3: ドキュメント更新
+
+### 変更内容
+- `.claude/hooks/README.md`の`guard_bash_writes.py`説明行、「**保守側へ倒している判定**」の
+  直前へ設計書§4-6記載の追記文（sed/awkゲート緩和の内容・degraded mode対象外＝R-U1）を
+  そのまま挿入。
+- `.claude/hooks/guard_bash_writes.py`モジュールdocstring、sedプログラム本文の説明ブロック
+  （SED-7）の直後・「書き込み先オペランドとcwd」ブロックの直前へ、既存の他ブロックと同じ
+  P8/P9形式（主張・破れる形（否定形）・向き・検出器）で追記。§4-1のコード内コメントブロック
+  の要旨を転記し、degraded mode対象外である旨も明記。
+
+### 整合性確認
+`grep -n "KLK-029" .claude/hooks/guard_bash_writes.py`で、新設関数群（§4-1）・awk_violation
+差し替え箇所（§4-3）・statement_violation差し替え箇所（§4-4）・モジュールdocstring追記（§4-6）
+の4系統にKLK-029コメントが対応していることを確認。README追記は「sed/awk限定」「degraded
+mode対象外」の2点がPhase 1実装（PROGRAM_TEXT_HEADS = {"sed","awk"}・degraded_violation無変更）
+と一致することを確認済み。
+
+### 最終確認
+```
+$ python3 -W error::SyntaxWarning -c "import ast; ast.parse(open('.claude/hooks/guard_bash_writes.py').read())"
+（エラー・警告なし）
+$ python3 -m unittest tests.test_guard_bash_writes
+Ran 213 tests in ~25-27s
+OK
+```
