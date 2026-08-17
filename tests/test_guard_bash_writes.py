@@ -2617,6 +2617,42 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertAllow("echo `date +%Y` tickets/active/APP-001.md")
         self.assertAllow("echo `echo $(echo hi)` tickets/active/APP-001.md")
 
+    def test_klk024_unescape_backtick_body_unit_boundary(self):
+        # T-KLK024g（設計書§9「テスト観点」: `_unescape_backtick_body` の単体
+        # 境界。純粋関数のため hook を経由せず直接呼び出す）。tester が追加
+        # （T-KLK024a〜f は hook 経由の E2E のみで、この純粋関数を直接
+        # 呼ぶ単体テストが無かったため）。アンエスケープ対象3種
+        # （`` \` ``・`\$`・`\\`）を正しく変換する入力と、対象外の `\X`
+        # （`\;`・`\ `（バックスラッシュ+空白）・`\`+改行）をそのまま残す
+        # 入力を、それぞれ最低2形ずつ固定する
+        unescape = guard._unescape_backtick_body
+
+        # 対象1: `` \` `` -> `` ` ``
+        self.assertEqual(unescape(r"echo \`date\`"), "echo `date`")
+        self.assertEqual(unescape(r"\`\`"), "``")
+        # 対象2: `\$` -> `$`
+        self.assertEqual(unescape(r"echo \$HOME"), "echo $HOME")
+        self.assertEqual(unescape(r"\$\$"), "$$")
+        # 対象3: `\\` -> `\`
+        self.assertEqual(unescape(r"a\\b"), "a\\b")
+        self.assertEqual(unescape(r"\\\\"), "\\\\")
+
+        # 対象外1: `\;`（そのまま残る＝no-op）
+        for text in (r"a\;b", r"find . \; ok"):
+            with self.subTest(text=text):
+                self.assertEqual(unescape(text), text)
+        # 対象外2: `\ `（バックスラッシュ+空白。そのまま残る＝no-op）
+        for text in (r"a\ b", r"echo\ hi"):
+            with self.subTest(text=text):
+                self.assertEqual(unescape(text), text)
+        # 対象外3: `\`+改行（行継続の生テキスト。そのまま残る＝no-op。
+        # test_line_continuation_inside_substitution_is_command_context の
+        # E2E 経路（`` `ls #\ +改行+ rm docs/SPEC.md` ``）と同型の負例を
+        # 純粋関数として直接固定する）
+        for text in ("a\\\nb", "echo x\\\ny"):
+            with self.subTest(text=text):
+                self.assertEqual(unescape(text), text)
+
 
 if __name__ == "__main__":
     unittest.main()
