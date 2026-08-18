@@ -121,8 +121,10 @@ def is_ticket(path):
     無し）の双方を受け付ける（KLK-012 AC1）。
 
     guard_bash_writes.py 側の保護対象判定（_is_guarded_path / is_guarded_token）
-    とは目的が異なるため基準は統一していない（KLK-010 D2。統一可否の再評価は
-    KLK-020）。相対形のチケットパスでは tickets_dir_for が None を返すため、
+    とは目的が異なるため基準は統一していない（KLK-010 D2。KLK-020でKLK-010 D2の
+    根拠3点を再評価し「意図的な不統一を維持する」と確定した。根拠は
+    docs/designs/KLK-020.md §3 D2を参照）。相対形のチケットパスでは
+    tickets_dir_for が None を返すため、
     サイドカー由来の prior と in_progress ゲートは fail-open で効かない
     （KLK-012 §3 D3・§6 R10）。判定は str を前提とし、型の正規化は各 hook の
     main() 側で行う（KLK-012 §3 D5）。
@@ -154,6 +156,13 @@ def spec_state_path(cwd):
     return os.path.join(cwd, "docs", ".spec_state.json")
 
 
+def is_spec_basename(name):
+    """basename が大小を区別せず 'SPEC.md' と一致するか（KLK-020: is_spec /
+    _is_guarded_path / _is_guarded_path_component / is_project_spec の
+    SPEC.md 判定を一本化する単一の正規化ポイント）。"""
+    return isinstance(name, str) and name.upper() == "SPEC.MD"
+
+
 def is_project_spec(path, cwd):
     """path が cwd 直下の docs/SPEC.md と同一ファイルを指すか。
 
@@ -161,7 +170,11 @@ def is_project_spec(path, cwd):
     分ける（D3。KLK-010 D2と同型の判断）。絶対形は cwd 直下の docs/SPEC.md と
     正規化して比較し、相対形は "docs/SPEC.md" という字句そのものだけを認める
     （is_ticket と同様、相対形は cwd 非依存の純字句判定にとどめる）。
-    ネストした SPEC.md（docs/foo/SPEC.md 等）はいずれの形でも一致しない。
+    basename部分は is_spec_basename 経由で大小を区別しない
+    （KLK-020 D1）が、ディレクトリ部分（"docs"）の比較は大小を区別した
+    まま維持する（D1のスコープ限定）。
+    ネストした SPEC.md（docs/foo/SPEC.md 等）はいずれの形でも一致しない
+    （KLK-016 D3）。
     """
     if not isinstance(path, str) or not path:
         return False
@@ -169,7 +182,11 @@ def is_project_spec(path, cwd):
     if not target:
         return False
     n = _normalize_path(path)
-    return n == _normalize_path(target) or n == "docs/SPEC.md"
+    n_dir, _, n_base = n.rpartition("/")
+    if not is_spec_basename(n_base):
+        return False
+    target_dir = _normalize_path(target).rpartition("/")[0]
+    return n_dir == target_dir or n_dir == "docs"
 
 
 def load_spec_state(cwd):

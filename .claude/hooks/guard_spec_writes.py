@@ -38,7 +38,7 @@ def is_spec(path):
     n = path.replace("\\", "/")
     if "/.claude/" in n or n.startswith(".claude/"):
         return False
-    return n.rsplit("/", 1)[-1] == "SPEC.md"
+    return lib.is_spec_basename(n.rsplit("/", 1)[-1])
 
 
 def main():

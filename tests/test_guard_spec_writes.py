@@ -78,6 +78,34 @@ class TestGuardSpecWrites(unittest.TestCase):
         self.assertAllow({"tool_name": "Write",
                           "tool_input": {"file_path": 123}})
 
+    # --- KLK-020 D1: SPEC.md 判定の case-insensitive 化（AC3） ---
+
+    def test_lowercase_spec_ask(self):
+        self.assertAsk(payload("Write", "/repo/docs/spec.md"))
+
+    def test_mixed_case_spec_ask(self):
+        self.assertAsk(payload("Edit", "/repo/docs/Spec.md"))
+
+    def test_uppercase_ext_spec_ask(self):
+        self.assertAsk(payload("Write", "/repo/docs/SPEC.MD"))
+
+    def test_random_mixed_case_spec_ask(self):
+        self.assertAsk(payload("Edit", "/repo/docs/SpEc.Md"))
+
+    def test_claude_dir_lowercase_spec_allow(self):
+        # .claude/ 配下は大小区別化後も引き続き対象外（回帰確認）
+        self.assertAllow(payload(
+            "Write", "/repo/.claude/skills/spec-interview/templates/spec.md"))
+
+    def test_non_md_extension_lowercase_allow(self):
+        # 拡張子が .md でない場合は大小区別化後も引き続き不一致（回帰確認）
+        self.assertAllow(payload("Write", "/repo/docs/spec.mdx"))
+
+    def test_template_lowercase_variant_allow(self):
+        # SPEC_TEMPLATE.md は大小を変えても basename 完全一致ではないため
+        # 引き続き不一致（回帰確認）
+        self.assertAllow(payload("Write", "/repo/docs/spec_template.md"))
+
 
 if __name__ == "__main__":
     unittest.main()

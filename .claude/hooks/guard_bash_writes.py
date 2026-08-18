@@ -208,7 +208,9 @@ bash と一致させる正規化（L0）を置く。
 のに対し、本 hook が必要とするのは「コマンド文字列の断片が保護対象に言及しているか」
 という再現率優先の判定（相対パス・ディレクトリ指定・引用符やコードの中に埋もれた
 パスまで拾う）である。統一すると `ls tickets/active/` や `docs/SPEC.md` を取りこぼす
-ため、統一しない。
+ため、統一しない（KLK-010 D2。KLK-020でKLK-010 D2の根拠3点を再評価し、
+「意図的な不統一を維持する」と改めて確定した。根拠は docs/designs/KLK-020.md
+§3 D2を参照）。
 
 既知の限界:
   - 別のコマンドで export された変数経由のリダイレクトは検出できない（hook は
@@ -802,7 +804,7 @@ def _is_guarded_path(path):
     if "tickets/active" in path or "tickets/done" in path:
         # テンプレート・ダッシュボードは対象外（validator と同じ除外）
         return "/Templates/" not in path and not path.endswith("_index.md")
-    return os.path.basename(path) == "SPEC.md"
+    return lib.is_spec_basename(os.path.basename(path))
 
 
 def guarded_paths(text):
@@ -1230,7 +1232,7 @@ def _is_guarded_path_component(path):
         return False
     if "tickets/active" in path or "tickets/done" in path:
         return "/Templates/" not in path and not path.endswith("_index.md")
-    return "SPEC.md" in path.split("/")
+    return any(lib.is_spec_basename(seg) for seg in path.split("/"))
 
 
 def guarded_paths_in_program(text):

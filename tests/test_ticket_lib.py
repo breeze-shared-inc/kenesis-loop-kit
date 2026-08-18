@@ -504,6 +504,71 @@ class TestSpecDriftPureFunctions(unittest.TestCase):
         self.assertTrue(lib.is_project_spec("/repo/docs/SPEC.md", "/repo"))
         self.assertTrue(lib.is_project_spec("docs/SPEC.md", "/repo"))
 
+    # --- KLK-020 D1: SPEC.md 判定の case-insensitive 化（AC3） ---
+
+    def test_is_project_spec_case_insensitive_basename(self):
+        # basename の大小区別を解消（KLK-020）。絶対形・相対形の双方で確認
+        for name in ("spec.md", "Spec.md", "SPEC.MD"):
+            self.assertTrue(
+                lib.is_project_spec("/repo/docs/" + name, "/repo"), name)
+            self.assertTrue(
+                lib.is_project_spec("docs/" + name, "/repo"), name)
+
+    def test_is_project_spec_nested_spec_case_insensitive_still_false(self):
+        # basenameの大小区別を解消した後も、ネスト除外（KLK-016 D3）は
+        # 大小混在のケースで引き続き有効であることを回帰確認する
+        self.assertFalse(
+            lib.is_project_spec("/repo/docs/foo/spec.md", "/repo"))
+        self.assertFalse(lib.is_project_spec("docs/foo/Spec.md", "/repo"))
+
+    def test_is_project_spec_directory_case_still_sensitive(self):
+        # ディレクトリ部分（"docs"）の大小区別は本チケットのスコープ外
+        # であり、引き続き区別されたまま（D1のスコープ限定）
+        self.assertFalse(lib.is_project_spec("/repo/Docs/SPEC.md", "/repo"))
+        self.assertFalse(lib.is_project_spec("Docs/SPEC.md", "/repo"))
+
+    def test_is_spec_basename_case_insensitive(self):
+        for name in ("SPEC.md", "spec.md", "Spec.md", "SPEC.MD", "sPeC.mD"):
+            self.assertTrue(lib.is_spec_basename(name), name)
+
+    def test_is_spec_basename_non_match(self):
+        for name in ("SPEC_TEMPLATE.md", "SPEC.mdx", "notes.md", ""):
+            self.assertFalse(lib.is_spec_basename(name), name)
+
+    def test_is_spec_basename_non_str_returns_false(self):
+        self.assertFalse(lib.is_spec_basename(None))
+        self.assertFalse(lib.is_spec_basename(123))
+
+    # --- KLK-020 tester追加: is_project_spec の実装形（設計書§4のコード例と
+    # 異なり rpartition("/") で dir/base に分解する形。implementation.md §2・
+    # §5「設計からの逸脱」参照）が、設計書の制約
+    # 「ディレクトリ部分の比較は大小区別を維持したまま・KLK-016 D3の
+    # ネスト除外を壊さない」を実際に満たすかをエッジケースで実証する。
+
+    def test_is_project_spec_different_project_absolute_docs_not_matched(self):
+        # 絶対形の別プロジェクトの docs/SPEC.md（n_dir が target_dir とも
+        # 文字列 "docs" とも一致しない）が、n_dir=="docs" という相対形専用の
+        # 分岐に誤って引っかからないことを確認する（cross-project誤検知防止）
+        self.assertFalse(
+            lib.is_project_spec("/other/project/docs/SPEC.md", "/repo"))
+
+    def test_is_project_spec_relative_nested_docs_suffix_not_matched(self):
+        # rpartition("/") で得られる n_dir は "sub/docs" であり、文字列
+        # "docs" と完全一致しないため、末尾が "docs" であるだけの深い相対
+        # パスは一致しない（n_dir=="docs" が部分一致ではなく完全一致で
+        # 判定されていることの確認）
+        self.assertFalse(lib.is_project_spec("sub/docs/SPEC.md", "/repo"))
+
+    def test_is_project_spec_absolute_form_requires_exact_target_dir(self):
+        # 絶対形は n_dir == target_dir（cwd 直下の docs）の完全一致でのみ
+        # 真になる。cwd が異なれば同名 basename でも一致しない
+        self.assertTrue(
+            lib.is_project_spec("/repo/project/docs/SPEC.md",
+                                 "/repo/project"))
+        self.assertFalse(
+            lib.is_project_spec("/repo/project/docs/SPEC.md",
+                                 "/repo/other"))
+
     def test_load_spec_state_broken_json_returns_none(self):
         with tempfile.TemporaryDirectory() as cwd:
             docs = os.path.join(cwd, "docs")
