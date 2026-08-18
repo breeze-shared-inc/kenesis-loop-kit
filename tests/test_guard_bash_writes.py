@@ -2961,6 +2961,40 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertTrue(guard._is_guarded_path_component(fused))
         self.assertFalse(guard._is_guarded_path(fused))
 
+    # --- KLK-020 D2: is_ticket ↔ is_guarded_token/_is_guarded_path の非対称は
+    # 「バグ」ではなく「意図的な不統一」として維持することを確定した
+    # （KLK-010 D2の再評価。docs/designs/KLK-020.md §3 D2）。以下は
+    # この非対称を明示的に固定する pinning テストであり、**将来この差異を
+    # 「バグ」として無自覚に一致させる修正が入らないようにする**ことが目的
+    # （AC1(b)・AC4）。KLK-012で相対パス対応が入り両者の乖離幅は縮小したが、
+    # 境界チェックなしの部分文字列一致に起因する mytickets/... 型の
+    # 過剰検知ギャップはKLK-012の対象外で残存する。これは guard_bash_writes
+    # 側の再現率優先という設計そのものであり、バグではない
+    # （guard.lib は guard_bash_writes.py が `import _ticket_lib as lib` で
+    # 保持するモジュール参照であり、テスト側での追加importは不要）。
+
+    def test_klk020_is_ticket_vs_is_guarded_token_asymmetry_pinning(self):
+        # "mytickets/active/APP-001.md" は "tickets" の直前に境界（先頭 or
+        # "/"）が無いため is_ticket はコンポーネント境界を要求し False を
+        # 返す。一方 _is_guarded_path / is_guarded_token は境界チェック無しの
+        # 部分文字列一致であるため True を返す。この不一致は「バグ」ではなく
+        # KLK-010 D2で確定し KLK-020 で再確認された意図的な設計判断である。
+        path = "my" + "tickets/active/APP-001.md"
+        self.assertFalse(guard.lib.is_ticket(path))
+        self.assertTrue(guard._is_guarded_path(path))
+        self.assertTrue(guard.is_guarded_token(path))
+
+    def test_klk020_is_ticket_vs_is_guarded_token_relative_paths_converged(
+            self):
+        # KLK-012で is_ticket に相対パス対応が入ったことで収束したケース
+        # （sub/tickets/active/... ・ x/../tickets/active/... は両者とも
+        # True/True になる。境界なし一致の非対称とは別枠の回帰確認）
+        for path in ("sub/tickets/active/APP-001.md",
+                     "x/../tickets/active/APP-001.md"):
+            self.assertTrue(guard.lib.is_ticket(path), path)
+            self.assertTrue(guard._is_guarded_path(path), path)
+            self.assertTrue(guard.is_guarded_token(path), path)
+
     # --- KLK-030: sed_strip_literals のパス末尾 s/y 疑似境界探索の固定化
     # （設計書 docs/designs/KLK-030.md §4-1・チケット再現手順そのもの）。
     # `sed_strip_literals` はトップレベル走査で生の文字 `s`/`y` の出現位置を

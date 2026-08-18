@@ -121,8 +121,10 @@ def is_ticket(path):
     無し）の双方を受け付ける（KLK-012 AC1）。
 
     guard_bash_writes.py 側の保護対象判定（_is_guarded_path / is_guarded_token）
-    とは目的が異なるため基準は統一していない（KLK-010 D2。統一可否の再評価は
-    KLK-020）。相対形のチケットパスでは tickets_dir_for が None を返すため、
+    とは目的が異なるため基準は統一していない（KLK-010 D2。KLK-020でKLK-010 D2の
+    根拠3点を再評価し「意図的な不統一を維持する」と確定した。根拠は
+    docs/designs/KLK-020.md §3 D2を参照）。相対形のチケットパスでは
+    tickets_dir_for が None を返すため、
     サイドカー由来の prior と in_progress ゲートは fail-open で効かない
     （KLK-012 §3 D3・§6 R10）。判定は str を前提とし、型の正規化は各 hook の
     main() 側で行う（KLK-012 §3 D5）。
