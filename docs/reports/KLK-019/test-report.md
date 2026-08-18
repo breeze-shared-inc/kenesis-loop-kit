@@ -77,7 +77,7 @@ denyと判定され意図どおりのもの: 深い3重入れ子書き込み・�
 - `python3 -m unittest discover -s tests -v`: **735件全件PASS**（実測。orchestrator報告どおり）
 - 内訳: 既存726件（前回FAIL報告時点の基準）＋tester追加回帰5件（`test_klk019_regression_nested_*`）＋R-CTRL7回帰4件（`test_klk019_r_ctrl7_*`）＝735件
 - `python3 -m unittest tests.test_guard_bash_writes -v`のうち`legacy`/`inventory`/`inv_sh_11`関連: `test_legacy_deny_commands_all_still_deny`・`test_inventory_cases_match_expected_decisions`・`test_klk019_inv_sh_11_unaffected_by_loop_var_separation`・`test_klk019_r_ctrl7_case_shared_statement_inv_sh_11_unaffected`の4件全てPASS
-- `LEGACY_DENY_COMMANDS`: 138件（実測・全件deny維持）／`INVENTORY_CASES`: 120件（実測・全件期待どおり）。前回レポート時点（130件／117件）から増分があるが、増分はimplementer/architectが追加したケースであり、いずれも無回帰
+- `LEGACY_DENY_COMMANDS`: 130件（実測・全件deny維持）／`INVENTORY_CASES`: 120件（実測・全件期待どおり）。前回レポート時点（130件／117件）からINVENTORY_CASESに増分があるが、増分はimplementer/architectが追加したケースであり、いずれも無回帰
 
 ### 8-2. 追加テスト9件のアサーション内容確認（Read実施）
 

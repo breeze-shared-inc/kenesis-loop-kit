@@ -571,7 +571,7 @@ CONTROL_BODY_KEYWORDS = frozenset({"do", "then", "else"})
 # ALLOWED_HEADS 判定にそのまま委ねる**ため、新しい許可経路を作らない
 # （`done | rm ...` のように閉じキーワードの後ろに実コマンドを伴う形は
 # パイプ区間として独立に判定されるため、この剥がしとは無関係に deny の
-# ままである。検出器: test_klk019_while_done_trailing_redirect_allow・
+# ままである。検出器: test_klk019_closing_keyword_trailing_redirect_allow・
 # test_klk019_closing_keyword_pipe_write_still_denies）。
 CONTROL_CLOSING_KEYWORDS = frozenset({"fi", "done", "esac"})
 BASH_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
