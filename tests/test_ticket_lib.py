@@ -539,6 +539,36 @@ class TestSpecDriftPureFunctions(unittest.TestCase):
         self.assertFalse(lib.is_spec_basename(None))
         self.assertFalse(lib.is_spec_basename(123))
 
+    # --- KLK-020 tester追加: is_project_spec の実装形（設計書§4のコード例と
+    # 異なり rpartition("/") で dir/base に分解する形。implementation.md §2・
+    # §5「設計からの逸脱」参照）が、設計書の制約
+    # 「ディレクトリ部分の比較は大小区別を維持したまま・KLK-016 D3の
+    # ネスト除外を壊さない」を実際に満たすかをエッジケースで実証する。
+
+    def test_is_project_spec_different_project_absolute_docs_not_matched(self):
+        # 絶対形の別プロジェクトの docs/SPEC.md（n_dir が target_dir とも
+        # 文字列 "docs" とも一致しない）が、n_dir=="docs" という相対形専用の
+        # 分岐に誤って引っかからないことを確認する（cross-project誤検知防止）
+        self.assertFalse(
+            lib.is_project_spec("/other/project/docs/SPEC.md", "/repo"))
+
+    def test_is_project_spec_relative_nested_docs_suffix_not_matched(self):
+        # rpartition("/") で得られる n_dir は "sub/docs" であり、文字列
+        # "docs" と完全一致しないため、末尾が "docs" であるだけの深い相対
+        # パスは一致しない（n_dir=="docs" が部分一致ではなく完全一致で
+        # 判定されていることの確認）
+        self.assertFalse(lib.is_project_spec("sub/docs/SPEC.md", "/repo"))
+
+    def test_is_project_spec_absolute_form_requires_exact_target_dir(self):
+        # 絶対形は n_dir == target_dir（cwd 直下の docs）の完全一致でのみ
+        # 真になる。cwd が異なれば同名 basename でも一致しない
+        self.assertTrue(
+            lib.is_project_spec("/repo/project/docs/SPEC.md",
+                                 "/repo/project"))
+        self.assertFalse(
+            lib.is_project_spec("/repo/project/docs/SPEC.md",
+                                 "/repo/other"))
+
     def test_load_spec_state_broken_json_returns_none(self):
         with tempfile.TemporaryDirectory() as cwd:
             docs = os.path.join(cwd, "docs")
