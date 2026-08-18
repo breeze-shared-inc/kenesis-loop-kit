@@ -269,6 +269,17 @@ bash と一致させる正規化（L0）を置く。
     合流するため、新しい判定パスを増やさない。** 検出器は
     `tests/test_guard_bash_writes.py` の
     `test_klk018_adjacent_braces_recursion_regression_*`。
+  - **KLK-031（誤deny是正）:** 分断 glob の SPEC.md 側判定は、区切り成分が
+    `GLOB_META_CHARS`（`*`／`?`／`[`）のみで構成される場合（孤立 `*`・`**`・
+    `*?`・`?*` 等。リテラル文字を1文字も含まない）、SPEC.md への一致判定を
+    行わない。fnmatch はこの種の成分に対して構造的資格を問わず真になり得る
+    ため、`rm *`・`rm build/*`・`chmod 755 *` のような保護対象と無関係な
+    日常コマンドが誤って deny されていた（誤りの向きは deny 方向=安全側で
+    あり allow への劣化ではない）。`active`／`done` 側は変更しない
+    （`_is_guarded_path` が "tickets/active"／"tickets/done" という文字列
+    そのものの隣接を要求するため、候補中に既に "tickets/" という文脈が
+    無い限り誤って一致しない。`rm tickets/*` のように既に "tickets/" を
+    含む語は従来どおり deny される）。詳細は docs/designs/KLK-031.md 参照。
   - **`#` コメントの本文は除去しない**（L0 参照）。したがってコメント内の
     `> path`・`rm` 等が証拠として拾われ誤denyになりうる（**旧版も同じ挙動
     のため回帰ではない**）。また、コメント内の未閉じクォート（`#'` 等）が
@@ -1010,8 +1021,9 @@ def _guarded_paths_from_expanded(expanded):
     ② 満たさず、`/` 区切り成分のいずれかに GLOB_META_CHARS の文字が含まれる
       場合、その成分について fnmatch.fnmatchcase(literal, component) を
       GUARDED_DIR_NAMES の各要素（"active"/"done"）に対して試す。その成分が
-      候補の**最後の**区切り成分であれば GUARDED_FILENAME ("SPEC.md") に
-      対しても試す。一致する literal が見つかったら、その成分だけを literal
+      候補の**最後の**区切り成分であれば、かつ GLOB_META_CHARS 以外の文字を
+      最低1文字含めば（KLK-031）GUARDED_FILENAME ("SPEC.md") に対しても試す。
+      一致する literal が見つかったら、その成分だけを literal
       へ置換した文字列を再構成し、os.path.normpath 後に _is_guarded_path を
       満たすか再評価する（置換は情報を追加する操作であり既存の文字は変更
       しない＝置換前に一致しなかった判定が置換後に不一致へ戻ることはない）。
@@ -1029,7 +1041,22 @@ def _guarded_paths_from_expanded(expanded):
         if not any(ch in component for ch in GLOB_META_CHARS):
             continue
         literals = list(GUARDED_DIR_NAMES)
-        if index == last_index:
+        # KLK-031: 成分が GLOB_META_CHARS（*／?／[）のみで構成される場合
+        # （孤立 `*`・`**`・`*?`・`?*` 等。リテラル文字を1文字も含まない）、
+        # fnmatch は成分の構造的資格を一切問わず SPEC.md に常に（または長さ
+        # 一致のみで）真になり得る。_is_guarded_path の SPEC.md 判定は
+        # basename 一致でディレクトリ文脈を問わないため、これを許すと
+        # `rm build/*`・`rm *` のような無関係な語まで「SPEC.md への言及」と
+        # 誤判定してしまう（誤deny）。SPEC.md 側の判定対象に加えるのは、
+        # 成分が GLOB_META_CHARS 以外の文字（リテラル文字）を最低1文字含む
+        # 場合のみに限定する（"acti*e"・"SPEC*.md" 等の部分アンカー付き
+        # パターンは従来どおり判定対象のまま）。GUARDED_DIR_NAMES
+        # （active/done）側は変更しない — こちらは _is_guarded_path が
+        # "tickets/active"／"tickets/done" という文字列そのものの隣接を
+        # 要求するため、候補中に既に "tickets/" という文脈が無い限り誤って
+        # 一致しない（詳細は docs/designs/KLK-031.md §3）。
+        has_literal_char = any(ch not in GLOB_META_CHARS for ch in component)
+        if index == last_index and has_literal_char:
             literals = literals + [GUARDED_FILENAME]
         for literal in literals:
             if not fnmatch.fnmatchcase(literal, component):
@@ -1062,6 +1089,19 @@ def guarded_paths_after_shell_expansion(text):
       - 向き: 誤りの向きは常に allow 方向（危険）。
       - 検出器: tests/test_guard_bash_writes.py の KLK-018 回帰ケースと
         誤deny予算の固定 allow ケース群（docs/designs/KLK-018.md §9）。
+
+    KLK-031 による精緻化:
+      上記「候補の basename 相当が SPEC と .md に一致する構造を持つ」という
+      主張は、区切り成分が GLOB_META_CHARS（*／?／[）のみで構成される場合
+      （孤立 `*`・`**`・`*?`・`?*` 等。リテラル文字を1文字も含まない）には
+      成立しない欠陥があった。fnmatch はこの種の成分に対して構造的資格を
+      一切問わず真になり得るため、`rm *`・`rm build/*` のような tickets/・
+      SPEC.md と無関係な語まで誤って一致し、保護対象と無関係なコマンドを
+      誤って deny していた。`_guarded_paths_from_expanded` の SPEC.md 側判定
+      に「成分が GLOB_META_CHARS 以外の文字（リテラル文字）を最低1文字
+      含むこと」という条件を追加し、この主張を復元した（誤りの向きは
+      deny 方向=安全側であり allow への劣化ではない。active／done 側は
+      無変更。docs/designs/KLK-031.md §3・§9 参照）。
 
     RecursionError 安全性（KLK-018 差し戻し・reviewer指摘）:
       `_brace_combination_count`／`expand_braces` は非入れ子で隣接する
