@@ -3016,6 +3016,95 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertAllow("cd tickets/active && awk 'NR>1 {print}' in.txt")
         self.assertAllow("ls file{1,2}.txt")
 
+    # --- KLK-031: 孤立ワイルドカードのみで構成される成分の誤deny是正 ---
+    # 設計書 docs/designs/KLK-031.md §9 AC1・AC2・AC4・AC5。
+    # _guarded_paths_from_expanded の SPEC.md 側判定は、区切り成分が
+    # GLOB_META_CHARS（*／?／[）のみで構成される場合（リテラル文字を1文字も
+    # 含まない）、fnmatch が構造を問わず常に真になり得ることが原因で、
+    # 保護対象と無関係な日常コマンドを誤って deny していた。以下は
+    # statement_violation・redirect_violation・degraded_violation・
+    # guarded_write_target の4経路を横断した固定と、GUARDED_DIR_NAMES
+    # （active/done）側が無変更であることの回帰ロックである。
+
+    def test_klk031_isolated_wildcard_component_allow(self):
+        # AC1: 孤立 `*` 単体・末尾 `*` は SPEC.md への言及と誤判定されない
+        # （statement_violation 経由。ALLOWED_HEADS 外の head で確認する
+        # ことで gate_hit の有無を直接確認する）
+        self.assertAllow("rm *")
+        self.assertAllow("rm build/*")
+        self.assertAllow("chmod 755 *")
+        self.assertAllow("tar cf out.tar *")
+        self.assertAllow("cp * dest")
+        self.assertAllow("mkdir *")
+        self.assertAllow("true *")
+
+    def test_klk031_multi_char_glob_only_component_allow(self):
+        # AC1: `**`・`*?`・`?*` のような複数文字のワイルドカードのみで
+        # 構成される成分も、リテラル文字を1文字も含まないため同様に allow
+        self.assertAllow("rm **")
+        self.assertAllow("rm *?")
+        self.assertAllow("rm ?*")
+
+    def test_klk031_redirect_violation_allow(self):
+        # AC2(a)・AC5: redirect_violation 経由でも同様に allow になる
+        self.assertAllow("echo hi > *")
+
+    def test_klk031_degraded_violation_allow(self):
+        # AC2(a)・AC5: degraded mode（未閉じクォート誘発）経由でも同様に
+        # allow になる（"don't" が未閉じシングルクォートを誘発する形）
+        self.assertAllow("true * # don't")
+
+    def test_klk031_guarded_write_target_allow(self):
+        # AC5: guarded_write_target 経由でも同様に allow になる
+        self.assertAllow("sort -o * in.md")
+
+    def test_klk031_record_loop_binding_allow(self):
+        # tester追加: is_guarded_token_expanded/mentions_guarded_expanded の
+        # 呼び出し箇所は実測9箇所（設計書§4-1の記載「計8箇所」は列挙の合算に
+        # 誤りがあり、record_loop_binding（KLK-019 の for ループ変数追跡。
+        # `for NAME in LIST` の LIST 判定）を含めると9箇所になる。§4-1が
+        # 挙げる4経路の固定に含まれていなかったため、tester観点で個別に
+        # 固定する。LIST が孤立ワイルドカードのみ（`*`・`build/*`）の場合、
+        # NAME が誤って guarded_loop_vars へ登録されず、後続の `$f` 参照
+        # （rm という ALLOWED_HEADS 外の head で確認し gate_hit の有無を
+        # 直接見る）も allow のままであること
+        self.assertAllow("for f in *; do rm $f; done")
+        self.assertAllow("for f in build/*; do rm $f; done")
+
+    def test_klk031_record_loop_binding_tickets_context_deny(self):
+        # 上記の対照（回帰ロック）: LIST が既に "tickets/" という文脈を含む
+        # 語（`tickets/*`）の場合は、本修正後も NAME が guarded_loop_vars へ
+        # 正しく登録され、後続の `$f` 参照が deny されること
+        # （GUARDED_DIR_NAMES 側は無変更であることの証跡）
+        self.assertDeny("for f in tickets/*; do rm $f; done")
+
+    def test_klk031_subst_violation_deep_allow(self):
+        # tester追加: subst_violation の MAX_SUBST_DEPTH（=3）到達時の分岐
+        # （`is_guarded_token_expanded(inner)` を直接呼ぶ箇所）も、孤立
+        # ワイルドカードのみの成分を誤って SPEC.md への言及と判定しないこと
+        self.assertAllow("echo $(echo $(echo $(rm *)))")
+
+    def test_klk031_subst_violation_deep_tickets_context_deny(self):
+        # 上記の対照（回帰ロック）: 深いコマンド置換の内側に既に "tickets/"
+        # という文脈を含む語がある場合は引き続き deny されること
+        self.assertDeny("echo $(echo $(echo $(rm tickets/*)))")
+
+    def test_klk031_guarded_dir_names_side_unchanged_deny(self):
+        # AC2(b): 本修正は GUARDED_DIR_NAMES（active/done）側の判定を
+        # 変更しない。既に "tickets/" という文脈を含む語は引き続き deny
+        # される（KLK-018 の AC4(N2) が意図した "tickets/" 隣接ケースを
+        # 弱めていないことの証跡。docs/designs/KLK-031.md §3・§6参照）
+        self.assertDeny("rm tickets/*")
+
+    def test_klk031_existing_klk018_fixed_cases_unaffected_deny(self):
+        # AC4: 既存の KLK-018 固定ケース（部分アンカー付きパターン。
+        # リテラル文字を含むためリテラル文字1文字以上の要求を追加しても
+        # 影響を受けない）が本修正後も無傷で deny されることの回帰確認
+        self.assertDeny("rm tickets/acti*e/APP-001.md")
+        self.assertDeny("rm tickets/activ?/APP-001.md")
+        self.assertDeny("rm tickets/activ[e]/APP-001.md")
+        self.assertDeny("rm docs/SPEC*.md")
+
     # --- KLK-018: MAX_BRACE_DEPTH／MAX_BRACE_COMBINATIONS 上限到達時の
     # フォールバック分岐（設計書 §4-1・§6。tester申し送り＝implementerの
     # Remaining Risksで境界値テスト未追加と明記されていた項目）。
