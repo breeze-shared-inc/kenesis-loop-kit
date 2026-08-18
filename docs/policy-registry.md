@@ -36,6 +36,6 @@ CLAUDE.mdはインデックスであり、各ポリシーの正（定義）は�
 | エージェントのモデル割当（役割別の軽量化・見直しトリガー） | `.claude/agents/*.md`（orchestrator.mdを除く5ファイル）の本文「## Model Assignment」節 + frontmatter `model`（sonnet割当時のみ記述） | architect（設計）+ 人間（承認） | agents/*.md Model Assignment節（tester/investigator=sonnet、architect/reviewer/implementer=inherit維持） |
 | サブエージェントレポートの要約上限・詳細外部化（docs/reports/{ID}/{phase}.md） | docs/designs/KLK-004.md + 各 `.claude/agents/*.md` Required Output Format | 各エージェント + orchestrator（Write/Edit非保持エージェント分の代筆） | 各agents/*.md Required Output Format・Ticket Integration・Git Rules / orchestrator.md Responsibilities・Ticket Integration / docs/reports/README.md |
 | CLAUDE.md＝インデックス＋共通定義の維持 | CLAUDE.md ポリシー管理の原則（再肥大化の防止） | CLAUDE.mdを編集する人間 / Claude | - |
-| orchestratorのチケット一覧取得（frontmatterスキャンCLI・パス引数を持たない設計） | scripts/list_tickets.py（実装の正はdocs/designs/KLK-003.md） | orchestrator / start-loop | orchestrator.md Ticket Integration / start-loop.md 起動時チェックリスト・ループ実行手順1 / tests/test_list_tickets.py |
+| orchestratorのチケット一覧取得（frontmatterスキャンCLI・パス引数を持たない設計） | scripts/list_tickets.py（実装の正はdocs/designs/KLK-003.md） | orchestrator / start-loop / /triage | orchestrator.md Ticket Integration / start-loop.md 起動時チェックリスト・ループ実行手順1 / .claude/commands/triage.md 手順1 / tests/test_list_tickets.py / tests/test_klk022_doc_wiring.py |
 
 新しいポリシーを追加する際は、`CLAUDE.md`「ポリシー管理の原則」（再肥大化の防止）が定める2手順に従い、定義ファイルへの反映と本表の更新まで完了させること。
