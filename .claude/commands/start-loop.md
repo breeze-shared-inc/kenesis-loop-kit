@@ -10,7 +10,7 @@
   権限モードがautoになっているか確認する。`.claude/settings.json` の `permissions.defaultMode` が `"auto"` 以外、または現在のセッションがautoモードでない場合は、人間に「Autoモードを有効化しないと、コマンド承認でループが頻繁に停止する」旨を伝え、有効化を促す（`defaultMode: "auto"` の設定、またはセッションのモード切替）。autoが有効になるまでループ本処理へ進まない。
 
 - [ ] **14日超blockedチケットの検出**
-  `python3 scripts/list_tickets.py` の一覧（status・updated列）から `status = blocked` かつ `updated` から14日以上経過しているチケットを抽出する（個別チケットのフル読み取りは不要）。該当チケットがあれば `.claude/commands/triage.md` の手順（再開 / クローズ / 期限延長の三択を人間に確認）でトリアージしてからループへ進む。
+  `python3 scripts/list_tickets.py` の一覧（status・updated列）から `status = blocked` かつ `updated` から14日以上経過しているチケットを抽出する（個別チケットのフル読み取りは不要）。該当チケットがあれば、抽出済みの候補ID一覧を引き継ぎ `.claude/commands/triage.md` の手順1（候補チケットのID特定）をスキップして手順2以降（0件チェック・候補のみのフル読み取り・三択確認・実行・報告）でトリアージしてからループへ進む（同じ検出を二重に行わない）。
 
 - [ ] **in_progress上限チェック**
   `python3 scripts/list_tickets.py` の一覧（status列）から `investigation_done` / `design_done` / `implementation_done` / `test_passed` のいずれかのチケット件数を集計する（blockedは数えない。積み上がりは14日トリアージが担当）。3件以上の場合は「既存チケットを完了またはcancelledにしてから新規着手してよいか」を人間に確認する。
