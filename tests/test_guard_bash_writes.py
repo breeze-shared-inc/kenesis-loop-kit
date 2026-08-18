@@ -3016,6 +3016,64 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertAllow("cd tickets/active && awk 'NR>1 {print}' in.txt")
         self.assertAllow("ls file{1,2}.txt")
 
+    # --- KLK-031: 孤立ワイルドカードのみで構成される成分の誤deny是正 ---
+    # 設計書 docs/designs/KLK-031.md §9 AC1・AC2・AC4・AC5。
+    # _guarded_paths_from_expanded の SPEC.md 側判定は、区切り成分が
+    # GLOB_META_CHARS（*／?／[）のみで構成される場合（リテラル文字を1文字も
+    # 含まない）、fnmatch が構造を問わず常に真になり得ることが原因で、
+    # 保護対象と無関係な日常コマンドを誤って deny していた。以下は
+    # statement_violation・redirect_violation・degraded_violation・
+    # guarded_write_target の4経路を横断した固定と、GUARDED_DIR_NAMES
+    # （active/done）側が無変更であることの回帰ロックである。
+
+    def test_klk031_isolated_wildcard_component_allow(self):
+        # AC1: 孤立 `*` 単体・末尾 `*` は SPEC.md への言及と誤判定されない
+        # （statement_violation 経由。ALLOWED_HEADS 外の head で確認する
+        # ことで gate_hit の有無を直接確認する）
+        self.assertAllow("rm *")
+        self.assertAllow("rm build/*")
+        self.assertAllow("chmod 755 *")
+        self.assertAllow("tar cf out.tar *")
+        self.assertAllow("cp * dest")
+        self.assertAllow("mkdir *")
+        self.assertAllow("true *")
+
+    def test_klk031_multi_char_glob_only_component_allow(self):
+        # AC1: `**`・`*?`・`?*` のような複数文字のワイルドカードのみで
+        # 構成される成分も、リテラル文字を1文字も含まないため同様に allow
+        self.assertAllow("rm **")
+        self.assertAllow("rm *?")
+        self.assertAllow("rm ?*")
+
+    def test_klk031_redirect_violation_allow(self):
+        # AC2(a)・AC5: redirect_violation 経由でも同様に allow になる
+        self.assertAllow("echo hi > *")
+
+    def test_klk031_degraded_violation_allow(self):
+        # AC2(a)・AC5: degraded mode（未閉じクォート誘発）経由でも同様に
+        # allow になる（"don't" が未閉じシングルクォートを誘発する形）
+        self.assertAllow("true * # don't")
+
+    def test_klk031_guarded_write_target_allow(self):
+        # AC5: guarded_write_target 経由でも同様に allow になる
+        self.assertAllow("sort -o * in.md")
+
+    def test_klk031_guarded_dir_names_side_unchanged_deny(self):
+        # AC2(b): 本修正は GUARDED_DIR_NAMES（active/done）側の判定を
+        # 変更しない。既に "tickets/" という文脈を含む語は引き続き deny
+        # される（KLK-018 の AC4(N2) が意図した "tickets/" 隣接ケースを
+        # 弱めていないことの証跡。docs/designs/KLK-031.md §3・§6参照）
+        self.assertDeny("rm tickets/*")
+
+    def test_klk031_existing_klk018_fixed_cases_unaffected_deny(self):
+        # AC4: 既存の KLK-018 固定ケース（部分アンカー付きパターン。
+        # リテラル文字を含むためリテラル文字1文字以上の要求を追加しても
+        # 影響を受けない）が本修正後も無傷で deny されることの回帰確認
+        self.assertDeny("rm tickets/acti*e/APP-001.md")
+        self.assertDeny("rm tickets/activ?/APP-001.md")
+        self.assertDeny("rm tickets/activ[e]/APP-001.md")
+        self.assertDeny("rm docs/SPEC*.md")
+
     # --- KLK-018: MAX_BRACE_DEPTH／MAX_BRACE_COMBINATIONS 上限到達時の
     # フォールバック分岐（設計書 §4-1・§6。tester申し送り＝implementerの
     # Remaining Risksで境界値テスト未追加と明記されていた項目）。
