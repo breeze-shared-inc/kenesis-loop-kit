@@ -3058,6 +3058,37 @@ class TestGuardBashWrites(unittest.TestCase):
         # AC5: guarded_write_target 経由でも同様に allow になる
         self.assertAllow("sort -o * in.md")
 
+    def test_klk031_record_loop_binding_allow(self):
+        # tester追加: is_guarded_token_expanded/mentions_guarded_expanded の
+        # 呼び出し箇所は実測9箇所（設計書§4-1の記載「計8箇所」は列挙の合算に
+        # 誤りがあり、record_loop_binding（KLK-019 の for ループ変数追跡。
+        # `for NAME in LIST` の LIST 判定）を含めると9箇所になる。§4-1が
+        # 挙げる4経路の固定に含まれていなかったため、tester観点で個別に
+        # 固定する。LIST が孤立ワイルドカードのみ（`*`・`build/*`）の場合、
+        # NAME が誤って guarded_loop_vars へ登録されず、後続の `$f` 参照
+        # （rm という ALLOWED_HEADS 外の head で確認し gate_hit の有無を
+        # 直接見る）も allow のままであること
+        self.assertAllow("for f in *; do rm $f; done")
+        self.assertAllow("for f in build/*; do rm $f; done")
+
+    def test_klk031_record_loop_binding_tickets_context_deny(self):
+        # 上記の対照（回帰ロック）: LIST が既に "tickets/" という文脈を含む
+        # 語（`tickets/*`）の場合は、本修正後も NAME が guarded_loop_vars へ
+        # 正しく登録され、後続の `$f` 参照が deny されること
+        # （GUARDED_DIR_NAMES 側は無変更であることの証跡）
+        self.assertDeny("for f in tickets/*; do rm $f; done")
+
+    def test_klk031_subst_violation_deep_allow(self):
+        # tester追加: subst_violation の MAX_SUBST_DEPTH（=3）到達時の分岐
+        # （`is_guarded_token_expanded(inner)` を直接呼ぶ箇所）も、孤立
+        # ワイルドカードのみの成分を誤って SPEC.md への言及と判定しないこと
+        self.assertAllow("echo $(echo $(echo $(rm *)))")
+
+    def test_klk031_subst_violation_deep_tickets_context_deny(self):
+        # 上記の対照（回帰ロック）: 深いコマンド置換の内側に既に "tickets/"
+        # という文脈を含む語がある場合は引き続き deny されること
+        self.assertDeny("echo $(echo $(echo $(rm tickets/*)))")
+
     def test_klk031_guarded_dir_names_side_unchanged_deny(self):
         # AC2(b): 本修正は GUARDED_DIR_NAMES（active/done）側の判定を
         # 変更しない。既に "tickets/" という文脈を含む語は引き続き deny
