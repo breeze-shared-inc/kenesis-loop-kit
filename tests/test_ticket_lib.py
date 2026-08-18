@@ -504,6 +504,41 @@ class TestSpecDriftPureFunctions(unittest.TestCase):
         self.assertTrue(lib.is_project_spec("/repo/docs/SPEC.md", "/repo"))
         self.assertTrue(lib.is_project_spec("docs/SPEC.md", "/repo"))
 
+    # --- KLK-020 D1: SPEC.md 判定の case-insensitive 化（AC3） ---
+
+    def test_is_project_spec_case_insensitive_basename(self):
+        # basename の大小区別を解消（KLK-020）。絶対形・相対形の双方で確認
+        for name in ("spec.md", "Spec.md", "SPEC.MD"):
+            self.assertTrue(
+                lib.is_project_spec("/repo/docs/" + name, "/repo"), name)
+            self.assertTrue(
+                lib.is_project_spec("docs/" + name, "/repo"), name)
+
+    def test_is_project_spec_nested_spec_case_insensitive_still_false(self):
+        # basenameの大小区別を解消した後も、ネスト除外（KLK-016 D3）は
+        # 大小混在のケースで引き続き有効であることを回帰確認する
+        self.assertFalse(
+            lib.is_project_spec("/repo/docs/foo/spec.md", "/repo"))
+        self.assertFalse(lib.is_project_spec("docs/foo/Spec.md", "/repo"))
+
+    def test_is_project_spec_directory_case_still_sensitive(self):
+        # ディレクトリ部分（"docs"）の大小区別は本チケットのスコープ外
+        # であり、引き続き区別されたまま（D1のスコープ限定）
+        self.assertFalse(lib.is_project_spec("/repo/Docs/SPEC.md", "/repo"))
+        self.assertFalse(lib.is_project_spec("Docs/SPEC.md", "/repo"))
+
+    def test_is_spec_basename_case_insensitive(self):
+        for name in ("SPEC.md", "spec.md", "Spec.md", "SPEC.MD", "sPeC.mD"):
+            self.assertTrue(lib.is_spec_basename(name), name)
+
+    def test_is_spec_basename_non_match(self):
+        for name in ("SPEC_TEMPLATE.md", "SPEC.mdx", "notes.md", ""):
+            self.assertFalse(lib.is_spec_basename(name), name)
+
+    def test_is_spec_basename_non_str_returns_false(self):
+        self.assertFalse(lib.is_spec_basename(None))
+        self.assertFalse(lib.is_spec_basename(123))
+
     def test_load_spec_state_broken_json_returns_none(self):
         with tempfile.TemporaryDirectory() as cwd:
             docs = os.path.join(cwd, "docs")

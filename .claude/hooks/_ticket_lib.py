@@ -154,6 +154,13 @@ def spec_state_path(cwd):
     return os.path.join(cwd, "docs", ".spec_state.json")
 
 
+def is_spec_basename(name):
+    """basename が大小を区別せず 'SPEC.md' と一致するか（KLK-020: is_spec /
+    _is_guarded_path / _is_guarded_path_component / is_project_spec の
+    SPEC.md 判定を一本化する単一の正規化ポイント）。"""
+    return isinstance(name, str) and name.upper() == "SPEC.MD"
+
+
 def is_project_spec(path, cwd):
     """path が cwd 直下の docs/SPEC.md と同一ファイルを指すか。
 
@@ -161,7 +168,11 @@ def is_project_spec(path, cwd):
     分ける（D3。KLK-010 D2と同型の判断）。絶対形は cwd 直下の docs/SPEC.md と
     正規化して比較し、相対形は "docs/SPEC.md" という字句そのものだけを認める
     （is_ticket と同様、相対形は cwd 非依存の純字句判定にとどめる）。
-    ネストした SPEC.md（docs/foo/SPEC.md 等）はいずれの形でも一致しない。
+    basename部分は is_spec_basename 経由で大小を区別しない
+    （KLK-020 D1）が、ディレクトリ部分（"docs"）の比較は大小を区別した
+    まま維持する（D1のスコープ限定）。
+    ネストした SPEC.md（docs/foo/SPEC.md 等）はいずれの形でも一致しない
+    （KLK-016 D3）。
     """
     if not isinstance(path, str) or not path:
         return False
@@ -169,7 +180,11 @@ def is_project_spec(path, cwd):
     if not target:
         return False
     n = _normalize_path(path)
-    return n == _normalize_path(target) or n == "docs/SPEC.md"
+    n_dir, _, n_base = n.rpartition("/")
+    if not is_spec_basename(n_base):
+        return False
+    target_dir = _normalize_path(target).rpartition("/")[0]
+    return n_dir == target_dir or n_dir == "docs"
 
 
 def load_spec_state(cwd):

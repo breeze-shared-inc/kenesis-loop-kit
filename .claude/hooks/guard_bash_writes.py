@@ -791,7 +791,7 @@ def _is_guarded_path(path):
     if "tickets/active" in path or "tickets/done" in path:
         # テンプレート・ダッシュボードは対象外（validator と同じ除外）
         return "/Templates/" not in path and not path.endswith("_index.md")
-    return os.path.basename(path) == "SPEC.md"
+    return lib.is_spec_basename(os.path.basename(path))
 
 
 def guarded_paths(text):
@@ -1190,7 +1190,7 @@ def _is_guarded_path_component(path):
         return False
     if "tickets/active" in path or "tickets/done" in path:
         return "/Templates/" not in path and not path.endswith("_index.md")
-    return "SPEC.md" in path.split("/")
+    return any(lib.is_spec_basename(seg) for seg in path.split("/"))
 
 
 def guarded_paths_in_program(text):

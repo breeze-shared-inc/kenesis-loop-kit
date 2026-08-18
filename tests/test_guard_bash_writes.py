@@ -2919,6 +2919,48 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertTrue(guard._is_guarded_path_component(fused_tickets))
         self.assertTrue(guard._is_guarded_path(fused_tickets))
 
+    # --- KLK-020 D1: SPEC.md 判定の case-insensitive 化（AC3）---
+    # is_spec（guard_spec_writes.py）と同時に、本モジュールの
+    # _is_guarded_path・_is_guarded_path_component も _ticket_lib.is_spec_basename
+    # 経由でcase-insensitive化する。既存の除外（.claude/配下・tickets/active|done
+    # の除外・SPEC_TEMPLATE.md等の非一致・非.md拡張子）は壊れないことも回帰確認する。
+
+    def test_klk020_is_guarded_path_case_insensitive(self):
+        for name in ("SPEC.md", "spec.md", "Spec.md", "SPEC.MD", "sPeC.mD"):
+            path = "docs/" + name
+            self.assertTrue(guard._is_guarded_path(path), path)
+            self.assertTrue(guard._is_guarded_path_component(path), path)
+
+    def test_klk020_is_guarded_path_claude_dir_still_excluded(self):
+        path = ".claude/skills/spec-interview/templates/spec.md"
+        self.assertFalse(guard._is_guarded_path(path))
+        self.assertFalse(guard._is_guarded_path_component(path))
+
+    def test_klk020_is_guarded_path_non_md_extension_still_false(self):
+        path = "docs/spec.mdx"
+        self.assertFalse(guard._is_guarded_path(path))
+        self.assertFalse(guard._is_guarded_path_component(path))
+
+    def test_klk020_is_guarded_path_template_variant_still_false(self):
+        # basenameの大小を変えても SPEC_TEMPLATE.md はSPEC.mdと一致しない
+        path = "docs/spec_template.md"
+        self.assertFalse(guard._is_guarded_path(path))
+        self.assertFalse(guard._is_guarded_path_component(path))
+
+    def test_klk020_lowercase_spec_redirect_denies_end_to_end(self):
+        # AC1(a)・AC3: guard_bash_writes 経路（Bashのリダイレクト）でも
+        # 大小混在のSPEC.mdが人間承認ゲート（deny）を通ることを実証する
+        self.assertDeny("cat draft.md > docs/spec.md")
+        self.assertDeny("cat draft.md > docs/Spec.md")
+        self.assertDeny("cat draft.md > docs/SPEC.MD")
+
+    def test_klk020_sed_fused_component_case_insensitive(self):
+        # _is_guarded_path_component の融合ケース（KLK-029）も
+        # basenameの大小を変えて拾えることを確認する
+        fused = "docs" + "/" + "spec" + "." + "md" + "/e"
+        self.assertTrue(guard._is_guarded_path_component(fused))
+        self.assertFalse(guard._is_guarded_path(fused))
+
     # --- KLK-030: sed_strip_literals のパス末尾 s/y 疑似境界探索の固定化
     # （設計書 docs/designs/KLK-030.md §4-1・チケット再現手順そのもの）。
     # `sed_strip_literals` はトップレベル走査で生の文字 `s`/`y` の出現位置を
