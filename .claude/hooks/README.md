@@ -59,3 +59,5 @@ exit 0 かつ無出力なら allow、JSON を出力すれば block。
 1. `_ticket_lib.py` の定数（`VALID_STATUS` / `REQUIRED_KEYS` / `RETRY_CAPS` / `LEGAL_TRANSITIONS`）を更新する
 2. 対応する定義（CLAUDE.md ステータス定義・orchestrator.md リトライカウンタ管理）も合わせて更新する
 3. `tests/` のテストを更新し、`python3 -m unittest discover -s tests -v` で全件パスを確認する
+
+上記手順は状態機械定数（`VALID_STATUS`等）専用であり、パス判定関数（`is_spec`／`_is_guarded_path`／`_is_guarded_path_component`／`is_ticket`／`is_project_spec`）の変更には適用されない（KLK-020）。パス判定関数を変更するときは: (1) 同種の判定が他のhook/CLIスクリプトに独立実装されていないか棚卸しする（過去に大小区別の欠陥が4箇所で独立発生した前例＝KLK-020）、(2) 共有できる判定は `_ticket_lib.py` の関数（例: `is_spec_basename`）へ集約する、(3) 変更対象・意図的に基準を分けたまま残す箇所の両方についてテストを追加し、`tests/`全件パスを確認する。
