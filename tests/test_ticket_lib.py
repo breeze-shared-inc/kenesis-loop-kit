@@ -568,6 +568,31 @@ class TestSpecDriftPureFunctions(unittest.TestCase):
         self.assertFalse(lib.is_spec_basename_fnmatch(None))
         self.assertFalse(lib.is_spec_basename_fnmatch(123))
 
+    # --- KLK-033: 否定文字クラス [!...] 下での .upper() 非単調性の是正
+    # （判定式を和集合形へ拡張。docs/designs/KLK-033.md §3 D2・§9 ① 参照）。
+    # KLK-032 の .upper() 単独形は pattern 全体を大文字化するため `[!s]` を
+    # `[!S]` へ変えてしまい、bash では docs/SPEC.md に一致する
+    # `[!s]PEC.md` を False と判定していた（KLK-032 レビュー Medium 3-1）。
+    # 当時は SHELL_EXPAND_PATHISH_RE が `!` を含まず本経路へ到達しなかった
+    # ため実害が無かったが、KLK-033 で `!` を追加して到達可能になったため
+    # 和集合形（そのままの大小での一致 ∪ 大文字正規化後の一致）が必須と
+    # なった。第1項が bash の照合意味論そのものであり健全性の要である。
+
+    def test_is_spec_basename_fnmatch_negated_class_monotonic_true(self):
+        # True系（非単調性の回帰検出器）: '[!x]PEC.md' は両項で真、
+        # '[!s]PEC.md' は和集合形の第1項でのみ真になる（.upper() 側は
+        # '[!S]PEC.md' へ変わり先頭の 'S' を除外して偽になる）。どちらも
+        # bash では実ファイル docs/SPEC.md に一致するため True でなければ
+        # 誤 allow になる
+        for pattern in ("[!x]PEC.md", "[!s]PEC.md"):
+            self.assertTrue(lib.is_spec_basename_fnmatch(pattern), pattern)
+
+    def test_is_spec_basename_fnmatch_negated_class_excluded_false(self):
+        # False系（和集合形が無条件 True になっていないことの固定）:
+        # '[!S]PEC.md' は先頭の大文字 'S' を除外するため bash でも
+        # docs/SPEC.md に一致しない。第1項・第2項ともに偽
+        self.assertFalse(lib.is_spec_basename_fnmatch("[!S]PEC.md"))
+
     # --- KLK-020 tester追加: is_project_spec の実装形（設計書§4のコード例と
     # 異なり rpartition("/") で dir/base に分解する形。implementation.md §2・
     # §5「設計からの逸脱」参照）が、設計書の制約
