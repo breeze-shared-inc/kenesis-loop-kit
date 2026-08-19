@@ -589,6 +589,107 @@ class TestRenderEvent(unittest.TestCase):
         })
         self.assertIn("[tool] Read(", rendered)
 
+    def test_assistant_subagent_tool_use_prefixed(self):
+        # サブエージェント発話（parent_tool_use_id実値・トップレベル）の
+        # tool_use表示に [subagent:{label}] 接頭辞が付く（KLK-008 AC1）
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "subagent_type": "investigator",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read",
+                 "input": {"file_path": "a.py"}},
+            ]},
+        })
+        self.assertTrue(
+            rendered.startswith("[subagent:investigator] [tool] Read("),
+            rendered)
+
+    def test_user_subagent_tool_result_prefixed(self):
+        rendered = batch_loop.render_event({
+            "type": "user",
+            "parent_tool_use_id": "toolu_x",
+            "subagent_type": "investigator",
+            "message": {"content": [
+                {"type": "tool_result", "content": "ok"},
+            ]},
+        })
+        self.assertEqual(rendered, "[subagent:investigator] [result] ok")
+
+    def test_assistant_parent_tool_use_id_null_not_prefixed(self):
+        # parent_tool_use_id: null の明示はメインエージェント扱い
+        # （truthy判定。キー存在判定だと全行へ誤接頭辞が付くスキーマへの防御）
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": None,
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {}},
+            ]},
+        })
+        self.assertTrue(rendered.startswith("[tool] "), rendered)
+
+    def test_assistant_subagent_fields_inside_message_prefixed(self):
+        # message内配置（防御側の第二候補）でも発火する（設計書§3 Unknown 1）
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "message": {
+                "parent_tool_use_id": "toolu_x",
+                "subagent_type": "investigator",
+                "content": [
+                    {"type": "tool_use", "name": "Read", "input": {}},
+                ],
+            },
+        })
+        self.assertTrue(
+            rendered.startswith("[subagent:investigator] [tool] Read("),
+            rendered)
+
+    def test_assistant_subagent_label_falls_back_to_name(self):
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "name": "reviewer",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {}},
+            ]},
+        })
+        self.assertTrue(rendered.startswith("[subagent:reviewer] "), rendered)
+
+    def test_assistant_subagent_label_placeholder(self):
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {}},
+            ]},
+        })
+        self.assertTrue(rendered.startswith("[subagent:subagent] "), rendered)
+
+    def test_assistant_subagent_multiple_blocks_each_prefixed(self):
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "subagent_type": "investigator",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {}},
+                {"type": "tool_use", "name": "Write", "input": {}},
+            ]},
+        })
+        lines = rendered.splitlines()
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertTrue(
+                line.startswith("[subagent:investigator] "), line)
+
+    def test_assistant_subagent_text_only_returns_none(self):
+        # text-only content は接頭辞対応後も表示対象を拡大しない（None のまま）
+        self.assertIsNone(batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "subagent_type": "investigator",
+            "message": {"content": [{"type": "text", "text": "hi"}]},
+        }))
+
     def test_subagent_task_started_with_text(self):
         rendered = batch_loop.render_event({
             "type": "task_started", "subagent_type": "investigator",
@@ -861,6 +962,20 @@ finish_ok'''
         self.assertEqual(rc, 0, out)
         self.assertIn("[subagent:investigator] 開始: 既存コード調査", out)
         self.assertIn("[subagent] 完了(completed): 調査完了", out)
+
+    def test_stream_json_subagent_utterance_prefixed(self):
+        # サブエージェント自身の発話（parent_tool_use_id同伴のassistant）の
+        # tool表示が [subagent:{label}] 接頭辞付きでレンダリングされること
+        # （KLK-008 AC1・AC4。実プロセス経由の疎通確認）
+        self.add_ticket("KLK-101")
+        scenario = ('''echo '{"type": "assistant", "parent_tool_use_id": "toolu_x", '''
+                    '''"subagent_type": "investigator", "message": {"content": '''
+                    '''[{"type": "tool_use", "name": "Read", "input": '''
+                    '''{"file_path": "a.py"}}]}}'\n'''
+                    'finish_ok')
+        rc, out = self.batch("KLK-101", scenario=scenario)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("[subagent:investigator] [tool] Read(", out)
 
     def test_stream_json_mid_line_flushed_before_next_output(self):
         # text_delta（改行なし）の連続後にプロセスが終了した場合、
