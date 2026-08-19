@@ -690,6 +690,16 @@ class TestRenderEvent(unittest.TestCase):
             "message": {"content": [{"type": "text", "text": "hi"}]},
         }))
 
+    def test_assistant_subagent_message_none_no_exception_returns_none(self):
+        # parent_tool_use_id が実値でも message が非dict（None）なら
+        # _subagent_prefix の isinstance ガードにより例外を出さず None を返す
+        # （設計書§9 重点エッジケース「message が非dict（例外なくNone）」）
+        self.assertIsNone(batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "message": None,
+        }))
+
     def test_subagent_task_started_with_text(self):
         rendered = batch_loop.render_event({
             "type": "task_started", "subagent_type": "investigator",
