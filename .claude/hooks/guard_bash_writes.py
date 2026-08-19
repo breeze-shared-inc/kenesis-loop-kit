@@ -330,10 +330,18 @@ bash と一致させる正規化（L0）を置く。
     **ブラケット式に対する現在の対応（読み手が「否定構文はすべて閉じた」と
     誤解しないための一覧）:** 対応済み＝`[abc]`・`[a-z]`（従来から fnmatch が
     解釈）／`[!...]`（KLK-033）／`[^...]`・`[^]abc]`（KLK-034 の正規化）／
-    `[[:class:]]`・`[[.sym.]]`（KLK-034 の過大近似）。**未対応（誤allow が
-    残る）**＝ブラケット式のメンバーに候補抽出の文字集合外の文字
+    `[[:class:]]`・`[[.sym.]]`（KLK-034 の過大近似）。**ただし「対応済み」は
+    いずれもブラケット式のメンバーが候補抽出の文字集合内の文字だけで
+    構成される場合に限る。** 否定クラス・POSIX クラス構文であっても集合外の
+    文字を1つ含めば候補が分断されて非検出（誤allow）に戻る（例:
+    `docs/[^+]PEC.md`・`docs/[^=]PEC.md`・`docs/[[=S=]]PEC.md` はいずれも bash
+    では `docs/SPEC.md` に一致するが hook は allow。reviewer 実測。
+    「否定構文は形さえ合えば閉じた」という読み方は誤り）。
+    **未対応（誤allow が残る）**＝ブラケット式のメンバーに候補抽出の文字集合外
+    の文字
     （`+`・`@`・`%`・`=`・`~`・`#`・空白・引用符・`$`・`(`・`)`・`|`・`&`・`;`）
-    を含む形（例: `docs/[+S]PEC.md` は bash では `docs/SPEC.md` に一致するが
+    を含む形（例: 肯定クラス `docs/[+S]PEC.md`・否定クラス `docs/[^+]PEC.md`・
+    等価クラス `docs/[[=S=]]PEC.md` は bash では `docs/SPEC.md` に一致するが
     候補が分断され非検出）。閉塞には文字集合の無制限拡張が必要で誤deny面が
     制御不能に広がるためスコープ外とした（docs/designs/KLK-033.md §3
     代替案(B) の判断を踏襲）。extglob（`!(...)`・`@(...)`・`?(...)`・
@@ -350,7 +358,23 @@ bash と一致させる正規化（L0）を置く。
     構造的に起こらない」という主張は**成立しない**（KLK-033 の reviewer
     レビュー §3-3）。リテラルの保護対象パスは `is_guarded_token`
     （`PATHISH_RE` は `^`／`:`／`!` を含まない）との OR で保たれるため、
-    影響は glob 成分を含む語に限られる。詳細は docs/designs/KLK-034.md 参照。
+    影響は glob 成分を含む語に限られる。
+    **KLK-034 差し戻し（reviewer指摘・ブラケット走査の超線形コスト）:**
+    新設した `_bash_bracket_to_fnmatch` は語の各 `[` について走査をやり直し、
+    終端 `]` の探索にも上限が無かったため、走査コストが語長に対して超線形
+    （実測 O(n^2.2〜2.4)）かつ無上限だった。`[` を大量に含む病的な単一トークン
+    （約2万字）で hook 単体の所要時間が PreToolUse の既定タイムアウト（60s）を
+    超え、README が明文化する fail-open 方針と組み合わさって、同一コマンド文中の
+    明確な deny 対象ごと**人間承認ゲートをすり抜ける**（KLK-018 の
+    RecursionError と同じ allow 方向へのフェイルオープンであり、より外側＝
+    ハーネス側で起きる形。reviewer 実測: 16,000字で37.0s・24,000字で118.7s）。
+    対策は KLK-018 の前例（`MAX_BRACE_CHAR_COUNT`）に倣う2段で、①
+    `guarded_paths_after_shell_expansion` の事前チェック
+    （`MAX_BRACKET_SCAN_WORK` = 候補中の `[` 出現数 × 候補長の上限。超過時は
+    **deny 方向**の既存フォールバックへ合流）② `_scan_bracket_expression` が
+    走査・終端探索の範囲を「pattern 中の最後の `]`」で打ち切る（戻り値を
+    変えない純粋なコスト削減）。詳細は docs/designs/KLK-034.md §3 D2・§6 と
+    docs/reports/KLK-034/implementation.md §Phase 4 参照。
   - **`#` コメントの本文は除去しない**（L0 参照）。したがってコメント内の
     `> path`・`rm` 等が証拠として拾われ誤denyになりうる（**旧版も同じ挙動
     のため回帰ではない**）。また、コメント内の未閉じクォート（`#'` 等）が
@@ -643,6 +667,31 @@ MAX_BRACE_COMBINATIONS = 512  # 直積展開の総数の上限（コスト爆発
 # 既存の固定テスト（隣接最大6個）を大きく上回り、かつ RecursionError の実測
 # 閾値（隣接997個）を大きく下回る値。
 MAX_BRACE_CHAR_COUNT = 50
+# ブラケット式の走査コストに対する軽量な事前上限（KLK-034 差し戻し・reviewer
+# 指摘。MAX_BRACE_CHAR_COUNT と同じ「重い走査へ入る前に候補の形だけで判定する
+# 定数時間の事前チェック」の系列）。_bash_bracket_to_fnmatch は語の各 `[` に
+# ついて _scan_bracket_expression を呼び直すため（閉じない `[` は1文字だけ
+# 進める）、走査の最悪反復回数は「候補中の `[` の出現数 × 候補長」に比例する。
+# 上限が無いと `[` を大量に含む病的な単一トークンで hook 単体の所要時間が
+# PreToolUse の既定タイムアウト（60s）を超え、.claude/hooks/README.md が
+# 明文化している fail-open 方針と組み合わさって**人間承認ゲートをすり抜ける**
+# （reviewer 実測: 16,000字で37.0s・24,000字で118.7s。同じコマンド文に明確な
+# deny 対象を含む形でも成立する。docs/reports/KLK-034/review.md §1）。
+# 値 20000 の根拠（implementer 実測。docs/reports/KLK-034/implementation.md
+# §Phase 4-2）:
+#   (a) 現実のコマンドは到達しない — 候補は
+#       SHELL_EXPAND_PATHISH_RE の文字集合が連続する1語であり、`(`／`)`／`|`／
+#       `+`／`$`／空白／引用符はいずれも候補を分断する。実測した現実形の最大は
+#       `grep -o '[[:alpha:]]'` 系・`tr -d '[:space:]'` 系・長い文字クラス連結
+#       正規化形でも積 1,000 未満（既存840件のテストでも最大 440）。
+#   (b) 上限到達時も十分速い — 上限直下の候補1個の走査は 2万反復（実測
+#       0.002s 未満）で、MAX_BRACE_COMBINATIONS(=512) 倍の直積と重なる最悪形
+#       でも実測 1.2s（60s タイムアウトに対して約50倍の余裕）。
+# 超過時は MAX_BRACE_CHAR_COUNT／MAX_BRACE_COMBINATIONS 超過時と**同じ
+# deny 方向のフォールバック**（候補全体を無条件に「保護対象パスの候補」と
+# みなす）へ合流する。正規化をスキップして照合を続ける（allow 方向）ことは
+# KLK-034 が閉じた誤allow の再導入になるため採らない。
+MAX_BRACKET_SCAN_WORK = 20000
 GUARDED_DIR_NAMES = ("active", "done")   # tickets/active・tickets/done の成分名
 GUARDED_FILENAME = "SPEC.md"
 GLOB_META_CHARS = frozenset("*?[")
@@ -1147,8 +1196,22 @@ def _scan_bracket_expression(pattern, open_index):
     POSIX クラス／照合要素／等価クラスを含むか) のタプル。対応する `]` が
     見つからない（＝ブラケット式ではない。bash もリテラル扱いする）場合は
     None を返す。走査規則は docs/designs/KLK-034.md §3 D2(b) を正とする。
+
+    走査範囲の上限（KLK-034 差し戻し・reviewer指摘）: 走査と POSIX クラス
+    終端（`:]`／`.]`／`=]`）の探索は、いずれも **pattern 中の最後の `]`**
+    より後ろへ進めない。ブラケット式は必ず `]` で閉じ、クラス要素の終端も
+    `]` を含むため、最後の `]` を越えた領域を走査しても成功し得ない
+    （＝この上限は戻り値を一切変えない純粋なコスト削減であり、`]` を含まない
+    語では定数時間で None を返す）。上限を与えない素朴な
+    `find(leader + "]", i + 2)` は語末まで無制限に探索し、終端 `]` を持たない
+    `[:` が多数並ぶ語で走査が超線形になっていた（reviewer 実測: 16,000字で
+    37.0s・24,000字で118.7s。docs/reports/KLK-034/review.md §1-1）。
+    走査回数そのものの上限は呼び出し元が持つ（`MAX_BRACKET_SCAN_WORK`）。
     """
     n = len(pattern)
+    last_close = pattern.rfind("]")
+    if last_close <= open_index:
+        return None     # 閉じる `]` が無い → ブラケット式ではない（定数時間）
     i = open_index + 1
     negation_index = None
     if i < n and pattern[i] in "!^":
@@ -1157,11 +1220,11 @@ def _scan_bracket_expression(pattern, open_index):
     if i < n and pattern[i] == "]":
         i += 1          # 否定マーカー直後の `]` はリテラルメンバー（規則3）
     has_class_element = False
-    while i < n:
+    while i <= last_close:
         if (pattern[i] == "[" and i + 1 < n
                 and pattern[i + 1] in BRACKET_CLASS_LEADERS):
             leader = pattern[i + 1]
-            end = pattern.find(leader + "]", i + 2)
+            end = pattern.find(leader + "]", i + 2, last_close + 1)
             if end != -1:
                 has_class_element = True
                 i = end + 2
@@ -1184,6 +1247,15 @@ def _bash_bracket_to_fnmatch(pattern):
     ② POSIX クラス／照合要素／等価クラスを含むブラケット式全体を `?` へ
        （過大近似＝deny 方向。一致を失わない）
     未閉塞ブラケットは変換しない（挙動不変）。
+
+    走査コスト（KLK-034 差し戻し・reviewer指摘）: 本関数は `[` を見つける
+    たびに _scan_bracket_expression を呼び直す（閉じない `[` では1文字しか
+    進まない）ため、最悪反復回数は「`[` の出現数 × 長さ」に比例する。
+    _scan_bracket_expression 側の走査範囲上限（pattern 中の最後の `]`）と、
+    呼び出し元 guarded_paths_after_shell_expansion の事前チェック
+    （`MAX_BRACKET_SCAN_WORK`。超過時は deny 方向へフォールバックし本関数を
+    呼ばない）の2段で有界にしている。**本関数自体は上限を持たない**ため、
+    新しい呼び出し元を追加する場合は同じ事前チェックを通すこと。
     """
     if "[" not in pattern:
         return pattern
@@ -1397,12 +1469,44 @@ def guarded_paths_after_shell_expansion(text):
       いずれも MAX_BRACE_COMBINATIONS 超過時と同じ「候補全体を無条件に
       保護対象パスの候補とみなす」分岐へ合流するため、新しい判定パスは
       増えない。
+
+    ブラケット走査コスト安全性（KLK-034 差し戻し・reviewer指摘）:
+      `_bash_bracket_to_fnmatch`／`_scan_bracket_expression` は候補中の各 `[`
+      について走査をやり直すため、上限が無いと走査が超線形になり、`[` を
+      大量に含む病的な単一トークン（約2万字）で hook 単体の所要時間が
+      PreToolUse の既定タイムアウト（60s）を超える。README が明文化する
+      fail-open 方針と組み合わさると、同一コマンド文中の明確な deny 対象
+      （`rm docs/SPEC.md`）ごと**人間承認ゲートをすり抜ける**（RecursionError
+      と同じ「allow 方向へのフェイルオープン」であり、より外側＝ハーネス側で
+      起きる形。reviewer 実測: 24,000字で118.7s）。対策は2段:
+        ① 候補の `[` 出現数 × 候補長が `MAX_BRACKET_SCAN_WORK` を超える場合、
+           `_guarded_paths_from_expanded` を一切呼ばずフォールバックへ倒す
+           （定数時間の事前チェック）。候補長・`[` 出現数はブレース展開結果と
+           区切り成分の長さ・出現数の上界であるため、この1回の判定で1候補
+           あたりの走査反復回数が有界になる。
+        ② `_scan_bracket_expression` 自身が走査・終端探索の範囲を「pattern
+           中の最後の `]`」で打ち切る（戻り値を変えない純粋なコスト削減。
+           `]` を含まない語は定数時間で棄却される）。
+      ①のフォールバックは MAX_BRACE_CHAR_COUNT／MAX_BRACE_COMBINATIONS 超過時と
+      同じ deny 方向の分岐であり、新しい判定パスは増えない。**正規化を
+      スキップして照合を続ける（allow 方向）フォールバックは採らない** —
+      KLK-034 が閉じた誤allow を再導入するため。
     """
     found = []
     for candidate in SHELL_EXPAND_PATHISH_RE.findall(text):
         if candidate.count("{") > MAX_BRACE_CHAR_COUNT:
             # 事前チェック（①）。隣接ブレース数がここを超える入力は
             # _brace_combination_count／expand_braces を一切呼ばない。
+            found.append(candidate)
+            continue
+        if candidate.count("[") * len(candidate) > MAX_BRACKET_SCAN_WORK:
+            # ブラケット走査コストの事前チェック（KLK-034 差し戻し）。
+            # `[` 出現数 × 候補長がここを超える入力は
+            # _guarded_paths_from_expanded（＝_bash_bracket_to_fnmatch）を
+            # 一切呼ばず、上の2分岐と同じ deny 方向のフォールバックへ倒す。
+            # 候補長は各ブレース展開結果・各区切り成分の長さの上界であり、
+            # `[` 出現数も同様に上界であるため、この1回の判定で
+            # 「1候補あたりの走査反復回数 ≦ MAX_BRACKET_SCAN_WORK」が成立する。
             found.append(candidate)
             continue
         try:
