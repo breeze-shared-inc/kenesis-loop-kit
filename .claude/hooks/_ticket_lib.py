@@ -4,6 +4,7 @@ stdlib のみ。外部依存なし。
 呼び出し側は「内部エラー時は allow（fail-open）」「検知した違反のみ deny（fail-closed）」
 という方針で利用する。
 """
+import fnmatch
 import hashlib
 import json
 import os
@@ -159,8 +160,25 @@ def spec_state_path(cwd):
 def is_spec_basename(name):
     """basename が大小を区別せず 'SPEC.md' と一致するか（KLK-020: is_spec /
     _is_guarded_path / _is_guarded_path_component / is_project_spec の
-    SPEC.md 判定を一本化する単一の正規化ポイント）。"""
+    SPEC.md 判定を一本化する単一の正規化ポイント）。glob パターン照合版は
+    is_spec_basename_fnmatch（KLK-032）。"""
     return isinstance(name, str) and name.upper() == "SPEC.MD"
+
+
+def is_spec_basename_fnmatch(pattern):
+    """glob パターン pattern が大小を区別せず 'SPEC.md' に fnmatch するか
+    （KLK-032: guard_bash_writes._guarded_paths_from_expanded の SPEC.md 側
+    glob 事前フィルタが大小区別を残す「5箇所目」だったことの是正。
+    is_spec_basename のパターン照合版であり、正規化方式（upper）を
+    is_spec_basename と同一に保つ単一の正規化ポイント）。
+
+    注意: リテラル文字を1文字も含まないパターン（'*'・'**' 等）にも True を
+    返す。呼び出し側の KLK-031 ゲート（has_literal_char。リテラル文字0の
+    成分では GUARDED_FILENAME を照合対象に加えない）が先に除外する前提で
+    あり、本関数は孤立ワイルドカードの扱いに関知しない（レイヤーを分離）。
+    """
+    return isinstance(pattern, str) and fnmatch.fnmatchcase(
+        "SPEC.MD", pattern.upper())
 
 
 def is_project_spec(path, cwd):
