@@ -1199,6 +1199,63 @@ finish_ok'''
 
 
 # ---------------------------------------------------------------------------
+# run_session の stdout pipe 明示 close（KLK-008 AC2。設計書§4(3)）
+# ---------------------------------------------------------------------------
+
+class TestRunSessionPipeClose(unittest.TestCase):
+    """run_session() の stdout pipe が全経路で finally により明示closeされること、
+    および close 時点で子プロセスが reap 済みであることを検証する。
+    実claudeは起動せず bash を直接子プロセスにする。Popen を実Popenのスパイで
+    ラップして proc インスタンスを捕捉し、復帰後に closed / poll() をアサートする。"""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="klk_sess_"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.captured = {}
+        real_popen = subprocess.Popen
+
+        def spy(*args, **kwargs):
+            proc = real_popen(*args, **kwargs)
+            self.captured["proc"] = proc
+            return proc
+
+        patcher = mock.patch.object(batch_loop.subprocess, "Popen",
+                                    side_effect=spy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_session(self, cmd, timeout_min):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            return batch_loop.run_session(cmd, self.root, timeout_min)
+
+    def test_normal_exit_closes_stdout_after_reap(self):
+        status, _elapsed = self.run_session(["bash", "-c", "echo hi"], 0)
+        proc = self.captured["proc"]
+        self.assertEqual(status, 0)
+        self.assertTrue(proc.stdout.closed)
+        self.assertIsNotNone(proc.poll())  # 子プロセスreap済み
+
+    def test_timeout_path_closes_stdout_after_reap(self):
+        status, _elapsed = self.run_session(["bash", "-c", "sleep 30"], 0.01)
+        proc = self.captured["proc"]
+        self.assertEqual(status, "timeout")
+        self.assertTrue(proc.stdout.closed)
+        self.assertIsNotNone(proc.poll())  # _terminate 経由でreap済み
+
+    def test_keyboard_interrupt_path_closes_stdout_after_reap(self):
+        # 1行echo後にsleepする子に対し、handle_stream_line で KeyboardInterrupt を
+        # 発生させて except → finally 経路を強制する
+        with mock.patch.object(batch_loop, "handle_stream_line",
+                               side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_session(["bash", "-c", "echo x; exec sleep 30"], 0)
+        proc = self.captured["proc"]
+        self.assertTrue(proc.stdout.closed)
+        self.assertIsNotNone(proc.poll())  # _terminate 経由でreap済み
+
+
+# ---------------------------------------------------------------------------
 # サブプロセス実行（fail-closed の import 停止・SIGINT）
 # ---------------------------------------------------------------------------
 

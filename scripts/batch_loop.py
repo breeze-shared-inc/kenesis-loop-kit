@@ -664,7 +664,10 @@ def _reader_thread(pipe, out_queue):
 def run_session(cmd, root, timeout_min):
     """claude セッションを1つ実行し (exit_status, elapsed_sec) を返す。
     stdoutはパイプで受けてリアルタイムに進捗表示する（stderrは継承のまま）。
-    exit_status はプロセス終了コード、タイムアウト時は文字列 "timeout"。"""
+    exit_status はプロセス終了コード、タイムアウト時は文字列 "timeout"。
+    stdout pipeは finally で必ず明示closeする（fd管理の多層防御。KLK-008 AC2）。
+    close順序は「子プロセスreap → リーダースレッドのEOF観測待ち（有限） →
+    メインスレッドからclose」を保証する（read中fdへの別スレッドcloseを構造的に回避）。"""
     start = time.monotonic()
     proc = subprocess.Popen(
         cmd, cwd=str(root), stdin=subprocess.DEVNULL,
@@ -696,10 +699,20 @@ def run_session(cmd, root, timeout_min):
             sys.stdout.write("\n")
             sys.stdout.flush()
         code = proc.wait()
+        return code, time.monotonic() - start
     except KeyboardInterrupt:
         _terminate(proc)
         raise
-    return code, time.monotonic() - start
+    finally:
+        # fd多層防御（KLK-008 AC2）: closeは必ず子プロセスreap後に行う。
+        # 正常経路は proc.wait()、timeout/SIGINT経路は _terminate() がreapを保証済み。
+        # 下のpoll判定は想定外例外で子が残った場合の防御（従来は子が残置されえた）。
+        if proc.poll() is None:
+            _terminate(proc)
+        # 子reap済 → writer側閉鎖 → readline がEOFで自然終了するため通常は即返る。
+        # join超過（病的ケース）でも最終手段としてcloseする（fdリーク放置より安全側）。
+        reader.join(timeout=5)
+        proc.stdout.close()
 
 
 # ---------------------------------------------------------------------------
