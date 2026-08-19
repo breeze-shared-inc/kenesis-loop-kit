@@ -527,6 +527,21 @@ def _brief(value, limit=200):
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+def _subagent_prefix(evt):
+    """assistant/userイベントがサブエージェント発話なら "[subagent:{label}] " を返す。
+    そうでなければ空文字。判定は parent_tool_use_id の実値（truthy）で行う
+    （メインエージェント側に parent_tool_use_id: null が明示されても誤発火しない）。
+    フィールド位置はトップレベルを第一候補、message内を防御的な第二候補として両対応する
+    （VS-2実測はprose記録のみで生JSONLがrepoに残っていないため。表示専用・フェイルセーフ）。"""
+    msg = evt.get("message")
+    msg = msg if isinstance(msg, dict) else {}
+    if not (evt.get("parent_tool_use_id") or msg.get("parent_tool_use_id")):
+        return ""
+    label = (evt.get("subagent_type") or msg.get("subagent_type")
+             or evt.get("name") or "subagent")
+    return "[subagent:%s] " % label
+
+
 def render_event(evt):
     """stream-jsonの1行(dict)を人間可読な進捗表現へ変換する。
     戻り値: 通常行(str) / 継続出力用("TEXT", text)タプル / 表示不要(None)。
@@ -535,7 +550,9 @@ def render_event(evt):
     校正済み: 実際のイベントは type="task_started"等ではなく type="system",
     subtype="task_started"/"task_notification" で届く（設計書§4-1確定diffの想定と異なり、
     トップレベルtype一致・parent_tool_use_id保持のフォールバック分岐は現行APIでは
-    到達しないが、将来のスキーマ変化に備えた防御として残す）。"""
+    到達しないが、将来のスキーマ変化に備えた防御として残す）。
+    サブエージェント発話（parent_tool_use_id同伴のassistant/user）は各表示行へ
+    `[subagent:{label}] ` 接頭辞を付けてメインエージェントと区別する（KLK-008）。"""
     etype = evt.get("type")
 
     if etype == "system":
@@ -563,6 +580,7 @@ def render_event(evt):
         return None
 
     if etype in ("assistant", "user"):
+        prefix = _subagent_prefix(evt)  # tool_use/tool_result表示より先に評価（KLK-008 AC1）
         content = ((evt.get("message") or {}).get("content")) or []
         if not isinstance(content, list):
             return None
@@ -572,10 +590,10 @@ def render_event(evt):
                 continue
             btype = block.get("type")
             if btype == "tool_use":
-                lines.append("[tool] %s(%s)" % (
+                lines.append(prefix + "[tool] %s(%s)" % (
                     block.get("name", "?"), _brief(block.get("input", {}))))
             elif btype == "tool_result":
-                lines.append("[result] %s" % _brief(block.get("content", "")))
+                lines.append(prefix + "[result] %s" % _brief(block.get("content", "")))
         return "\n".join(lines) if lines else None
 
     if etype in ("task_started", "task_notification") or "parent_tool_use_id" in evt:
@@ -646,7 +664,10 @@ def _reader_thread(pipe, out_queue):
 def run_session(cmd, root, timeout_min):
     """claude セッションを1つ実行し (exit_status, elapsed_sec) を返す。
     stdoutはパイプで受けてリアルタイムに進捗表示する（stderrは継承のまま）。
-    exit_status はプロセス終了コード、タイムアウト時は文字列 "timeout"。"""
+    exit_status はプロセス終了コード、タイムアウト時は文字列 "timeout"。
+    stdout pipeは finally で必ず明示closeする（fd管理の多層防御。KLK-008 AC2）。
+    close順序は「子プロセスreap → リーダースレッドのEOF観測待ち（有限） →
+    メインスレッドからclose」を保証する（read中fdへの別スレッドcloseを構造的に回避）。"""
     start = time.monotonic()
     proc = subprocess.Popen(
         cmd, cwd=str(root), stdin=subprocess.DEVNULL,
@@ -678,10 +699,20 @@ def run_session(cmd, root, timeout_min):
             sys.stdout.write("\n")
             sys.stdout.flush()
         code = proc.wait()
+        return code, time.monotonic() - start
     except KeyboardInterrupt:
         _terminate(proc)
         raise
-    return code, time.monotonic() - start
+    finally:
+        # fd多層防御（KLK-008 AC2）: closeは必ず子プロセスreap後に行う。
+        # 正常経路は proc.wait()、timeout/SIGINT経路は _terminate() がreapを保証済み。
+        # 下のpoll判定は想定外例外で子が残った場合の防御（従来は子が残置されえた）。
+        if proc.poll() is None:
+            _terminate(proc)
+        # 子reap済 → writer側閉鎖 → readline がEOFで自然終了するため通常は即返る。
+        # join超過（病的ケース）でも最終手段としてcloseする（fdリーク放置より安全側）。
+        reader.join(timeout=5)
+        proc.stdout.close()
 
 
 # ---------------------------------------------------------------------------

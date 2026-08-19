@@ -589,6 +589,117 @@ class TestRenderEvent(unittest.TestCase):
         })
         self.assertIn("[tool] Read(", rendered)
 
+    def test_assistant_subagent_tool_use_prefixed(self):
+        # サブエージェント発話（parent_tool_use_id実値・トップレベル）の
+        # tool_use表示に [subagent:{label}] 接頭辞が付く（KLK-008 AC1）
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "subagent_type": "investigator",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read",
+                 "input": {"file_path": "a.py"}},
+            ]},
+        })
+        self.assertTrue(
+            rendered.startswith("[subagent:investigator] [tool] Read("),
+            rendered)
+
+    def test_user_subagent_tool_result_prefixed(self):
+        rendered = batch_loop.render_event({
+            "type": "user",
+            "parent_tool_use_id": "toolu_x",
+            "subagent_type": "investigator",
+            "message": {"content": [
+                {"type": "tool_result", "content": "ok"},
+            ]},
+        })
+        self.assertEqual(rendered, "[subagent:investigator] [result] ok")
+
+    def test_assistant_parent_tool_use_id_null_not_prefixed(self):
+        # parent_tool_use_id: null の明示はメインエージェント扱い
+        # （truthy判定。キー存在判定だと全行へ誤接頭辞が付くスキーマへの防御）
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": None,
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {}},
+            ]},
+        })
+        self.assertTrue(rendered.startswith("[tool] "), rendered)
+
+    def test_assistant_subagent_fields_inside_message_prefixed(self):
+        # message内配置（防御側の第二候補）でも発火する（設計書§3 Unknown 1）
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "message": {
+                "parent_tool_use_id": "toolu_x",
+                "subagent_type": "investigator",
+                "content": [
+                    {"type": "tool_use", "name": "Read", "input": {}},
+                ],
+            },
+        })
+        self.assertTrue(
+            rendered.startswith("[subagent:investigator] [tool] Read("),
+            rendered)
+
+    def test_assistant_subagent_label_falls_back_to_name(self):
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "name": "reviewer",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {}},
+            ]},
+        })
+        self.assertTrue(rendered.startswith("[subagent:reviewer] "), rendered)
+
+    def test_assistant_subagent_label_placeholder(self):
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {}},
+            ]},
+        })
+        self.assertTrue(rendered.startswith("[subagent:subagent] "), rendered)
+
+    def test_assistant_subagent_multiple_blocks_each_prefixed(self):
+        rendered = batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "subagent_type": "investigator",
+            "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {}},
+                {"type": "tool_use", "name": "Write", "input": {}},
+            ]},
+        })
+        lines = rendered.splitlines()
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertTrue(
+                line.startswith("[subagent:investigator] "), line)
+
+    def test_assistant_subagent_text_only_returns_none(self):
+        # text-only content は接頭辞対応後も表示対象を拡大しない（None のまま）
+        self.assertIsNone(batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "subagent_type": "investigator",
+            "message": {"content": [{"type": "text", "text": "hi"}]},
+        }))
+
+    def test_assistant_subagent_message_none_no_exception_returns_none(self):
+        # parent_tool_use_id が実値でも message が非dict（None）なら
+        # _subagent_prefix の isinstance ガードにより例外を出さず None を返す
+        # （設計書§9 重点エッジケース「message が非dict（例外なくNone）」）
+        self.assertIsNone(batch_loop.render_event({
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_x",
+            "message": None,
+        }))
+
     def test_subagent_task_started_with_text(self):
         rendered = batch_loop.render_event({
             "type": "task_started", "subagent_type": "investigator",
@@ -862,6 +973,20 @@ finish_ok'''
         self.assertIn("[subagent:investigator] 開始: 既存コード調査", out)
         self.assertIn("[subagent] 完了(completed): 調査完了", out)
 
+    def test_stream_json_subagent_utterance_prefixed(self):
+        # サブエージェント自身の発話（parent_tool_use_id同伴のassistant）の
+        # tool表示が [subagent:{label}] 接頭辞付きでレンダリングされること
+        # （KLK-008 AC1・AC4。実プロセス経由の疎通確認）
+        self.add_ticket("KLK-101")
+        scenario = ('''echo '{"type": "assistant", "parent_tool_use_id": "toolu_x", '''
+                    '''"subagent_type": "investigator", "message": {"content": '''
+                    '''[{"type": "tool_use", "name": "Read", "input": '''
+                    '''{"file_path": "a.py"}}]}}'\n'''
+                    'finish_ok')
+        rc, out = self.batch("KLK-101", scenario=scenario)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("[subagent:investigator] [tool] Read(", out)
+
     def test_stream_json_mid_line_flushed_before_next_output(self):
         # text_delta（改行なし）の連続後にプロセスが終了した場合、
         # 次の表示行の前に改行が補われること（mid_line状態の解消）
@@ -1081,6 +1206,63 @@ finish_ok'''
             rc, out = self.run_main(["--yes", "KLK-101"])
         self.assertEqual(rc, 1)
         self.assertIn("想定外の内部エラー", out)
+
+
+# ---------------------------------------------------------------------------
+# run_session の stdout pipe 明示 close（KLK-008 AC2。設計書§4(3)）
+# ---------------------------------------------------------------------------
+
+class TestRunSessionPipeClose(unittest.TestCase):
+    """run_session() の stdout pipe が全経路で finally により明示closeされること、
+    および close 時点で子プロセスが reap 済みであることを検証する。
+    実claudeは起動せず bash を直接子プロセスにする。Popen を実Popenのスパイで
+    ラップして proc インスタンスを捕捉し、復帰後に closed / poll() をアサートする。"""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="klk_sess_"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.captured = {}
+        real_popen = subprocess.Popen
+
+        def spy(*args, **kwargs):
+            proc = real_popen(*args, **kwargs)
+            self.captured["proc"] = proc
+            return proc
+
+        patcher = mock.patch.object(batch_loop.subprocess, "Popen",
+                                    side_effect=spy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_session(self, cmd, timeout_min):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            return batch_loop.run_session(cmd, self.root, timeout_min)
+
+    def test_normal_exit_closes_stdout_after_reap(self):
+        status, _elapsed = self.run_session(["bash", "-c", "echo hi"], 0)
+        proc = self.captured["proc"]
+        self.assertEqual(status, 0)
+        self.assertTrue(proc.stdout.closed)
+        self.assertIsNotNone(proc.poll())  # 子プロセスreap済み
+
+    def test_timeout_path_closes_stdout_after_reap(self):
+        status, _elapsed = self.run_session(["bash", "-c", "sleep 30"], 0.01)
+        proc = self.captured["proc"]
+        self.assertEqual(status, "timeout")
+        self.assertTrue(proc.stdout.closed)
+        self.assertIsNotNone(proc.poll())  # _terminate 経由でreap済み
+
+    def test_keyboard_interrupt_path_closes_stdout_after_reap(self):
+        # 1行echo後にsleepする子に対し、handle_stream_line で KeyboardInterrupt を
+        # 発生させて except → finally 経路を強制する
+        with mock.patch.object(batch_loop, "handle_stream_line",
+                               side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_session(["bash", "-c", "echo x; exec sleep 30"], 0)
+        proc = self.captured["proc"]
+        self.assertTrue(proc.stdout.closed)
+        self.assertIsNotNone(proc.poll())  # _terminate 経由でreap済み
 
 
 # ---------------------------------------------------------------------------
