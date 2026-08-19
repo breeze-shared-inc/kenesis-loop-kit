@@ -1,6 +1,8 @@
 """guard_bash_writes.py（PreToolUse・Bash）のテスト"""
 import sys
 import os
+import fnmatch
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -3636,6 +3638,159 @@ class TestGuardBashWrites(unittest.TestCase):
             "rm docs/" + "[[:upper:]]" * 4 + ".md")
         self.assertDeny(
             "rm tickets/" + "[[:alpha:]]" * 6 + "/APP-001.md")
+
+    # --- KLK-034 差し戻し（reviewer指摘・docs/reports/KLK-034/review.md §1・§7）:
+    # ブラケット走査コストの上限（MAX_BRACKET_SCAN_WORK）とその境界、および
+    # 未固定だった意味論の境界形 ------------------------------------------------
+    #
+    # 差し戻しの主因: 新設した _bash_bracket_to_fnmatch は語の各 `[` について
+    # _scan_bracket_expression を呼び直し（閉じない `[` は1文字しか進まない）、
+    # 終端 `]` の探索にも上限が無かったため、走査コストが語長に対して超線形
+    # （reviewer 実測 O(n^2.2〜2.4)）かつ無上限だった。単一トークン16,000字で
+    # 37.0s・24,000字で118.7s（旧実装は同入力で0.02s以下）。PreToolUse の既定
+    # タイムアウト（60s）と .claude/hooks/README.md の fail-open 方針が重なると、
+    # `rm <病的語> docs/SPEC.md` のような形が hook の deny を出す前に打ち切られ
+    # **人間承認ゲートをすり抜ける**（KLK-018 の RecursionError と同じ allow
+    # 方向へのフェイルオープン）。対策は KLK-018 の MAX_BRACE_CHAR_COUNT に
+    # 倣う2段（①候補単位の事前チェック＋deny 方向フォールバック
+    # ②_scan_bracket_expression の走査範囲を「pattern 中の最後の `]`」で打ち切り）。
+
+    def test_klk034_bracket_scan_work_within_limit_precision(self):
+        # 差し戻し対応（上限境界の内側）: 積（`[` 出現数 × 候補長）が上限直下の
+        # 病的な語は従来どおり正規化・照合され、判定精度が保たれる
+        # （KLK-018 test_klk018_brace_*_within_limit_allow と同型の「上限内は
+        # フォールバックしない」側の固定）。20 × 999 = 19,980 ≦ 20,000
+        word = "[" * 20 + "a" * 979
+        self.assertLessEqual(word.count("[") * len(word),
+                             guard.MAX_BRACKET_SCAN_WORK,
+                             "上限直下の語であること（上限変更時は再導出）")
+        # 病的だが保護対象に一致しない語は allow のまま（フォールバック未発動）
+        self.assertAllow("rm " + word)
+        # 同一コマンド文に明確な deny 対象があれば従来どおり deny（マスクなし）
+        self.assertDeny("rm " + word + " docs/SPEC.md")
+        # 上限直下の語が先行しても、後続のキャレット否定クラスの判定精度
+        # （一致する形は deny・一致しない形は allow）が変わらないことの固定
+        self.assertDeny("rm " + word + " docs/[^x]PEC.md")
+        self.assertAllow("rm " + word + " docs/[^S]PEC.md")
+
+    def test_klk034_bracket_scan_work_exceeded_denies_conservatively(self):
+        # 差し戻し対応（上限境界の外側）: 積が上限を超える語は
+        # _bash_bracket_to_fnmatch を一切呼ばず、MAX_BRACE_CHAR_COUNT／
+        # MAX_BRACE_COMBINATIONS 超過時と同じ deny 方向のフォールバック
+        # （候補全体を無条件に「保護対象パスの候補」とみなす）へ倒れる。
+        # **フォールバックの向きが deny であることがこのテストの要点**
+        # （正規化をスキップして照合を続ける allow 方向のフォールバックは
+        # KLK-034 が閉じた誤allow を再導入するため採らない）。
+        # 21 × 1,000 = 21,000 > 20,000（上記 within_limit と1文字だけ違う）
+        word = "[" * 21 + "a" * 979
+        self.assertGreater(word.count("[") * len(word),
+                           guard.MAX_BRACKET_SCAN_WORK,
+                           "上限超過の語であること（上限変更時は再導出）")
+        self.assertDeny("rm " + word)
+        self.assertDeny("echo x > " + word)
+
+    def test_klk034_bracket_scan_work_exceeded_allow_symmetry(self):
+        # 差し戻し対応: 同じ上限超過の語でも先頭コマンドが読み取り専用（cat）
+        # なら allow のまま。フォールバックは「保護対象パスの候補とみなす」
+        # だけであり書き込み判定自体を変えないことの対照ケース
+        # （KLK-018 test_klk018_adjacent_braces_regression_allow_symmetry と同型）
+        word = "[" * 21 + "a" * 979
+        self.assertAllow("cat " + word)
+
+    def test_klk034_bracket_scan_work_exceeded_does_not_mask_existing_deny(self):
+        # 差し戻し対応（reviewer指摘の核心シナリオ）: 上限超過の病的語を既存の
+        # 明確な deny 対象より**先**に置いても deny が維持される。語順を先に
+        # するのは mentions_guarded_expanded の any() が短絡して病的語を評価
+        # しない偽の pass を避けるため（KLK-018
+        # test_klk018_adjacent_braces_regression_does_not_mask_existing_deny_
+        # blob_first と同じ理由）
+        word = "[" * 21 + "a" * 979
+        self.assertDeny("rm " + word + " tickets/active/APP-001.md")
+
+    def test_klk034_bracket_scan_cost_regression_end_to_end(self):
+        # 差し戻し対応（reviewer が Critical として実測した形そのもの）:
+        # `rm <病的語> docs/SPEC.md` は判定としては修正前も DENY だったが、
+        # 所要時間が 24,000字で **118.72s**（16,000字で38.33s）に達し、
+        # PreToolUse の既定タイムアウト（60s）を超えて fail-open 側へ抜ける
+        # 経路になっていた（＝deny の内容ではなく deny が返る前に打ち切られる
+        # ことが欠陥）。したがって固定すべきは「deny であること」と
+        # 「時間内に返ること」の両方である。hook 本体のサブプロセス起動
+        # （約0.2〜0.4s）を含めた実測は修正後 0.4s 未満。しきい値15.0sは
+        # 修正前の実測値（38s／118s）を確実に下回り、かつ通常の実行時間に
+        # 対して十分な余裕がある値
+        word = "[:" * 12000          # 24,000字の単一トークン（reviewer実測形）
+        start = time.perf_counter()
+        self.assertDeny("rm " + word + " docs/SPEC.md")
+        elapsed = time.perf_counter() - start
+        self.assertLess(elapsed, 15.0,
+                        "走査コスト回帰（end-to-end）: %.3fs（上限15.0s）"
+                        % elapsed)
+
+    def test_klk034_bracket_scan_cost_regression_unit(self):
+        # 差し戻し対応（コスト回帰の検出器。reviewer High Risks 3）: reviewer が
+        # Critical として実測した入力そのものを単体で走らせ、所要時間の上限を
+        # 固定する。修正前は 16,000字=37.0s・24,000字=118.7s（end-to-end）で
+        # あり、修正後は実測 0.002s／0.004s。しきい値5.0sは実測値の
+        # 1,000倍以上の余裕を取っており（負荷の高いCIでも誤検出しない）、
+        # 一方で超線形コストの再導入（数十秒規模）は確実に捕捉する。
+        # 期待値は「非変換（恒等）」— 終端 `]` を持たないため bash も glob
+        # 展開せずリテラル扱いする形である（設計書§3 D4）
+        for k in (8000, 12000):
+            pattern = "[:" * k
+            start = time.perf_counter()
+            self.assertEqual(guard._bash_bracket_to_fnmatch(pattern), pattern,
+                             "未閉塞 → 恒等: len=%d" % len(pattern))
+            elapsed = time.perf_counter() - start
+            self.assertLess(elapsed, 5.0,
+                            "走査コスト回帰: len=%d が %.3fs（上限5.0s）"
+                            % (len(pattern), elapsed))
+
+    def test_klk034_bracket_with_slash_member_allow(self):
+        # 差し戻し対応（review.md §7-2）: ブラケット式のメンバーに `/` を含む形は
+        # **bash も保護対象に一致させない**ため allow が正しい。bash は
+        # pathname expansion で語を先に `/` で分割し、各成分ごとにパターンを
+        # 照合するため、ブラケット式は `/` をまたげない（reviewer が実 bash の
+        # 展開で確認: いずれも語がリテラルのまま出力される。implementer も
+        # mktemp 配下の空 docs/SPEC.md・tickets/active/APP-001.md に対する
+        # echo 展開で再確認済み。2026-08-19）。
+        # これは設計書§3 D2(a)「`/` 区切り成分が意味論的に正しい最小の適用
+        # 単位」という中核前提そのものの実証であり、正規化を成分単位ではなく
+        # 候補全体に適用する実装へ変えるとこの allow が deny へ転じる
+        self.assertAllow("rm docs/[^/]PEC.md")
+        self.assertAllow("rm docs/[/S]PEC.md")
+        self.assertAllow("rm tickets/[^/]ctive/APP-001.md")
+
+    def test_klk034_negated_class_outside_charset_known_limitation_allow(self):
+        # 差し戻し対応（review.md §7-3・§3-2）:
+        # test_klk034_bracket_member_outside_charset_known_limitation_allow は
+        # 肯定クラス（`[+S]` 等）のみを対象にしていたため、**否定クラス・
+        # 等価クラスでも同じ限界が残る**ことが固定されていなかった。以下は
+        # いずれも bash が docs/SPEC.md に一致させる（implementer が mktemp
+        # 配下で echo 展開を実測。2026-08-19）が、`=`／`+` が候補抽出の文字集合
+        # 外であるため候補が分断され hook は allow のまま＝既知の限界。
+        # 将来この限界を閉じる変更が入れば本テストが失敗し検出器として働く
+        for command in ("rm docs/[[=S=]]PEC.md",
+                        "rm docs/[^=]PEC.md",
+                        "rm docs/[^+]PEC.md"):
+            self.assertAllow(command)
+
+    def test_klk034_bracket_semantics_divergence_unit(self):
+        # 差し戻し対応（review.md §7-4・§3-1）: bash と fnmatch の意味論が
+        # 乖離する唯一の「一致を失う」形の現状固定。bash は `[:` を文字クラス
+        # 開始として読み進めてメンバー集合から外すが、正規化後のパターンを
+        # 解釈する Python の fnmatch は `[` と `:` を否定クラスのメンバーとして
+        # 扱うため、**bash が一致させる `[` に対して fnmatch は一致しない**
+        # （Python 側が bash より狭い＝allow 方向）。実害は無い — 失う文字は
+        # `[` のみで、保護対象名（SPEC.md・active・done）に `[` は含まれない
+        # （reviewer が19,607ガジェット・84,204組の総当たりで「保護対象名に
+        # 出現する文字で一致を失う形は0件」を実測）。`[![:]` は KLK-033 の
+        # `!` 追加時点から存在し、KLK-034 は `[^[:]` を同じ形へ正規化して
+        # 継承したにすぎない。この乖離を閉じる変更を将来入れる場合の起点として
+        # 現状を固定する
+        self.assertEqual(guard._bash_bracket_to_fnmatch("[^[:]"), "[![:]")
+        self.assertEqual(guard._bash_bracket_to_fnmatch("[![:]"), "[![:]")
+        self.assertFalse(fnmatch.fnmatchcase("[", "[![:]"),
+                         "fnmatch は `[` に一致しない（bash は一致させる）")
 
     # --- KLK-018: MAX_BRACE_DEPTH／MAX_BRACE_COMBINATIONS 上限到達時の
     # フォールバック分岐（設計書 §4-1・§6。tester申し送り＝implementerの
