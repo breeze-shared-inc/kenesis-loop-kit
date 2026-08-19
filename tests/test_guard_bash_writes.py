@@ -3569,6 +3569,74 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertAllow("rm a{1,2}^b{3,4}.txt")
         self.assertAllow("rm a{1,2}:b{3,4}.txt")
 
+    # --- KLK-034（tester追加）: _bash_bracket_to_fnmatch の境界・既知の限界の
+    # 現状挙動固定・POSIXクラス過大近似の長さ一致検出器 ---------------------
+    # 設計書§9①の机上トレース12形はimplementerが固定済み。以下はtesterが
+    # 設計書§3 D3「既知の限界」対応表・§6リスク表・D2(b)走査規則から追加で
+    # 洗い出した境界形で、実測（本ワークツリーで python3 直呼び。2026-08-19）
+    # に基づき挙動を固定する。いずれも既存19メソッドと重複しない。
+
+    def test_klk034_bracket_normalizer_boundary_unit(self):
+        # tester追加（AC2境界）: _scan_bracket_expression の終端探索・規則3・
+        # 規則5の境界形。実測値（guard._bash_bracket_to_fnmatch 直呼び）を
+        # 根拠コメント付きで固定する。
+        for pattern, expected in (
+                # 空ブラケット: `[` の直後の `]` は規則3でリテラルメンバーに
+                # なり、以降に終端 `]` が無いため未閉塞 → 非変換
+                ("[]", "[]"),
+                # `[]]`: 先頭の `]` はリテラルメンバー（規則3は否定マーカーの
+                # 有無に関係なく "`[` または `[!`／`[^` の直後" に適用される）。
+                # 2文字目の `]` が終端。否定なし・POSIXクラスなしのため非変換
+                ("[]]", "[]]"),
+                # `[^]]`: 否定マーカー直後の `]` がリテラルメンバー、次の `]`
+                # が終端 → `^` のみ `!` へ位置依存置換
+                ("[^]]", "[!]]"),
+                # 否定マーカー＋リテラルメンバー `]` のみで構成され、末尾に
+                # 通常メンバーを挟んで終端する形（`[a[^]one` の反例より単純な
+                # 内部のみの形。末尾に何も続かない）
+                ("[^]...]", "[!]...]"),
+                # 隣接する2つの否定クラスはそれぞれ独立に走査・変換される
+                # （前のクラスの終端 `]` の直後から次のクラスの走査を再開する
+                # ため、境界をまたいで誤って結合しない）
+                ("[^abc][^def]", "[!abc][!def]"),
+                # ブラケット式内部に `/` を含む形（D2(a)の前提どおり、実際の
+                # 呼び出しは `/` 区切り成分単位で行われるため単体では到達しない
+                # 組み合わせだが、関数自体は `/` を通常メンバーとして扱い
+                # クラッシュしない。位置依存置換は `/` の有無に関知しない）
+                ("[a/b]", "[a/b]"),
+                ("[^a/b]", "[!a/b]")):
+            self.assertEqual(guard._bash_bracket_to_fnmatch(pattern), expected,
+                             "normalize boundary: %s" % pattern)
+
+    def test_klk034_bracket_member_outside_charset_known_limitation_allow(self):
+        # tester追加（設計書§3 D3対応表・§4-4-3docstring「既知の限界」・
+        # AC3の閉塞範囲明示の裏付け）: ブラケットメンバーに候補抽出の文字集合
+        # 外の文字（`+`・`@`・`%`・`~`・`#`）を含む形は、SHELL_EXPAND_PATHISH_RE
+        # の段階で候補が分断されるため本チケットでも非検出のまま残る
+        # （bashでは docs/SPEC.md に一致するが誤allowが既知の限界として残る）。
+        # 現状挙動をallowとして固定することで、将来この限界を閉塞する変更が
+        # 入った際にこのテストが失敗し検出器として働く。
+        for command in ("rm docs/[+S]PEC.md",
+                        "rm docs/[@S]PEC.md",
+                        "rm docs/[%S]PEC.md",
+                        "rm docs/[~S]PEC.md",
+                        "rm docs/[#S]PEC.md"):
+            self.assertAllow(command)
+
+    def test_klk034_posix_class_only_component_length_match_deny(self):
+        # tester追加（設計書§6リスク表「POSIXクラスのみで構成される成分が
+        # 長さ一致で保護対象名に一致する形〔tickets/[[:alpha:]]×6/…〕」の
+        # 実証）: POSIXクラスを `?` へ過大近似する方式は、成分がリテラル文字を
+        # 一切含まずPOSIXクラスの繰り返しのみで構成されていても、繰り返し数が
+        # 保護対象名の文字数と一致すれば deny する（`?` は任意の1文字に対する
+        # 述語であるため）。向きはdeny=安全側（§3 D3の健全性根拠と同じ）。
+        # SPEC.md側は "SPEC" の4文字 + リテラル ".md" で計7文字、
+        # active側は6文字。
+        self.assertDeny(
+            "rm docs/" + "[[:upper:]]" * 4 + ".md")
+        self.assertDeny(
+            "rm tickets/" + "[[:alpha:]]" * 6 + "/APP-001.md")
+
     # --- KLK-018: MAX_BRACE_DEPTH／MAX_BRACE_COMBINATIONS 上限到達時の
     # フォールバック分岐（設計書 §4-1・§6。tester申し送り＝implementerの
     # Remaining Risksで境界値テスト未追加と明記されていた項目）。
