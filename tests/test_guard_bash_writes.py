@@ -3353,6 +3353,222 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertAllow("rm tickets/activ!e/APP-001.md")
         self.assertAllow("rm tickets/don!e/APP-001.md")
 
+    # --- KLK-034: [^...]・[[:class:]] のpathish分断／方言差による誤allow是正 ---
+    # 設計書 docs/designs/KLK-034.md §9 AC1〜AC5・テスト観点①〜⑥。
+    # 欠陥は2層あった。① 候補抽出正規表現 SHELL_EXPAND_PATHISH_RE の文字集合に
+    # `^`／`:` が無いため、bash が否定として解釈する `[^...]` と bash が展開する
+    # POSIX 文字クラス `[[:class:]]` を含む語が分断され（docs/[^x]PEC.md →
+    # 'docs/[' ＋ 'x]PEC.md'、docs/[[:upper:]]PEC.md → 'docs/[[' ＋ 'upper' ＋
+    # ']]PEC.md'）非検出になっていた。② 分断を解消しても Python fnmatch は
+    # クラス内先頭の `^` をリテラルとしてエスケープし（`[^x]` は「`^` または
+    # `x`」の肯定クラスになる）、POSIX クラス構文を特別扱いしないため依然
+    # 不一致だった。いずれも誤りの向きは allow 方向=危険（KLK-032／KLK-033 と
+    # 同じ向き）。修正は (1) 文字集合へ `^`／`:` を追加、(2) 照合へ渡す成分を
+    # _bash_bracket_to_fnmatch で正規化（`[^` → `[!` の位置依存置換と、POSIX
+    # クラス／照合要素を含むブラケット式全体の `?` への過大近似）の2点で、
+    # GLOB_META_CHARS・PATHISH_RE・KLK-031 の has_literal_char ゲート・
+    # is_spec_basename_fnmatch の判定式はいずれも無変更。
+
+    def test_klk034_bracket_normalizer_unit(self):
+        # ①（AC2・AC3）: 正規化ヘルパーの入出力を設計書§4-2の机上トレース
+        # 12形すべてで固定する（原因レイヤー第2層の直接固定）。
+        # **最重要は ("[a[^]one") == "[a[^]one"** — これは `[` をリテラル
+        # メンバーに含む合法な肯定クラスであり、素朴な部分文字列置換
+        # （re.sub(r"\[\^", "[!")）だと "[a[!]one" になって「`^one` に一致」
+        # から「`!one` に一致」へ**意味が反転する**（investigation.md §3-2 の
+        # 実測反例）。end-to-end では正規化前後どちらも SPEC.md に不一致に
+        # なるため検出できず、この単体テストが唯一の検出器である
+        for pattern, expected in (
+                ("[^x]PEC.md", "[!x]PEC.md"),       # 否定マーカーが位置1
+                ("[!x]PEC.md", "[!x]PEC.md"),       # 冪等（`!`→`!`）
+                ("[^]abc]one", "[!]abc]one"),       # `^` 直後の `]` はメンバー
+                ("[^^]", "[!^]"),                   # 述語は不変
+                ("[a[^]one", "[a[^]one"),           # 意味反転の防止（最重要）
+                ("[[:upper:]]PEC.md", "?PEC.md"),   # POSIXクラス→過大近似
+                ("[^[:digit:]]PEC.md", "?PEC.md"),  # 過大近似が否定より優先
+                ("[[.S.]]PEC.md", "?PEC.md"),       # 照合要素
+                ("[:space:]", "[:space:]"),         # 単一ブラケットは非POSIX
+                ("[A-Z]PEC.md", "[A-Z]PEC.md"),     # 範囲は従来どおり
+                ("[^x", "[^x"),                     # 未閉塞 → 非変換
+                ("docs", "docs")):                  # `[` 無し → 早期return
+            self.assertEqual(guard._bash_bracket_to_fnmatch(pattern), expected,
+                             "normalize: %s" % pattern)
+
+    def test_klk034_pathish_and_expanded_unit(self):
+        # ②（AC1(a)・AC2・AC3）: 原因レイヤー第1層（候補分断）と検出結果の
+        # 直接固定。修正前の findall は ['docs/[', 'x]PEC.md']／
+        # ['docs/[[', 'upper', ']]PEC.md'] だった（investigation.md §2-2）
+        self.assertEqual(
+            guard.SHELL_EXPAND_PATHISH_RE.findall("docs/[^x]PEC.md"),
+            ["docs/[^x]PEC.md"])
+        self.assertEqual(
+            guard.SHELL_EXPAND_PATHISH_RE.findall("docs/[[:upper:]]PEC.md"),
+            ["docs/[[:upper:]]PEC.md"])
+        for expanded, expected in (
+                ("docs/[^x]PEC.md", ["docs/SPEC.md"]),
+                ("docs/[^s]PEC.md", ["docs/SPEC.md"]),
+                # bash も SPEC.md に一致させない形は [] のまま（deny 面が
+                # 無条件に広がっていないことの固定。`^` 追加のみの中間状態
+                # では第2項の偶然一致で検出される非原理的な形だった）
+                ("docs/[^S]PEC.md", []),
+                ("docs/[[:upper:]]PEC.md", ["docs/SPEC.md"]),
+                ("docs/[[:alpha:]]PEC.md", ["docs/SPEC.md"]),
+                ("tickets/[^x]ctive/APP-001.md", ["tickets/active/APP-001.md"]),
+                # 意味反転の防止（肯定クラスのまま照合されるため不一致）
+                ("docs/[a[^]one", []),
+                # POSIXクラス単独成分は `?` へ過大近似されても長さ不一致
+                ("docs/[[:upper:]]", []),
+                # KLK-031 ゲートの維持（リテラル文字0の成分は SPEC.md 側の
+                # 照合対象に加えない）
+                ("*", [])):
+            self.assertEqual(guard._guarded_paths_from_expanded(expanded),
+                             expected, "expanded: %s" % expanded)
+
+    def test_klk034_caret_negated_class_glob_deny(self):
+        # ③（AC1(a)）: キャレット否定クラス glob が end-to-end で deny される
+        # （修正前は find_violation が None を返し誤 allow だった。
+        # investigation.md §1 実測1・2）
+        self.assertDeny("rm docs/[^x]PEC.md")
+        self.assertDeny("rm docs/[^s]PEC.md")
+        self.assertDeny("rm docs/S[^x]EC.md")
+
+    def test_klk034_posix_class_glob_deny(self):
+        # ③（AC1(b)・AC3）: POSIX 文字クラス／照合要素を含む glob が deny
+        # される（ブラケット式全体を `?` へ過大近似する方式。`?` の一致集合は
+        # 任意のブラケット式の一致集合の上位集合であり allow 方向の劣化を
+        # 構造的に持たない。設計書§3 D3）
+        self.assertDeny("rm docs/[[:upper:]]PEC.md")
+        self.assertDeny("rm docs/[[:alpha:]]PEC.md")
+        self.assertDeny("rm docs/[[.S.]]PEC.md")
+
+    def test_klk034_guarded_dir_side_deny(self):
+        # ③（AC1(c)）: 原因（候補抽出の文字集合）と正規化は SPEC.md 側と
+        # active／done 側で共有されるため、tickets 側にも一律波及する
+        # （正規化を is_spec_basename_fnmatch の内側に置くと片側にしか
+        # 効かない。設計書§3 D2(c) 根拠1）
+        self.assertDeny("rm tickets/[^x]ctive/APP-001.md")
+        self.assertDeny("rm tickets/[[:lower:]]ctive/APP-001.md")
+
+    def test_klk034_colon_member_class_deny(self):
+        # ③（AC3）: `:` を文字集合へ追加したことで閉じる真陽性。bash は
+        # `[:S]` を（POSIXクラスではなく）「`:` または `S`」の肯定クラスとして
+        # 解釈し docs/SPEC.md に一致させる。tickets 側は investigation.md §4 で
+        # 実 bash 展開を実測済み（tickets/active/APP-001.md に一致）
+        self.assertDeny("rm docs/[:S]PEC.md")
+        self.assertDeny("rm tickets/[:a]ctive/APP-001.md")
+
+    def test_klk034_range_class_unchanged_deny(self):
+        # ③: 範囲形は従来から deny であることのロック（`-` は既に文字集合に
+        # あり分断されない）。ブラケット式ファミリ全体の対応表〔設計書§3 D3〕の
+        # 「従来どおり fnmatch が解釈」行の裏付け
+        self.assertDeny("rm docs/[A-Z]PEC.md")
+
+    def test_klk034_spec_side_read_allow(self):
+        # ④（AC1(d)）: 読み取り専用 head（cat）は言及ゲートが検出しても最終
+        # 判定は allow のまま（KLK-018／KLK-032／KLK-033 の読み取り head
+        # 対称性を新しい構文にも適用する）
+        self.assertAllow("cat docs/[^x]PEC.md")
+        self.assertAllow("cat docs/[[:upper:]]PEC.md")
+
+    def test_klk034_bash_excluded_forms_allow(self):
+        # ④（AC2・誤deny予算）: bash でも保護対象に一致しない形は allow の
+        # まま。`[^S]PEC.md` は「1文字目が S 以外」を要求し SPEC.md の先頭は
+        # 実際に S なので不一致。**`^` の追加のみを行った中間状態では
+        # is_spec_basename_fnmatch 第2項の偶然一致（.upper() 後のクラスが
+        # `{^,S}` になる）で deny になる形であり、正規化が精度を回復して
+        # いることの固定**（設計書§7(3)）。`[^d]one` は KLK-033
+        # test_klk033_negated_class_guarded_dir_side_non_match_allow と同型
+        self.assertAllow("rm docs/[^S]PEC.md")
+        self.assertAllow("rm tickets/[^d]one/APP-001.md")
+
+    def test_klk034_bracket_literal_member_allow(self):
+        # ④（AC2）: 意味反転防止の end-to-end 対照。`[a[^]one` は `[`・`^` を
+        # メンバーに含む肯定クラスであり bash でも保護対象に一致しない
+        # （検出器の本体は test_klk034_bracket_normalizer_unit の文字列等価）
+        self.assertAllow("rm docs/[a[^]one")
+
+    def test_klk034_unclosed_bracket_allow(self):
+        # ④（設計書§3 D4）: 未閉塞ブラケット（対応する `]` が無い形）は bash も
+        # glob 展開せず語をリテラルとして扱うため正規化せず、hook 側も一致
+        # させない＝挙動不変。設計時点で未実測だった現行挙動を
+        # implementer が実測して固定した（実測値: いずれも allow。
+        # find_violation が None。2026-08-19）
+        self.assertAllow("rm docs/[^x")
+        self.assertAllow("rm docs/[^xPEC.md")
+
+    def test_klk034_posix_class_idiom_allow(self):
+        # ④（AC3・誤deny予算）: POSIX クラスの過大近似が日常イディオムを
+        # 巻き込まないことの固定（investigation.md §5-2 で allow 不変を実測）。
+        # 単一ブラケットの `[:space:]` は POSIX クラスではなく肯定クラスとして
+        # 扱うため（設計書§3 D3）`tr -d` 形も変換されない
+        for command in ("tr -d '[:space:]' < file.txt",
+                        "grep -o '[[:alpha:]]' file.txt",
+                        "sed 's/[[:blank:]]\\+/ /g' file.txt",
+                        "cut -d: -f1 file.txt"):
+            self.assertAllow(command)
+
+    def test_klk034_degraded_caret_class_deny(self):
+        # ⑤（AC1(e)）: degraded 経路（末尾の未閉じシングルクォートで lex を
+        # 失敗させ degraded_violation へ落とす。KLK-031／KLK-032／KLK-033 と
+        # 同一イディオム）でも同じ SHELL_EXPAND_PATHISH_RE と同じ照合箇所を
+        # 共有するため deny へ波及する
+        self.assertDeny("rm docs/[^x]PEC.md # don't")
+
+    def test_klk034_degraded_posix_class_deny(self):
+        # ⑤（AC1(e)）: POSIX クラス側も degraded 経路へ波及する
+        self.assertDeny("rm docs/[[:upper:]]PEC.md # don't")
+
+    def test_klk034_degraded_spec_side_read_allow(self):
+        # ⑤（AC1(d)(e) 対称）: degraded 経路でも読み取り専用 head は allow の
+        # まま（KLK-033 test_klk033_degraded_negated_class_spec_side_read_allow
+        # の実測 allow と対称。implementer 実測値: None＝allow、2026-08-19）
+        self.assertAllow("cat docs/[^x]PEC.md # don't")
+
+    def test_klk034_caret_colon_non_glob_words_unchanged_allow(self):
+        # ⑥（AC5）: 誤deny方向の予算ロック。チケットが指定した `^`／`:` を
+        # 含む非 glob コマンド5例は文字集合拡張の前後で結果不変（結合後の
+        # 候補が GLOB_META_CHARS を含まず glob 分岐に到達しないため。
+        # investigation.md §5-1 で修正前 allow を実測済み）
+        for command in ("grep '^foo' file.txt",
+                        "sed 's/^x/y/' file.txt",
+                        "awk -F: '{print $1}' file.txt",
+                        "PATH=a:b; date",
+                        "git log --format=%h:%s"):
+            self.assertAllow(command)
+
+    def test_klk034_literal_path_with_caret_colon_still_deny(self):
+        # ⑥（AC5・設計書§7(4)）: リテラルの保護対象パスは
+        # is_guarded_token（PATHISH_RE は `^`／`:`／`!` を含まない）との OR で
+        # 保たれる＝候補分断規則の変更の影響がリテラル形に及ばないことの固定。
+        # **この OR があるために非単調性が glob 成分を含む語に限定される**
+        # ため、PATHISH_RE は無変更でなければならない
+        self.assertDeny("rm docs/SPEC.md:1")
+        self.assertDeny("rm docs/SPEC.md^y")
+
+    def test_klk034_fragmentation_rule_change_allow(self):
+        # ⑥（AC5）: 候補分断規則の非単調性の検出器。文字集合の拡張は語の
+        # 結合境界を変えるため単調ではなく、以前は独立候補だった glob 断片
+        # （'docs/SP*.md'・'acti*e'）が `^`／`:` をまたいで1候補へ吸収され、
+        # glob 構造条件を満たさなくなって **DENY から allow へ転じる**。
+        # implementer の新旧対照実測（develop 形との差分）で確定した6形の
+        # 代表2形（SPEC.md 側・active/done 側）を固定する。
+        # **allow が正しい根拠:** bash は 'docs/SP*.md:1' を docs/SPEC.md へ
+        # 展開せず（末尾の ':1' が余分）、'tickets/acti*e^x' も
+        # tickets/active に一致しないため、旧 deny は誤 deny だった。
+        # 変化の向きは是正だが「deny が allow へ転じない」という不変条件は
+        # 成立しない（設計書§5・§7(2)。KLK-033 §5/§7 の誤りの再発防止）
+        self.assertAllow("rm docs/SP*.md:1")
+        self.assertAllow("rm tickets/acti*e^x/APP-001.md")
+
+    def test_klk034_brace_cost_with_caret_colon_allow(self):
+        # ⑥（AC5・ブレース展開のコスト会計）: `^`／`:` をまたいで候補が
+        # 結合されることでブレース直積の組合せ数が増えても
+        # MAX_BRACE_CHAR_COUNT／MAX_BRACE_COMBINATIONS の上限内であり、
+        # KLK-018 の安全側フォールバック（deny）へ倒れない
+        # （KLK-033 test_klk033_brace_cost_with_bang_allow と同型）
+        self.assertAllow("rm a{1,2}^b{3,4}.txt")
+        self.assertAllow("rm a{1,2}:b{3,4}.txt")
+
     # --- KLK-018: MAX_BRACE_DEPTH／MAX_BRACE_COMBINATIONS 上限到達時の
     # フォールバック分岐（設計書 §4-1・§6。tester申し送り＝implementerの
     # Remaining Risksで境界値テスト未追加と明記されていた項目）。
