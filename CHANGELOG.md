@@ -6,7 +6,7 @@ Kenesis Loop Kitのすべての変更はこのファイルに記録されます�
 
 ---
 
-## [Unreleased]
+## [1.8.0] - 2026-08-20
 
 ### Added
 - バッチ外部駆動スクリプト `scripts/batch_loop.py`（1チケット=1セッション）: チケットごとに `claude -p "/start-loop {ID}"` を新規ヘッドレスセッションで逐次起動し、セッション境界でチケットファイルの状態を検査して前進・停止を判定する（完了判定はファイル状態が正: done/に `status: done`。終了コードは異常検出の補助）。プリフライトP1〜P9（linked worktree検出・ID一意存在・status検証・in_progress上限・14日blocked排除・SPEC存在または `--allow-missing-spec`・claude CLI実行可能性・status/retry_countsスナップショット・done/件数警告）を機械化し、違反は開始前に一括表示して停止。実行前の承認サマリへのy/N応答が旧バッチ事前承認の実体（`--yes` でスキップ可）。停止条件（境界判定）は異常終了（exit≠0/timeout）・active/残存done・blocked（リトライ上限超過を包含・ブロッカー本文表示）・未完了status・範囲外チケット変化・差し戻し増分（既定停止・`--continue-on-rework` で人間が明示緩和可）で、正常完了時のみ次チケットへ進み最終チケット後は必ず停止する。暴走ガードは `--max-turns 200` 既定・`--max-budget-usd`・`--timeout-min`。stdlibのみ・fail-closed（hooksのfail-open規約とは逆・人間実行の監督ツール）・tickets/読み取り専用（単一ライター原則の維持）。終了コード 0/1/2/3/130。設計は `docs/designs/KLK-001.md`
