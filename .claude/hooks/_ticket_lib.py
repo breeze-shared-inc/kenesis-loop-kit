@@ -166,19 +166,37 @@ def is_spec_basename(name):
 
 
 def is_spec_basename_fnmatch(pattern):
-    """glob パターン pattern が大小を区別せず 'SPEC.md' に fnmatch するか
-    （KLK-032: guard_bash_writes._guarded_paths_from_expanded の SPEC.md 側
-    glob 事前フィルタが大小区別を残す「5箇所目」だったことの是正。
-    is_spec_basename のパターン照合版であり、正規化方式（upper）を
-    is_spec_basename と同一に保つ単一の正規化ポイント）。
+    """glob パターン pattern が 'SPEC.md' に fnmatch するか（大小の扱いは
+    下記2項の和集合。KLK-032 で新設し KLK-033 で和集合形へ拡張した）。
+
+    ① fnmatch.fnmatchcase("SPEC.md", pattern)
+       bash が実ファイル docs/SPEC.md に対して行う照合と同一意味論
+       （大小をそのまま比較する）。取りこぼすと「bash では一致するのに
+       hook は検出しない」= allow 方向（危険）になるため、健全性の要。
+    ② fnmatch.fnmatchcase("SPEC.MD", pattern.upper())
+       KLK-020／KLK-032 が確定した「SPEC.md 判定は大小を区別しない」
+       方針による意図的な過大近似（deny 方向=安全側）。
+
+    ①を欠くと `.upper()` が `[!s]` を `[!S]` へ変える非単調な操作になり、
+    `[!s]PEC.md` が False になる（KLK-032 レビュー Medium 3-1）。KLK-033 で
+    SHELL_EXPAND_PATHISH_RE に `!` を追加したことでこの経路は到達可能に
+    なったため、①②の和集合が必須である（docs/designs/KLK-033.md §3 D2）。
+
+    残余の限界: ②は pattern 全体を大文字化するため、ブラケット表現を含む
+    パターンについては 'SPEC.md' 以外の大小変種（'Spec.md' 等）を対象と
+    する一致を取りこぼしうる（例: '[!s]pec.md' は False。正規形
+    'SPEC.md' には bash でも一致しない）。全大小変種に対する完全閉包は
+    スコープ外（docs/designs/KLK-033.md §3 D2・§6）。
 
     注意: リテラル文字を1文字も含まないパターン（'*'・'**' 等）にも True を
     返す。呼び出し側の KLK-031 ゲート（has_literal_char。リテラル文字0の
     成分では GUARDED_FILENAME を照合対象に加えない）が先に除外する前提で
     あり、本関数は孤立ワイルドカードの扱いに関知しない（レイヤーを分離）。
     """
-    return isinstance(pattern, str) and fnmatch.fnmatchcase(
-        "SPEC.MD", pattern.upper())
+    if not isinstance(pattern, str):
+        return False
+    return (fnmatch.fnmatchcase("SPEC.md", pattern)
+            or fnmatch.fnmatchcase("SPEC.MD", pattern.upper()))
 
 
 def is_project_spec(path, cwd):

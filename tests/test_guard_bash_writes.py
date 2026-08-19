@@ -3235,6 +3235,124 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertDeny("rm SP*")
         self.assertDeny("rm sp*")
 
+    # --- KLK-033: 否定文字クラス[!...]のpathish分断による誤allow是正 ---
+    # 設計書 docs/designs/KLK-033.md §9 AC1〜AC4。
+    # 候補抽出正規表現 SHELL_EXPAND_PATHISH_RE の文字集合に `!` が無いため、
+    # bash の否定文字クラス `[!...]` を含む語が `!` の位置で分断され
+    # （docs/[!x]PEC.md → 'docs/[' ＋ 'x]PEC.md'）、どちらの断片からも
+    # docs/SPEC.md を再構成できず「保護対象パスへの言及なし」と誤判定されて
+    # 人間承認ゲートをすり抜けていた（誤allow=危険。KLK-032 と同じ向き）。
+    # 修正は (1) 文字集合へ `!` を追加、(2) lib.is_spec_basename_fnmatch を
+    # 和集合形へ拡張（(1) により到達可能になった .upper() の非単調性を是正）
+    # の2点。GLOB_META_CHARS・KLK-031 の has_literal_char ゲート・
+    # GUARDED_DIR_NAMES 側の照合はいずれも無変更。
+
+    def test_klk033_negated_class_glob_deny(self):
+        # AC1(b): 否定文字クラス glob が end-to-end で deny される
+        # （修正前は find_violation が None を返し誤 allow だった。
+        # investigation.md §1 実測3参照）。'[!s]' 形は和集合形の第1項が
+        # 無いと非検出のまま残る形であり、2つの修正が対で必要なことを固定する
+        self.assertDeny("rm docs/[!x]PEC.md")
+        self.assertDeny("rm docs/[!s]PEC.md")
+
+    def test_klk033_negated_class_spec_side_read_allow(self):
+        # AC1(c) 対称: 読み取り専用 head（cat）は言及ゲートが検出しても
+        # 最終判定は allow のまま（KLK-018
+        # test_klk018_fragmented_glob_spec_side_read_allow／KLK-032
+        # test_klk032_spec_side_read_allow と同じ対称性）
+        self.assertAllow("cat docs/[!x]PEC.md")
+
+    def test_klk033_pathish_and_expanded_unit(self):
+        # AC1(a): 原因レイヤーの直接固定。候補抽出が語を分断せず1トークンに
+        # 保つこと（修正前は ['docs/[', 'x]PEC.md'] だった）と、そこから
+        # 正規形 docs/SPEC.md を検出することを unit で押さえる。
+        # '[!S]' 形は bash でも docs/SPEC.md に一致しないため [] のまま
+        # （deny 面が無条件に広がっていないことの固定）
+        self.assertEqual(
+            guard.SHELL_EXPAND_PATHISH_RE.findall("docs/[!x]PEC.md"),
+            ["docs/[!x]PEC.md"])
+        self.assertEqual(
+            guard._guarded_paths_from_expanded("docs/[!x]PEC.md"),
+            ["docs/SPEC.md"])
+        self.assertEqual(
+            guard._guarded_paths_from_expanded("docs/[!s]PEC.md"),
+            ["docs/SPEC.md"])
+        self.assertEqual(
+            guard._guarded_paths_from_expanded("docs/[!S]PEC.md"), [])
+
+    def test_klk033_degraded_negated_class_deny(self):
+        # AC1(d): degraded 経路（末尾の未閉じシングルクォートで lex を
+        # 失敗させ degraded_violation へ落とす。KLK-031
+        # test_klk031_degraded_violation_allow／KLK-032 と同一イディオム）
+        # でも同じ SHELL_EXPAND_PATHISH_RE を共有するため deny へ波及する
+        self.assertDeny("rm docs/[!x]PEC.md # don't")
+
+    def test_klk033_degraded_negated_class_spec_side_read_allow(self):
+        # AC1(d) 対称（設計書§9③「任意」項目。tester実測で確定）:
+        # degraded 経路（末尾の未閉じシングルクォートで lex を失敗させる
+        # KLK-031／KLK-032/KLK-033 と同一イディオム）でも読み取り専用 head
+        # は allow のまま。実測値: run_guard(payload(
+        # "cat docs/[!x]PEC.md # don't")) は None（tester実測、2026-08-19）。
+        # KLK-018 test_klk018_fragmented_glob_spec_side_read_allow／KLK-032
+        # test_klk032_spec_side_read_allow の正常経路対称性が degraded 側
+        # でも保たれることを固定する（逸脱なし）
+        self.assertAllow("cat docs/[!x]PEC.md # don't")
+
+    def test_klk033_degraded_bang_word_allow(self):
+        # AC4（degraded 側の誤deny予算）: 保護対象構造を作らない `!` 含み語は
+        # degraded 経路でも allow のまま
+        self.assertAllow("rm foo!bar # don't")
+
+    def test_klk033_bang_words_unchanged_allow(self):
+        # AC4（誤deny方向の予算ロック）: `!` の追加は lex が分割した1語の
+        # 内部にのみ効き語境界をまたがないため、`!` が独立語として現れる形も
+        # 同一語内で連続する形も結果は不変（修正前の実測は
+        # investigation.md §1 実測6で全て None＝allow）。
+        # 後半2形は ALLOWED_HEADS 外の head（rm）を使い、言及ゲート自体が
+        # 立たないことを直接検証する（find／echo／grep はホワイトリスト
+        # head でありゲートの有無を隠してしまう）
+        for command in ("! grep foo bar.txt",
+                        "find . ! -name '*.md'",
+                        "echo foo!bar",
+                        "echo !!",
+                        "rm foo!bar",
+                        "rm a!b/c.md"):
+            self.assertAllow(command)
+
+    def test_klk033_brace_cost_with_bang_allow(self):
+        # AC4（ブレース展開のコスト会計）: `!` をまたいで候補が結合される
+        # ことでブレース直積の組合せ数が増えても（従来 2通り×2候補 →
+        # 4通り×1候補）MAX_BRACE_CHAR_COUNT／MAX_BRACE_COMBINATIONS の
+        # 上限内であり、KLK-018 の安全側フォールバック（deny）へ倒れない
+        self.assertAllow("rm a{1,2}!b{3,4}.txt")
+
+    def test_klk033_negated_class_guarded_dir_side_deny(self):
+        # AC1・AC4（tester追加。設計書§9①〜④はSPEC.md側のみを固定しており
+        # GUARDED_DIR_NAMES＝tickets/active・tickets/done 側の否定文字クラス
+        # は未固定だった。原因（SHELL_EXPAND_PATHISH_RE の文字集合）は
+        # SPEC.md 側と共有のため、同じ修正が active/done 側にも一律波及する
+        # ことを実測で確認し固定する）。
+        # bash 意味論: `[!x]ctive` は「1文字目が x 以外」を要求し `active`
+        # の先頭 'a' は x でないため一致（tester実測、2026-08-19）。
+        self.assertDeny("rm tickets/[!x]ctive/APP-001.md")
+
+    def test_klk033_negated_class_guarded_dir_side_non_match_allow(self):
+        # AC4（誤deny予算・tester追加）: 上記テストの対照。`[!d]one` は
+        # 「1文字目が d 以外」を要求するが `done` の先頭は実際に 'd' であり
+        # bash でも一致しないため allow のまま（無条件 deny になっていない
+        # ことの固定。tester実測、2026-08-19）
+        self.assertAllow("rm tickets/[!d]one/APP-001.md")
+
+    def test_klk033_bang_adjacent_guarded_dir_literal_allow(self):
+        # AC4（誤deny予算・tester追加）: `!` がブラケットを伴わず
+        # active／done のリテラル文字列に部分的に割り込む形
+        # （`activ!e`・`don!e`）は GLOB_META_CHARS（*／?／[）を1文字も
+        # 含まないため _guarded_paths_from_expanded の glob 分岐にすら
+        # 入らず、bash でも `tickets/active`・`tickets/done` に一致しない
+        # ため allow のまま（tester実測、2026-08-19）
+        self.assertAllow("rm tickets/activ!e/APP-001.md")
+        self.assertAllow("rm tickets/don!e/APP-001.md")
+
     # --- KLK-018: MAX_BRACE_DEPTH／MAX_BRACE_COMBINATIONS 上限到達時の
     # フォールバック分岐（設計書 §4-1・§6。tester申し送り＝implementerの
     # Remaining Risksで境界値テスト未追加と明記されていた項目）。

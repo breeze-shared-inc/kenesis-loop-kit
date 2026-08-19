@@ -292,6 +292,27 @@ bash と一致させる正規化（L0）を置く。
     新たに deny される。向きは deny=安全側）。`active`／`done` 側の照合は
     従来どおり大小を区別する（`tickets/ACTI*E/…` は検出しない。KLK-032 の
     スコープ外・現状維持）。詳細は docs/designs/KLK-032.md 参照。
+  - **KLK-033（誤allow是正）:** 候補抽出正規表現
+    `SHELL_EXPAND_PATHISH_RE` の文字集合に `!` を含める。含めて
+    いなかったため bash の否定文字クラス `[!...]` を含む語が `!` の
+    位置で分断され（`docs/[!x]PEC.md` → `docs/[` ＋ `x]PEC.md`）、
+    シェル実行時には `docs/SPEC.md` に一致するにもかかわらず
+    「保護対象パスへの言及なし」と判定されていた（誤りの向きは
+    allow 方向=危険）。`!` 単体は glob メタ文字ではないため
+    `GLOB_META_CHARS`（`*`／`?`／`[`）は無変更（否定クラスを成立
+    させる `[` は既に含まれる）。影響は lex が分割した**1語の内部**に
+    限られ語境界をまたがないため、`!` が独立語として現れる形
+    （`! cmd`・`find . ! -name '*.md'`・`[[ ! -f x ]]`）の挙動は
+    不変である。履歴展開（`!!`・`!$`）は上記のとおり非対話シェルでは
+    既定で無効であり、候補として1語で拾われるようになるだけで判定は
+    変わらない。あわせて `lib.is_spec_basename_fnmatch` を和集合形
+    （そのままの大小での一致 ∪ 大文字正規化後の一致）へ拡張した —
+    `.upper()` 単独の正規化は `[!s]` を `[!S]` へ変える非単調な操作
+    であり、`!` 追加により到達可能になった経路で
+    `rm docs/[!s]PEC.md` を誤って allow するため。残余の限界として、
+    ブラケット表現を含むパターンについては `SPEC.md` 以外の大小変種
+    （`Spec.md` 等）を対象とする一致を取りこぼしうる（例:
+    `docs/[!s]pec.md`）。詳細は docs/designs/KLK-033.md 参照。
   - **`#` コメントの本文は除去しない**（L0 参照）。したがってコメント内の
     `> path`・`rm` 等が証拠として拾われ誤denyになりうる（**旧版も同じ挙動
     のため回帰ではない**）。また、コメント内の未閉じクォート（`#'` 等）が
@@ -551,7 +572,17 @@ PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/]+")
 # ない（KLK-010 §3-9-2 SH-2・チケット KLK-018）。KLK-029（sed/awk 専用ゲート
 # 緩和）と同型の「専用の展開後判定関数を新設し OR 追加する」方式で閉じる
 # （設計書 docs/designs/KLK-018.md §3・§4-1）。
-SHELL_EXPAND_PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/{},*?\[\]]+")
+# KLK-033: 文字集合へ `!` を追加する。`!` が無いと bash の否定文字クラス
+# `[!...]` を含む語が `!` の位置で分断され（`docs/[!x]PEC.md` →
+# `['docs/[', 'x]PEC.md']`）、どちらの断片からも `docs/SPEC.md` を再構成
+# できないため、シェル実行時には SPEC.md に一致するにもかかわらず非検出
+# になっていた（誤りの向きは allow 方向=危険。KLK-032 と同じ向き）。
+# `!` 単体は glob メタ文字ではないため GLOB_META_CHARS は無変更
+# （否定クラスを成立させる `[` は既にメタ文字集合に含まれる）。影響は
+# lex が分割した1語の内部に限られ、語境界をまたがない（`! cmd`・
+# `find . ! -name '*.md'` のように `!` が独立語の形は挙動不変）。
+# 詳細は docs/designs/KLK-033.md §3 D1・D3。
+SHELL_EXPAND_PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/{},*?\[\]!]+")
 MAX_BRACE_DEPTH = 4           # MAX_SUBST_DEPTH(=3)に倣うネスト深さの上限
 MAX_BRACE_COMBINATIONS = 512  # 直積展開の総数の上限（コスト爆発の防止）
 # 隣接（非入れ子）ブレース群の個数に対する軽量な事前上限（KLK-018差し戻し・
@@ -1037,6 +1068,9 @@ def _guarded_paths_from_expanded(expanded):
       最低1文字含めば（KLK-031）GUARDED_FILENAME ("SPEC.md") に対しても試す。
       SPEC.md 側の照合は大小を区別しない（KLK-032、lib.is_spec_basename_fnmatch
       経由）。active／done 側の照合は従来どおり大小を区別する。
+      SPEC.md 側の照合は「そのままの大小での一致」と「大文字正規化後の
+      一致」の和集合である（KLK-033。否定文字クラス `[!...]` の下で
+      .upper() 正規化が非単調になる問題への対処）。
       一致する literal が見つかったら、その成分だけを literal
       へ置換した文字列を再構成し、os.path.normpath 後に _is_guarded_path を
       満たすか再評価する（置換は情報を追加する操作であり既存の文字は変更
@@ -1143,6 +1177,19 @@ def guarded_paths_after_shell_expansion(text):
       lib.is_spec_basename_fnmatch（大小を区別しないパターン照合）へ差し替えて
       主張を復元した。active／done 側の照合は従来どおり大小を区別する
       （docs/designs/KLK-032.md §3・§9 参照）。
+
+    KLK-033 による精緻化:
+      上記の主張はいずれも「候補抽出（SHELL_EXPAND_PATHISH_RE）が語を
+      分断しない」ことを暗黙の前提にしていた。文字集合に `!` が無かった
+      ため、bash の否定文字クラス `[!...]` を含む語は候補抽出の段階で
+      分断され（`docs/[!x]PEC.md` → `docs/[` ＋ `x]PEC.md`）、どちらの
+      断片からも `docs/SPEC.md` を再構成できず、シェル実行時には
+      SPEC.md に一致するにもかかわらず非検出になっていた（誤りの向きは
+      allow 方向=危険。KLK-032 と同じ向き）。文字集合へ `!` を追加して
+      主張を復元し、あわせて SPEC.md 側の照合
+      （lib.is_spec_basename_fnmatch）を和集合形へ拡張して、否定文字
+      クラスの下で .upper() 正規化が非単調になる問題を閉じた
+      （docs/designs/KLK-033.md §3・§9 参照）。
 
     RecursionError 安全性（KLK-018 差し戻し・reviewer指摘）:
       `_brace_combination_count`／`expand_braces` は非入れ子で隣接する
