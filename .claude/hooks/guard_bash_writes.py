@@ -312,7 +312,69 @@ bash と一致させる正規化（L0）を置く。
     `rm docs/[!s]PEC.md` を誤って allow するため。残余の限界として、
     ブラケット表現を含むパターンについては `SPEC.md` 以外の大小変種
     （`Spec.md` 等）を対象とする一致を取りこぼしうる（例:
-    `docs/[!s]pec.md`）。詳細は docs/designs/KLK-033.md 参照。
+    `docs/[!s]pec.md`）。**この「残余」は大小変種に限った記述であり、
+    KLK-033 の時点では `[^...]`（キャレット否定）・`[[:class:]]`（POSIX
+    文字クラス）が候補抽出の段階で未閉塞のまま残っていた**（KLK-033 の
+    reviewer レビュー §3-2 で発見。KLK-034 で閉じた。下記 KLK-034 の欄を
+    参照）。詳細は docs/designs/KLK-033.md 参照。
+  - **KLK-034（誤allow是正・ブラケット式の方言差）:** 候補抽出正規表現
+    `SHELL_EXPAND_PATHISH_RE` の文字集合に `^` と `:` を追加し、glob 成分を
+    fnmatch へ渡す前に `_bash_bracket_to_fnmatch` で bash のブラケット式
+    方言へ合わせて正規化する（`[^...]` の否定マーカーを `[!...]` へ、
+    POSIX 文字クラス `[[:class:]]`／照合要素 `[[.sym.]]` を含むブラケット式を
+    `?` へ過大近似）。KLK-033 の `!` 追加は `[!...]` のみを閉じており、
+    bash が同じく否定として解釈する `[^...]` と POSIX 文字クラスは分断された
+    まま非検出だった（誤りの向きは allow 方向=危険）。`GLOB_META_CHARS`
+    （`*`／`?`／`[`）・KLK-031 の has_literal_char ゲート・`PATHISH_RE` は
+    いずれも無変更である。
+    **ブラケット式に対する現在の対応（読み手が「否定構文はすべて閉じた」と
+    誤解しないための一覧）:** 対応済み＝`[abc]`・`[a-z]`（従来から fnmatch が
+    解釈）／`[!...]`（KLK-033）／`[^...]`・`[^]abc]`（KLK-034 の正規化）／
+    `[[:class:]]`・`[[.sym.]]`（KLK-034 の過大近似）。**ただし「対応済み」は
+    いずれもブラケット式のメンバーが候補抽出の文字集合内の文字だけで
+    構成される場合に限る。** 否定クラス・POSIX クラス構文であっても集合外の
+    文字を1つ含めば候補が分断されて非検出（誤allow）に戻る（例:
+    `docs/[^+]PEC.md`・`docs/[^=]PEC.md`・`docs/[[=S=]]PEC.md` はいずれも bash
+    では `docs/SPEC.md` に一致するが hook は allow。reviewer 実測。
+    「否定構文は形さえ合えば閉じた」という読み方は誤り）。
+    **未対応（誤allow が残る）**＝ブラケット式のメンバーに候補抽出の文字集合外
+    の文字
+    （`+`・`@`・`%`・`=`・`~`・`#`・空白・引用符・`$`・`(`・`)`・`|`・`&`・`;`）
+    を含む形（例: 肯定クラス `docs/[+S]PEC.md`・否定クラス `docs/[^+]PEC.md`・
+    等価クラス `docs/[[=S=]]PEC.md` は bash では `docs/SPEC.md` に一致するが
+    候補が分断され非検出）。閉塞には文字集合の無制限拡張が必要で誤deny面が
+    制御不能に広がるためスコープ外とした（docs/designs/KLK-033.md §3
+    代替案(B) の判断を踏襲）。extglob（`!(...)`・`@(...)`・`?(...)`・
+    `*(...)`・`+(...)`）は非対話シェルでは既定で無効のためスコープ外
+    （`shopt -s extglob` 済みの環境では未検出）。`globstar`（`**` の再帰的
+    意味）と `{1..3}` シーケンス形ブレースは上記のとおりスコープ外。
+    POSIX クラスは文字カテゴリ全体を `?`（任意の1文字）へ過大近似するため、
+    bash が一致させない形まで deny しうる（向きは deny=安全側）。
+    **候補分断規則の非単調性:** 文字集合の拡張は語の結合境界を変えるため
+    単調ではない。以前は独立候補だった glob 断片が `^`／`:` をまたいでより
+    大きな1候補へ吸収され、deny から allow へ転じる形が存在する
+    （`rm docs/SP*.md:1` 等。bash でも保護対象に一致しないため旧 deny が
+    誤 deny だったケースであり是正方向）。「deny が allow へ転じることは
+    構造的に起こらない」という主張は**成立しない**（KLK-033 の reviewer
+    レビュー §3-3）。リテラルの保護対象パスは `is_guarded_token`
+    （`PATHISH_RE` は `^`／`:`／`!` を含まない）との OR で保たれるため、
+    影響は glob 成分を含む語に限られる。
+    **KLK-034 差し戻し（reviewer指摘・ブラケット走査の超線形コスト）:**
+    新設した `_bash_bracket_to_fnmatch` は語の各 `[` について走査をやり直し、
+    終端 `]` の探索にも上限が無かったため、走査コストが語長に対して超線形
+    （実測 O(n^2.2〜2.4)）かつ無上限だった。`[` を大量に含む病的な単一トークン
+    （約2万字）で hook 単体の所要時間が PreToolUse の既定タイムアウト（60s）を
+    超え、README が明文化する fail-open 方針と組み合わさって、同一コマンド文中の
+    明確な deny 対象ごと**人間承認ゲートをすり抜ける**（KLK-018 の
+    RecursionError と同じ allow 方向へのフェイルオープンであり、より外側＝
+    ハーネス側で起きる形。reviewer 実測: 16,000字で37.0s・24,000字で118.7s）。
+    対策は KLK-018 の前例（`MAX_BRACE_CHAR_COUNT`）に倣う2段で、①
+    `guarded_paths_after_shell_expansion` の事前チェック
+    （`MAX_BRACKET_SCAN_WORK` = 候補中の `[` 出現数 × 候補長の上限。超過時は
+    **deny 方向**の既存フォールバックへ合流）② `_scan_bracket_expression` が
+    走査・終端探索の範囲を「pattern 中の最後の `]`」で打ち切る（戻り値を
+    変えない純粋なコスト削減）。詳細は docs/designs/KLK-034.md §3 D2・§6 と
+    docs/reports/KLK-034/implementation.md §Phase 4 参照。
   - **`#` コメントの本文は除去しない**（L0 参照）。したがってコメント内の
     `> path`・`rm` 等が証拠として拾われ誤denyになりうる（**旧版も同じ挙動
     のため回帰ではない**）。また、コメント内の未閉じクォート（`#'` 等）が
@@ -582,7 +644,20 @@ PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/]+")
 # lex が分割した1語の内部に限られ、語境界をまたがない（`! cmd`・
 # `find . ! -name '*.md'` のように `!` が独立語の形は挙動不変）。
 # 詳細は docs/designs/KLK-033.md §3 D1・D3。
-SHELL_EXPAND_PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/{},*?\[\]!]+")
+# KLK-034: 文字集合へ `^` と `:` を追加する。bash のブラケット式は `[!...]` と
+# **`[^...]`** の双方を否定として解釈し、POSIX 文字クラス `[[:upper:]]` 等も
+# 解釈する。`^`／`:` が無いとこれらを含む語が分断され（`docs/[^x]PEC.md` →
+# `['docs/[', 'x]PEC.md']`、`docs/[[:upper:]]PEC.md` → `['docs/[[',
+# 'upper', ']]PEC.md']`）、シェル実行時には SPEC.md に一致するにもかかわらず
+# 非検出になっていた（誤りの向きは allow 方向=危険。KLK-032／KLK-033 と同じ
+# 向き）。`^`／`:` 単体は glob メタ文字ではないため GLOB_META_CHARS は無変更
+# （否定クラスを成立させる `[` は既にメタ文字集合に含まれる）。分断の解消
+# だけでは意味論の乖離（fnmatch はクラス内先頭の `^` をリテラルとして
+# エスケープする）は閉じないため、照合の直前に _bash_bracket_to_fnmatch で
+# 方言を吸収する。`PATHISH_RE` は無変更 — リテラルの保護対象パスの検出を
+# 候補分断規則の変更から切り離す OR の片側であるため（KLK-033 reviewer
+# レビュー §3-3）。詳細は docs/designs/KLK-034.md §3 D1・D2。
+SHELL_EXPAND_PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/{},*?\[\]!^:]+")
 MAX_BRACE_DEPTH = 4           # MAX_SUBST_DEPTH(=3)に倣うネスト深さの上限
 MAX_BRACE_COMBINATIONS = 512  # 直積展開の総数の上限（コスト爆発の防止）
 # 隣接（非入れ子）ブレース群の個数に対する軽量な事前上限（KLK-018差し戻し・
@@ -592,6 +667,31 @@ MAX_BRACE_COMBINATIONS = 512  # 直積展開の総数の上限（コスト爆発
 # 既存の固定テスト（隣接最大6個）を大きく上回り、かつ RecursionError の実測
 # 閾値（隣接997個）を大きく下回る値。
 MAX_BRACE_CHAR_COUNT = 50
+# ブラケット式の走査コストに対する軽量な事前上限（KLK-034 差し戻し・reviewer
+# 指摘。MAX_BRACE_CHAR_COUNT と同じ「重い走査へ入る前に候補の形だけで判定する
+# 定数時間の事前チェック」の系列）。_bash_bracket_to_fnmatch は語の各 `[` に
+# ついて _scan_bracket_expression を呼び直すため（閉じない `[` は1文字だけ
+# 進める）、走査の最悪反復回数は「候補中の `[` の出現数 × 候補長」に比例する。
+# 上限が無いと `[` を大量に含む病的な単一トークンで hook 単体の所要時間が
+# PreToolUse の既定タイムアウト（60s）を超え、.claude/hooks/README.md が
+# 明文化している fail-open 方針と組み合わさって**人間承認ゲートをすり抜ける**
+# （reviewer 実測: 16,000字で37.0s・24,000字で118.7s。同じコマンド文に明確な
+# deny 対象を含む形でも成立する。docs/reports/KLK-034/review.md §1）。
+# 値 20000 の根拠（implementer 実測。docs/reports/KLK-034/implementation.md
+# §Phase 4-2）:
+#   (a) 現実のコマンドは到達しない — 候補は
+#       SHELL_EXPAND_PATHISH_RE の文字集合が連続する1語であり、`(`／`)`／`|`／
+#       `+`／`$`／空白／引用符はいずれも候補を分断する。実測した現実形の最大は
+#       `grep -o '[[:alpha:]]'` 系・`tr -d '[:space:]'` 系・長い文字クラス連結
+#       正規化形でも積 1,000 未満（既存840件のテストでも最大 440）。
+#   (b) 上限到達時も十分速い — 上限直下の候補1個の走査は 2万反復（実測
+#       0.002s 未満）で、MAX_BRACE_COMBINATIONS(=512) 倍の直積と重なる最悪形
+#       でも実測 1.2s（60s タイムアウトに対して約50倍の余裕）。
+# 超過時は MAX_BRACE_CHAR_COUNT／MAX_BRACE_COMBINATIONS 超過時と**同じ
+# deny 方向のフォールバック**（候補全体を無条件に「保護対象パスの候補」と
+# みなす）へ合流する。正規化をスキップして照合を続ける（allow 方向）ことは
+# KLK-034 が閉じた誤allow の再導入になるため採らない。
+MAX_BRACKET_SCAN_WORK = 20000
 GUARDED_DIR_NAMES = ("active", "done")   # tickets/active・tickets/done の成分名
 GUARDED_FILENAME = "SPEC.md"
 GLOB_META_CHARS = frozenset("*?[")
@@ -1056,6 +1156,134 @@ def expand_braces(text, depth=0):
     return [prefix + p + s for p in part_expansions for s in suffix_expansions]
 
 
+# --- KLK-034: bash のブラケット式と Python fnmatch の方言差の吸収 -------------
+#
+# bash のブラケット式は `[!...]` と **`[^...]`** の双方を否定として解釈し、
+# さらに POSIX の文字クラス `[[:upper:]]`／照合要素 `[[.sym.]]`／等価クラス
+# `[[=c=]]` を解釈する。一方 Python の fnmatch（が生成する re）はクラス内
+# 先頭の `^` を**リテラル**としてエスケープし（`[^x]` → `[\^x]` ＝「`^` または
+# `x` のいずれか1文字」）、POSIX クラス構文を一切特別扱いしない
+# （`[:upper:` を字面どおりの6文字集合として読む）。この乖離があるため、
+# 候補抽出の文字集合へ `^`／`:` を足して分断を解消しただけでは
+# `[^x]PEC.md` も `[[:upper:]]PEC.md` も検出できない
+# （docs/reports/KLK-034/investigation.md §2）。fnmatch へ渡す**直前**に
+# 方言を吸収する。変換規則は2つだけである:
+#   ① 真にブラケット式の開始直後にある `^` を `!` へ置換する（fnmatch は
+#      `[!...]` を POSIX どおり否定として解釈する）。**「開始直後」は
+#      ブラケット式の構造走査で判定し、単純な部分文字列置換は使わない** —
+#      `[a[^]one`（`[` をリテラルメンバーに含む合法な肯定クラス）で意味が
+#      反転するため（investigation.md §3-2 の実測反例）。
+#   ② POSIX クラス／照合要素／等価クラスを含むブラケット式は fnmatch では
+#      等価に表現できないため、**ブラケット式全体を `?` へ置換する**。
+#      ブラケット式も `?` も「任意の1文字」に対する述語であり、`?` の一致
+#      集合は任意のブラケット式の一致集合の上位集合である。したがって置換で
+#      一致を失うこと（allow 方向の劣化）は構造的に起こらず、誤りの向きは
+#      deny=安全側にのみ倒れる。bash 側の文字カテゴリがロケール依存である
+#      ことにも依存しない。
+# 未閉塞のブラケット（`[^x` のように対応する `]` が無い形）は bash も glob と
+# して展開せずリテラル扱いするため**変換しない**（挙動不変。§3 D4）。
+# 本関数は照合に渡す値だけを書き換える。GLOB_META_CHARS の事前フィルタと
+# KLK-031 の has_literal_char ゲートは**正規化前の成分**で行い（ゲートの
+# 意味論を変えないため）、検出結果として返すパスも正規化前の成分から
+# 再構成する。詳細は docs/designs/KLK-034.md §3 D2・D3。
+BRACKET_CLASS_LEADERS = ":.="   # [: POSIXクラス ／ [. 照合要素 ／ [= 等価クラス
+
+
+def _scan_bracket_expression(pattern, open_index):
+    """pattern[open_index] == "[" として、ブラケット式の構造を走査する。
+
+    戻り値は (終端 `]` の位置, 否定マーカーの位置 or None,
+    POSIX クラス／照合要素／等価クラスを含むか) のタプル。対応する `]` が
+    見つからない（＝ブラケット式ではない。bash もリテラル扱いする）場合は
+    None を返す。走査規則は docs/designs/KLK-034.md §3 D2(b) を正とする。
+
+    走査範囲の上限（KLK-034 差し戻し・reviewer指摘）: 走査と POSIX クラス
+    終端（`:]`／`.]`／`=]`）の探索は、いずれも **pattern 中の最後の `]`**
+    より後ろへ進めない。ブラケット式は必ず `]` で閉じ、クラス要素の終端も
+    `]` を含むため、最後の `]` を越えた領域を走査しても成功し得ない
+    （＝この上限は戻り値を一切変えない純粋なコスト削減であり、`]` を含まない
+    語では定数時間で None を返す）。上限を与えない素朴な
+    `find(leader + "]", i + 2)` は語末まで無制限に探索し、終端 `]` を持たない
+    `[:` が多数並ぶ語で走査が超線形になっていた（reviewer 実測: 16,000字で
+    37.0s・24,000字で118.7s。docs/reports/KLK-034/review.md §1-1）。
+    走査回数そのものの上限は呼び出し元が持つ（`MAX_BRACKET_SCAN_WORK`）。
+    """
+    n = len(pattern)
+    last_close = pattern.rfind("]")
+    if last_close <= open_index:
+        return None     # 閉じる `]` が無い → ブラケット式ではない（定数時間）
+    i = open_index + 1
+    negation_index = None
+    if i < n and pattern[i] in "!^":
+        negation_index = i
+        i += 1
+    if i < n and pattern[i] == "]":
+        i += 1          # 否定マーカー直後の `]` はリテラルメンバー（規則3）
+    has_class_element = False
+    while i <= last_close:
+        if (pattern[i] == "[" and i + 1 < n
+                and pattern[i + 1] in BRACKET_CLASS_LEADERS):
+            leader = pattern[i + 1]
+            end = pattern.find(leader + "]", i + 2, last_close + 1)
+            if end != -1:
+                has_class_element = True
+                i = end + 2
+                continue
+            # 閉じない `[:` 等は単なるメンバーとして読み進める（bash でも
+            # 未定義動作。ここで打ち切らないことで終端 `]` の探索を続ける）
+            i += 1
+            continue
+        if pattern[i] == "]":
+            return i, negation_index, has_class_element
+        i += 1          # 内部の `[` は新しいブラケット式を開始しない（規則5）
+    return None
+
+
+def _bash_bracket_to_fnmatch(pattern):
+    """bash のブラケット式を Python fnmatch が同じ意味で解釈できる形へ
+    書き換える（KLK-034）。`[` を含まない文字列はそのまま返す。
+
+    ① 真にブラケット式の開始直後にある `^` を `!` へ（`[!` は変換不要＝冪等）
+    ② POSIX クラス／照合要素／等価クラスを含むブラケット式全体を `?` へ
+       （過大近似＝deny 方向。一致を失わない）
+    未閉塞ブラケットは変換しない（挙動不変）。
+
+    走査コスト（KLK-034 差し戻し・reviewer指摘）: 本関数は `[` を見つける
+    たびに _scan_bracket_expression を呼び直す（閉じない `[` では1文字しか
+    進まない）ため、最悪反復回数は「`[` の出現数 × 長さ」に比例する。
+    _scan_bracket_expression 側の走査範囲上限（pattern 中の最後の `]`）と、
+    呼び出し元 guarded_paths_after_shell_expansion の事前チェック
+    （`MAX_BRACKET_SCAN_WORK`。超過時は deny 方向へフォールバックし本関数を
+    呼ばない）の2段で有界にしている。**本関数自体は上限を持たない**ため、
+    新しい呼び出し元を追加する場合は同じ事前チェックを通すこと。
+    """
+    if "[" not in pattern:
+        return pattern
+    out = []
+    i, n = 0, len(pattern)
+    while i < n:
+        if pattern[i] != "[":
+            out.append(pattern[i])
+            i += 1
+            continue
+        scanned = _scan_bracket_expression(pattern, i)
+        if scanned is None:
+            out.append(pattern[i])      # 未閉塞 → リテラルの `[`（bash と同じ）
+            i += 1
+            continue
+        close_index, negation_index, has_class_element = scanned
+        if has_class_element:
+            out.append("?")
+        else:
+            span = pattern[i:close_index + 1]
+            if negation_index is not None:
+                offset = negation_index - i
+                span = span[:offset] + "!" + span[offset + 1:]
+            out.append(span)
+        i = close_index + 1
+    return "".join(out)
+
+
 def _guarded_paths_from_expanded(expanded):
     """ブレース展開済みの1候補を、分断 glob を考慮して保護対象パス判定する
     （設計書 §4-1 手順2）。
@@ -1066,11 +1294,18 @@ def _guarded_paths_from_expanded(expanded):
       GUARDED_DIR_NAMES の各要素（"active"/"done"）に対して試す。その成分が
       候補の**最後の**区切り成分であれば、かつ GLOB_META_CHARS 以外の文字を
       最低1文字含めば（KLK-031）GUARDED_FILENAME ("SPEC.md") に対しても試す。
-      SPEC.md 側の照合は大小を区別しない（KLK-032、lib.is_spec_basename_fnmatch
-      経由）。active／done 側の照合は従来どおり大小を区別する。
-      SPEC.md 側の照合は「そのままの大小での一致」と「大文字正規化後の
-      一致」の和集合である（KLK-033。否定文字クラス `[!...]` の下で
-      .upper() 正規化が非単調になる問題への対処）。
+      SPEC.md 側の照合は lib.is_spec_basename_fnmatch 経由で行い、「そのままの
+      大小での一致」と「大文字正規化後の一致」の**和集合**で判定する
+      （KLK-032 で大小の取りこぼしを塞ぎ、KLK-033 で和集合形へ拡張した）。
+      これは完全な大小非依存ではなく2項の和集合による近似であり、ブラケット
+      表現を含むパターンでは SPEC.md 以外の大小変種を取りこぼしうる
+      （lib.is_spec_basename_fnmatch のdocstringが「残余の限界」として明記）。
+      active／done 側の照合は従来どおり大小を区別する（fnmatch.fnmatchcase）。
+      照合へ渡す成分は _bash_bracket_to_fnmatch で bash のブラケット式方言へ
+      合わせて正規化する（KLK-034。`[^...]` の否定マーカーを `[!...]` へ、
+      POSIX 文字クラス／照合要素を含むブラケット式を `?` へ過大近似）。
+      正規化は照合専用であり、GLOB_META_CHARS の事前フィルタ・
+      has_literal_char ゲート・rebuilt の再構成は正規化前の成分で行う。
       一致する literal が見つかったら、その成分だけを literal
       へ置換した文字列を再構成し、os.path.normpath 後に _is_guarded_path を
       満たすか再評価する（置換は情報を追加する操作であり既存の文字は変更
@@ -1106,6 +1341,14 @@ def _guarded_paths_from_expanded(expanded):
         has_literal_char = any(ch not in GLOB_META_CHARS for ch in component)
         if index == last_index and has_literal_char:
             literals = literals + [GUARDED_FILENAME]
+        # KLK-034: bash のブラケット式と fnmatch の方言差をここで吸収する
+        # （`[^...]` の否定マーカーを `[!...]` へ、POSIX 文字クラス
+        # `[[:class:]]` 等を含むブラケット式を `?` へ過大近似）。**照合に
+        # 渡す値だけ**を書き換え、上の GLOB_META_CHARS 事前フィルタと
+        # KLK-031 の has_literal_char ゲート、および下の rebuilt の再構成は
+        # 正規化前の component で行う（ゲートの意味論を変えず、検出結果は
+        # 従来どおり正規形のパスになる）。docs/designs/KLK-034.md §3 D2。
+        match_component = _bash_bracket_to_fnmatch(component)
         for literal in literals:
             # KLK-032: SPEC.md（GUARDED_FILENAME）側の glob 事前フィルタのみ
             # 大小を区別しない（lib.is_spec_basename_fnmatch 経由。KLK-020 が
@@ -1120,9 +1363,9 @@ def _guarded_paths_from_expanded(expanded):
             # 照合対象に加えるか」、本分岐は「加えられた SPEC.md をどう照合
             # するか」で、レイヤーが直交する（docs/designs/KLK-032.md §3）。
             if literal == GUARDED_FILENAME:
-                matched = lib.is_spec_basename_fnmatch(component)
+                matched = lib.is_spec_basename_fnmatch(match_component)
             else:
-                matched = fnmatch.fnmatchcase(literal, component)
+                matched = fnmatch.fnmatchcase(literal, match_component)
             if not matched:
                 continue
             rebuilt = "/".join(
@@ -1191,6 +1434,25 @@ def guarded_paths_after_shell_expansion(text):
       クラスの下で .upper() 正規化が非単調になる問題を閉じた
       （docs/designs/KLK-033.md §3・§9 参照）。
 
+    KLK-034 による精緻化:
+      KLK-033 の `!` 追加は `[!...]` だけを閉じたものであり、**bash が同じく
+      否定として解釈する `[^...]` と、bash が展開する POSIX 文字クラス
+      `[[:class:]]`／照合要素 `[[.sym.]]` は候補抽出の段階で未閉塞のまま
+      残っていた**（文字集合に `^`／`:` が無いため分断される。KLK-033 の
+      reviewer レビュー §3-2 で発見）。文字集合へ `^`／`:` を追加して分断を
+      解消し、さらに fnmatch へ渡す成分を _bash_bracket_to_fnmatch で
+      正規化して意味論の乖離（fnmatch はクラス内先頭の `^` をリテラルとして
+      エスケープし、POSIX クラス構文を特別扱いしない）を閉じた。
+      **候補分断規則の変更は単調ではない。** 文字集合の拡張は語の結合境界を
+      変えるため、以前は独立候補だった glob 断片が `^`／`:` をまたいでより
+      大きな1候補へ吸収され、glob 構造条件を満たさなくなって deny から allow
+      へ転じる形が存在する（`rm docs/SP*.md:1` 等。いずれも bash でも保護
+      対象に一致しない形＝旧 deny が誤 deny だったケースであり是正方向だが、
+      「deny が allow へ転じることは構造的に起こらない」という主張は
+      **成立しない**）。リテラルの保護対象パスは is_guarded_token（PATHISH_RE
+      は `^`／`:`／`!` を含まない）との OR で保たれるため、この非単調性の
+      影響は glob 成分を含む語に限られる（docs/designs/KLK-034.md §5・§7 参照）。
+
     RecursionError 安全性（KLK-018 差し戻し・reviewer指摘）:
       `_brace_combination_count`／`expand_braces` は非入れ子で隣接する
       ブレース群が大量に連続すると Python コールスタックを隣接数に比例して
@@ -1207,12 +1469,44 @@ def guarded_paths_after_shell_expansion(text):
       いずれも MAX_BRACE_COMBINATIONS 超過時と同じ「候補全体を無条件に
       保護対象パスの候補とみなす」分岐へ合流するため、新しい判定パスは
       増えない。
+
+    ブラケット走査コスト安全性（KLK-034 差し戻し・reviewer指摘）:
+      `_bash_bracket_to_fnmatch`／`_scan_bracket_expression` は候補中の各 `[`
+      について走査をやり直すため、上限が無いと走査が超線形になり、`[` を
+      大量に含む病的な単一トークン（約2万字）で hook 単体の所要時間が
+      PreToolUse の既定タイムアウト（60s）を超える。README が明文化する
+      fail-open 方針と組み合わさると、同一コマンド文中の明確な deny 対象
+      （`rm docs/SPEC.md`）ごと**人間承認ゲートをすり抜ける**（RecursionError
+      と同じ「allow 方向へのフェイルオープン」であり、より外側＝ハーネス側で
+      起きる形。reviewer 実測: 24,000字で118.7s）。対策は2段:
+        ① 候補の `[` 出現数 × 候補長が `MAX_BRACKET_SCAN_WORK` を超える場合、
+           `_guarded_paths_from_expanded` を一切呼ばずフォールバックへ倒す
+           （定数時間の事前チェック）。候補長・`[` 出現数はブレース展開結果と
+           区切り成分の長さ・出現数の上界であるため、この1回の判定で1候補
+           あたりの走査反復回数が有界になる。
+        ② `_scan_bracket_expression` 自身が走査・終端探索の範囲を「pattern
+           中の最後の `]`」で打ち切る（戻り値を変えない純粋なコスト削減。
+           `]` を含まない語は定数時間で棄却される）。
+      ①のフォールバックは MAX_BRACE_CHAR_COUNT／MAX_BRACE_COMBINATIONS 超過時と
+      同じ deny 方向の分岐であり、新しい判定パスは増えない。**正規化を
+      スキップして照合を続ける（allow 方向）フォールバックは採らない** —
+      KLK-034 が閉じた誤allow を再導入するため。
     """
     found = []
     for candidate in SHELL_EXPAND_PATHISH_RE.findall(text):
         if candidate.count("{") > MAX_BRACE_CHAR_COUNT:
             # 事前チェック（①）。隣接ブレース数がここを超える入力は
             # _brace_combination_count／expand_braces を一切呼ばない。
+            found.append(candidate)
+            continue
+        if candidate.count("[") * len(candidate) > MAX_BRACKET_SCAN_WORK:
+            # ブラケット走査コストの事前チェック（KLK-034 差し戻し）。
+            # `[` 出現数 × 候補長がここを超える入力は
+            # _guarded_paths_from_expanded（＝_bash_bracket_to_fnmatch）を
+            # 一切呼ばず、上の2分岐と同じ deny 方向のフォールバックへ倒す。
+            # 候補長は各ブレース展開結果・各区切り成分の長さの上界であり、
+            # `[` 出現数も同様に上界であるため、この1回の判定で
+            # 「1候補あたりの走査反復回数 ≦ MAX_BRACKET_SCAN_WORK」が成立する。
             found.append(candidate)
             continue
         try:

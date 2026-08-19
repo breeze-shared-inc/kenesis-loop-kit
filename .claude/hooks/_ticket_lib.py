@@ -192,6 +192,12 @@ def is_spec_basename_fnmatch(pattern):
     返す。呼び出し側の KLK-031 ゲート（has_literal_char。リテラル文字0の
     成分では GUARDED_FILENAME を照合対象に加えない）が先に除外する前提で
     あり、本関数は孤立ワイルドカードの扱いに関知しない（レイヤーを分離）。
+
+    呼び出し側の契約（KLK-034）: guard_bash_writes._guarded_paths_from_expanded は
+    bash のブラケット式方言（`[^...]` の否定マーカー・POSIX 文字クラス
+    `[[:class:]]` 等）を _bash_bracket_to_fnmatch で fnmatch が解釈できる形へ
+    正規化してから本関数へ渡す。本関数自身はこの正規化を行わない
+    （bash 方言の知識は共通ライブラリではなく guard_bash_writes 側に置く）。
     """
     if not isinstance(pattern, str):
         return False
