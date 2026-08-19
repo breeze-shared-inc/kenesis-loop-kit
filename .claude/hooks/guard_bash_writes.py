@@ -282,6 +282,16 @@ bash と一致させる正規化（L0）を置く。
     そのものの隣接を要求するため、候補中に既に "tickets/" という文脈が
     無い限り誤って一致しない。`rm tickets/*` のように既に "tickets/" を
     含む語は従来どおり deny される）。詳細は docs/designs/KLK-031.md 参照。
+  - **KLK-032（誤allow是正）:** 分断 glob の SPEC.md 側判定は大小を区別
+    しない（lib.is_spec_basename_fnmatch 経由）。KLK-020 の一律
+    case-insensitive 化から取り残された glob 事前フィルタの「5箇所目」で、
+    `rm docs/sp*.md`・`rm docs/Spec*.md` のような小文字/大小混在 glob が
+    誤って allow されていた（誤りの向きは allow 方向=危険）。是正の結果、
+    deny 面は既存 deny 面の大小閉包へ広がる（例: `rm docs/*.MD`・`rm sp*`
+    は、従来から deny だった `rm docs/*.md`・`rm SP*` の大小変種として
+    新たに deny される。向きは deny=安全側）。`active`／`done` 側の照合は
+    従来どおり大小を区別する（`tickets/ACTI*E/…` は検出しない。KLK-032 の
+    スコープ外・現状維持）。詳細は docs/designs/KLK-032.md 参照。
   - **`#` コメントの本文は除去しない**（L0 参照）。したがってコメント内の
     `> path`・`rm` 等が証拠として拾われ誤denyになりうる（**旧版も同じ挙動
     のため回帰ではない**）。また、コメント内の未閉じクォート（`#'` 等）が
@@ -1025,6 +1035,8 @@ def _guarded_paths_from_expanded(expanded):
       GUARDED_DIR_NAMES の各要素（"active"/"done"）に対して試す。その成分が
       候補の**最後の**区切り成分であれば、かつ GLOB_META_CHARS 以外の文字を
       最低1文字含めば（KLK-031）GUARDED_FILENAME ("SPEC.md") に対しても試す。
+      SPEC.md 側の照合は大小を区別しない（KLK-032、lib.is_spec_basename_fnmatch
+      経由）。active／done 側の照合は従来どおり大小を区別する。
       一致する literal が見つかったら、その成分だけを literal
       へ置換した文字列を再構成し、os.path.normpath 後に _is_guarded_path を
       満たすか再評価する（置換は情報を追加する操作であり既存の文字は変更
@@ -1061,7 +1073,23 @@ def _guarded_paths_from_expanded(expanded):
         if index == last_index and has_literal_char:
             literals = literals + [GUARDED_FILENAME]
         for literal in literals:
-            if not fnmatch.fnmatchcase(literal, component):
+            # KLK-032: SPEC.md（GUARDED_FILENAME）側の glob 事前フィルタのみ
+            # 大小を区別しない（lib.is_spec_basename_fnmatch 経由。KLK-020 が
+            # 一本化した SPEC.md 判定の「5箇所目」の取り残しの是正）。
+            # 後段の _is_guarded_path(rebuilt_path) 再評価は KLK-020 で既に
+            # case-insensitive であり、大小区別が残っていたのはこの事前
+            # フィルタだけだった（docs/sp*.md 等の小文字/大小混在 glob が
+            # ここで脱落し誤 allow になっていた）。GUARDED_DIR_NAMES
+            # （active/done）側は従来どおり大小区別ありの fnmatchcase の
+            # まま（KLK-032 のスコープ外・現状維持）。KLK-031 の
+            # has_literal_char ゲートには手を入れない — ゲートは「SPEC.md を
+            # 照合対象に加えるか」、本分岐は「加えられた SPEC.md をどう照合
+            # するか」で、レイヤーが直交する（docs/designs/KLK-032.md §3）。
+            if literal == GUARDED_FILENAME:
+                matched = lib.is_spec_basename_fnmatch(component)
+            else:
+                matched = fnmatch.fnmatchcase(literal, component)
+            if not matched:
                 continue
             rebuilt = "/".join(
                 literal if i == index else c
@@ -1104,6 +1132,17 @@ def guarded_paths_after_shell_expansion(text):
       含むこと」という条件を追加し、この主張を復元した（誤りの向きは
       deny 方向=安全側であり allow への劣化ではない。active／done 側は
       無変更。docs/designs/KLK-031.md §3・§9 参照）。
+
+    KLK-032 による精緻化:
+      上記の主張が依拠する glob 成分の事前フィルタ（fnmatch）は、KLK-020 が
+      SPEC.md 判定4箇所を is_spec_basename で一律 case-insensitive 化した後も
+      大小区別ありのまま残った「5箇所目」であり、docs/sp*.md・docs/Spec*.md の
+      ような小文字/大小混在 glob が「SPEC と .md に一致する構造」を持つにも
+      かかわらず検出されない欠陥があった（誤りの向きは allow 方向=危険。
+      KLK-031 の deny 方向とは逆）。SPEC.md（GUARDED_FILENAME）側の照合のみ
+      lib.is_spec_basename_fnmatch（大小を区別しないパターン照合）へ差し替えて
+      主張を復元した。active／done 側の照合は従来どおり大小を区別する
+      （docs/designs/KLK-032.md §3・§9 参照）。
 
     RecursionError 安全性（KLK-018 差し戻し・reviewer指摘）:
       `_brace_combination_count`／`expand_braces` は非入れ子で隣接する

@@ -539,6 +539,35 @@ class TestSpecDriftPureFunctions(unittest.TestCase):
         self.assertFalse(lib.is_spec_basename(None))
         self.assertFalse(lib.is_spec_basename(123))
 
+    # --- KLK-032: is_spec_basename_fnmatch（is_spec_basename のパターン
+    # 照合版。guard_bash_writes._guarded_paths_from_expanded の SPEC.md 側
+    # glob 事前フィルタの case-insensitive 化に使う。docs/designs/KLK-032.md
+    # §4-1・§9 参照） ---
+
+    def test_is_spec_basename_fnmatch_case_insensitive_match(self):
+        # True系: 厳密形・小文字・部分アンカー付き glob（小文字/大文字/混在）
+        for pattern in ("SPEC.md", "spec.md", "sp*.md", "SP*.MD", "Spec*.md"):
+            self.assertTrue(lib.is_spec_basename_fnmatch(pattern), pattern)
+
+    def test_is_spec_basename_fnmatch_isolated_wildcard_true(self):
+        # True系（ゲート前提の明示）: リテラル文字を1文字も含まない '*' にも
+        # True を返す。呼び出し側の KLK-031 ゲート（has_literal_char）が先に
+        # 除外する前提であり、本関数は孤立ワイルドカードの扱いに関知しない
+        # （docstring どおり。unreachable であることは
+        # test_guard_bash_writes の test_klk032_guarded_paths_from_expanded_
+        # unit が _guarded_paths_from_expanded('*') == [] で固定する）
+        self.assertTrue(lib.is_spec_basename_fnmatch("*"))
+
+    def test_is_spec_basename_fnmatch_non_match(self):
+        # False系: 拡張子不一致・パス全体（成分単位の関数でありパス区切りを
+        # 含むパターンは不一致）・空文字列
+        for pattern in ("sp*.txt", "docs/sp*.md", ""):
+            self.assertFalse(lib.is_spec_basename_fnmatch(pattern), pattern)
+
+    def test_is_spec_basename_fnmatch_non_str_returns_false(self):
+        self.assertFalse(lib.is_spec_basename_fnmatch(None))
+        self.assertFalse(lib.is_spec_basename_fnmatch(123))
+
     # --- KLK-020 tester追加: is_project_spec の実装形（設計書§4のコード例と
     # 異なり rpartition("/") で dir/base に分解する形。implementation.md §2・
     # §5「設計からの逸脱」参照）が、設計書の制約
