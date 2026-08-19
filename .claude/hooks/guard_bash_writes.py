@@ -312,7 +312,45 @@ bash と一致させる正規化（L0）を置く。
     `rm docs/[!s]PEC.md` を誤って allow するため。残余の限界として、
     ブラケット表現を含むパターンについては `SPEC.md` 以外の大小変種
     （`Spec.md` 等）を対象とする一致を取りこぼしうる（例:
-    `docs/[!s]pec.md`）。詳細は docs/designs/KLK-033.md 参照。
+    `docs/[!s]pec.md`）。**この「残余」は大小変種に限った記述であり、
+    KLK-033 の時点では `[^...]`（キャレット否定）・`[[:class:]]`（POSIX
+    文字クラス）が候補抽出の段階で未閉塞のまま残っていた**（KLK-033 の
+    reviewer レビュー §3-2 で発見。KLK-034 で閉じた。下記 KLK-034 の欄を
+    参照）。詳細は docs/designs/KLK-033.md 参照。
+  - **KLK-034（誤allow是正・ブラケット式の方言差）:** 候補抽出正規表現
+    `SHELL_EXPAND_PATHISH_RE` の文字集合に `^` と `:` を追加し、glob 成分を
+    fnmatch へ渡す前に `_bash_bracket_to_fnmatch` で bash のブラケット式
+    方言へ合わせて正規化する（`[^...]` の否定マーカーを `[!...]` へ、
+    POSIX 文字クラス `[[:class:]]`／照合要素 `[[.sym.]]` を含むブラケット式を
+    `?` へ過大近似）。KLK-033 の `!` 追加は `[!...]` のみを閉じており、
+    bash が同じく否定として解釈する `[^...]` と POSIX 文字クラスは分断された
+    まま非検出だった（誤りの向きは allow 方向=危険）。`GLOB_META_CHARS`
+    （`*`／`?`／`[`）・KLK-031 の has_literal_char ゲート・`PATHISH_RE` は
+    いずれも無変更である。
+    **ブラケット式に対する現在の対応（読み手が「否定構文はすべて閉じた」と
+    誤解しないための一覧）:** 対応済み＝`[abc]`・`[a-z]`（従来から fnmatch が
+    解釈）／`[!...]`（KLK-033）／`[^...]`・`[^]abc]`（KLK-034 の正規化）／
+    `[[:class:]]`・`[[.sym.]]`（KLK-034 の過大近似）。**未対応（誤allow が
+    残る）**＝ブラケット式のメンバーに候補抽出の文字集合外の文字
+    （`+`・`@`・`%`・`=`・`~`・`#`・空白・引用符・`$`・`(`・`)`・`|`・`&`・`;`）
+    を含む形（例: `docs/[+S]PEC.md` は bash では `docs/SPEC.md` に一致するが
+    候補が分断され非検出）。閉塞には文字集合の無制限拡張が必要で誤deny面が
+    制御不能に広がるためスコープ外とした（docs/designs/KLK-033.md §3
+    代替案(B) の判断を踏襲）。extglob（`!(...)`・`@(...)`・`?(...)`・
+    `*(...)`・`+(...)`）は非対話シェルでは既定で無効のためスコープ外
+    （`shopt -s extglob` 済みの環境では未検出）。`globstar`（`**` の再帰的
+    意味）と `{1..3}` シーケンス形ブレースは上記のとおりスコープ外。
+    POSIX クラスは文字カテゴリ全体を `?`（任意の1文字）へ過大近似するため、
+    bash が一致させない形まで deny しうる（向きは deny=安全側）。
+    **候補分断規則の非単調性:** 文字集合の拡張は語の結合境界を変えるため
+    単調ではない。以前は独立候補だった glob 断片が `^`／`:` をまたいでより
+    大きな1候補へ吸収され、deny から allow へ転じる形が存在する
+    （`rm docs/SP*.md:1` 等。bash でも保護対象に一致しないため旧 deny が
+    誤 deny だったケースであり是正方向）。「deny が allow へ転じることは
+    構造的に起こらない」という主張は**成立しない**（KLK-033 の reviewer
+    レビュー §3-3）。リテラルの保護対象パスは `is_guarded_token`
+    （`PATHISH_RE` は `^`／`:`／`!` を含まない）との OR で保たれるため、
+    影響は glob 成分を含む語に限られる。詳細は docs/designs/KLK-034.md 参照。
   - **`#` コメントの本文は除去しない**（L0 参照）。したがってコメント内の
     `> path`・`rm` 等が証拠として拾われ誤denyになりうる（**旧版も同じ挙動
     のため回帰ではない**）。また、コメント内の未閉じクォート（`#'` 等）が
@@ -582,7 +620,20 @@ PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/]+")
 # lex が分割した1語の内部に限られ、語境界をまたがない（`! cmd`・
 # `find . ! -name '*.md'` のように `!` が独立語の形は挙動不変）。
 # 詳細は docs/designs/KLK-033.md §3 D1・D3。
-SHELL_EXPAND_PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/{},*?\[\]!]+")
+# KLK-034: 文字集合へ `^` と `:` を追加する。bash のブラケット式は `[!...]` と
+# **`[^...]`** の双方を否定として解釈し、POSIX 文字クラス `[[:upper:]]` 等も
+# 解釈する。`^`／`:` が無いとこれらを含む語が分断され（`docs/[^x]PEC.md` →
+# `['docs/[', 'x]PEC.md']`、`docs/[[:upper:]]PEC.md` → `['docs/[[',
+# 'upper', ']]PEC.md']`）、シェル実行時には SPEC.md に一致するにもかかわらず
+# 非検出になっていた（誤りの向きは allow 方向=危険。KLK-032／KLK-033 と同じ
+# 向き）。`^`／`:` 単体は glob メタ文字ではないため GLOB_META_CHARS は無変更
+# （否定クラスを成立させる `[` は既にメタ文字集合に含まれる）。分断の解消
+# だけでは意味論の乖離（fnmatch はクラス内先頭の `^` をリテラルとして
+# エスケープする）は閉じないため、照合の直前に _bash_bracket_to_fnmatch で
+# 方言を吸収する。`PATHISH_RE` は無変更 — リテラルの保護対象パスの検出を
+# 候補分断規則の変更から切り離す OR の片側であるため（KLK-033 reviewer
+# レビュー §3-3）。詳細は docs/designs/KLK-034.md §3 D1・D2。
+SHELL_EXPAND_PATHISH_RE = re.compile(r"[A-Za-z0-9_.\-/{},*?\[\]!^:]+")
 MAX_BRACE_DEPTH = 4           # MAX_SUBST_DEPTH(=3)に倣うネスト深さの上限
 MAX_BRACE_COMBINATIONS = 512  # 直積展開の総数の上限（コスト爆発の防止）
 # 隣接（非入れ子）ブレース群の個数に対する軽量な事前上限（KLK-018差し戻し・
@@ -1056,6 +1107,111 @@ def expand_braces(text, depth=0):
     return [prefix + p + s for p in part_expansions for s in suffix_expansions]
 
 
+# --- KLK-034: bash のブラケット式と Python fnmatch の方言差の吸収 -------------
+#
+# bash のブラケット式は `[!...]` と **`[^...]`** の双方を否定として解釈し、
+# さらに POSIX の文字クラス `[[:upper:]]`／照合要素 `[[.sym.]]`／等価クラス
+# `[[=c=]]` を解釈する。一方 Python の fnmatch（が生成する re）はクラス内
+# 先頭の `^` を**リテラル**としてエスケープし（`[^x]` → `[\^x]` ＝「`^` または
+# `x` のいずれか1文字」）、POSIX クラス構文を一切特別扱いしない
+# （`[:upper:` を字面どおりの6文字集合として読む）。この乖離があるため、
+# 候補抽出の文字集合へ `^`／`:` を足して分断を解消しただけでは
+# `[^x]PEC.md` も `[[:upper:]]PEC.md` も検出できない
+# （docs/reports/KLK-034/investigation.md §2）。fnmatch へ渡す**直前**に
+# 方言を吸収する。変換規則は2つだけである:
+#   ① 真にブラケット式の開始直後にある `^` を `!` へ置換する（fnmatch は
+#      `[!...]` を POSIX どおり否定として解釈する）。**「開始直後」は
+#      ブラケット式の構造走査で判定し、単純な部分文字列置換は使わない** —
+#      `[a[^]one`（`[` をリテラルメンバーに含む合法な肯定クラス）で意味が
+#      反転するため（investigation.md §3-2 の実測反例）。
+#   ② POSIX クラス／照合要素／等価クラスを含むブラケット式は fnmatch では
+#      等価に表現できないため、**ブラケット式全体を `?` へ置換する**。
+#      ブラケット式も `?` も「任意の1文字」に対する述語であり、`?` の一致
+#      集合は任意のブラケット式の一致集合の上位集合である。したがって置換で
+#      一致を失うこと（allow 方向の劣化）は構造的に起こらず、誤りの向きは
+#      deny=安全側にのみ倒れる。bash 側の文字カテゴリがロケール依存である
+#      ことにも依存しない。
+# 未閉塞のブラケット（`[^x` のように対応する `]` が無い形）は bash も glob と
+# して展開せずリテラル扱いするため**変換しない**（挙動不変。§3 D4）。
+# 本関数は照合に渡す値だけを書き換える。GLOB_META_CHARS の事前フィルタと
+# KLK-031 の has_literal_char ゲートは**正規化前の成分**で行い（ゲートの
+# 意味論を変えないため）、検出結果として返すパスも正規化前の成分から
+# 再構成する。詳細は docs/designs/KLK-034.md §3 D2・D3。
+BRACKET_CLASS_LEADERS = ":.="   # [: POSIXクラス ／ [. 照合要素 ／ [= 等価クラス
+
+
+def _scan_bracket_expression(pattern, open_index):
+    """pattern[open_index] == "[" として、ブラケット式の構造を走査する。
+
+    戻り値は (終端 `]` の位置, 否定マーカーの位置 or None,
+    POSIX クラス／照合要素／等価クラスを含むか) のタプル。対応する `]` が
+    見つからない（＝ブラケット式ではない。bash もリテラル扱いする）場合は
+    None を返す。走査規則は docs/designs/KLK-034.md §3 D2(b) を正とする。
+    """
+    n = len(pattern)
+    i = open_index + 1
+    negation_index = None
+    if i < n and pattern[i] in "!^":
+        negation_index = i
+        i += 1
+    if i < n and pattern[i] == "]":
+        i += 1          # 否定マーカー直後の `]` はリテラルメンバー（規則3）
+    has_class_element = False
+    while i < n:
+        if (pattern[i] == "[" and i + 1 < n
+                and pattern[i + 1] in BRACKET_CLASS_LEADERS):
+            leader = pattern[i + 1]
+            end = pattern.find(leader + "]", i + 2)
+            if end != -1:
+                has_class_element = True
+                i = end + 2
+                continue
+            # 閉じない `[:` 等は単なるメンバーとして読み進める（bash でも
+            # 未定義動作。ここで打ち切らないことで終端 `]` の探索を続ける）
+            i += 1
+            continue
+        if pattern[i] == "]":
+            return i, negation_index, has_class_element
+        i += 1          # 内部の `[` は新しいブラケット式を開始しない（規則5）
+    return None
+
+
+def _bash_bracket_to_fnmatch(pattern):
+    """bash のブラケット式を Python fnmatch が同じ意味で解釈できる形へ
+    書き換える（KLK-034）。`[` を含まない文字列はそのまま返す。
+
+    ① 真にブラケット式の開始直後にある `^` を `!` へ（`[!` は変換不要＝冪等）
+    ② POSIX クラス／照合要素／等価クラスを含むブラケット式全体を `?` へ
+       （過大近似＝deny 方向。一致を失わない）
+    未閉塞ブラケットは変換しない（挙動不変）。
+    """
+    if "[" not in pattern:
+        return pattern
+    out = []
+    i, n = 0, len(pattern)
+    while i < n:
+        if pattern[i] != "[":
+            out.append(pattern[i])
+            i += 1
+            continue
+        scanned = _scan_bracket_expression(pattern, i)
+        if scanned is None:
+            out.append(pattern[i])      # 未閉塞 → リテラルの `[`（bash と同じ）
+            i += 1
+            continue
+        close_index, negation_index, has_class_element = scanned
+        if has_class_element:
+            out.append("?")
+        else:
+            span = pattern[i:close_index + 1]
+            if negation_index is not None:
+                offset = negation_index - i
+                span = span[:offset] + "!" + span[offset + 1:]
+            out.append(span)
+        i = close_index + 1
+    return "".join(out)
+
+
 def _guarded_paths_from_expanded(expanded):
     """ブレース展開済みの1候補を、分断 glob を考慮して保護対象パス判定する
     （設計書 §4-1 手順2）。
@@ -1066,11 +1222,18 @@ def _guarded_paths_from_expanded(expanded):
       GUARDED_DIR_NAMES の各要素（"active"/"done"）に対して試す。その成分が
       候補の**最後の**区切り成分であれば、かつ GLOB_META_CHARS 以外の文字を
       最低1文字含めば（KLK-031）GUARDED_FILENAME ("SPEC.md") に対しても試す。
-      SPEC.md 側の照合は大小を区別しない（KLK-032、lib.is_spec_basename_fnmatch
-      経由）。active／done 側の照合は従来どおり大小を区別する。
-      SPEC.md 側の照合は「そのままの大小での一致」と「大文字正規化後の
-      一致」の和集合である（KLK-033。否定文字クラス `[!...]` の下で
-      .upper() 正規化が非単調になる問題への対処）。
+      SPEC.md 側の照合は lib.is_spec_basename_fnmatch 経由で行い、「そのままの
+      大小での一致」と「大文字正規化後の一致」の**和集合**で判定する
+      （KLK-032 で大小の取りこぼしを塞ぎ、KLK-033 で和集合形へ拡張した）。
+      これは完全な大小非依存ではなく2項の和集合による近似であり、ブラケット
+      表現を含むパターンでは SPEC.md 以外の大小変種を取りこぼしうる
+      （lib.is_spec_basename_fnmatch のdocstringが「残余の限界」として明記）。
+      active／done 側の照合は従来どおり大小を区別する（fnmatch.fnmatchcase）。
+      照合へ渡す成分は _bash_bracket_to_fnmatch で bash のブラケット式方言へ
+      合わせて正規化する（KLK-034。`[^...]` の否定マーカーを `[!...]` へ、
+      POSIX 文字クラス／照合要素を含むブラケット式を `?` へ過大近似）。
+      正規化は照合専用であり、GLOB_META_CHARS の事前フィルタ・
+      has_literal_char ゲート・rebuilt の再構成は正規化前の成分で行う。
       一致する literal が見つかったら、その成分だけを literal
       へ置換した文字列を再構成し、os.path.normpath 後に _is_guarded_path を
       満たすか再評価する（置換は情報を追加する操作であり既存の文字は変更
@@ -1106,6 +1269,14 @@ def _guarded_paths_from_expanded(expanded):
         has_literal_char = any(ch not in GLOB_META_CHARS for ch in component)
         if index == last_index and has_literal_char:
             literals = literals + [GUARDED_FILENAME]
+        # KLK-034: bash のブラケット式と fnmatch の方言差をここで吸収する
+        # （`[^...]` の否定マーカーを `[!...]` へ、POSIX 文字クラス
+        # `[[:class:]]` 等を含むブラケット式を `?` へ過大近似）。**照合に
+        # 渡す値だけ**を書き換え、上の GLOB_META_CHARS 事前フィルタと
+        # KLK-031 の has_literal_char ゲート、および下の rebuilt の再構成は
+        # 正規化前の component で行う（ゲートの意味論を変えず、検出結果は
+        # 従来どおり正規形のパスになる）。docs/designs/KLK-034.md §3 D2。
+        match_component = _bash_bracket_to_fnmatch(component)
         for literal in literals:
             # KLK-032: SPEC.md（GUARDED_FILENAME）側の glob 事前フィルタのみ
             # 大小を区別しない（lib.is_spec_basename_fnmatch 経由。KLK-020 が
@@ -1120,9 +1291,9 @@ def _guarded_paths_from_expanded(expanded):
             # 照合対象に加えるか」、本分岐は「加えられた SPEC.md をどう照合
             # するか」で、レイヤーが直交する（docs/designs/KLK-032.md §3）。
             if literal == GUARDED_FILENAME:
-                matched = lib.is_spec_basename_fnmatch(component)
+                matched = lib.is_spec_basename_fnmatch(match_component)
             else:
-                matched = fnmatch.fnmatchcase(literal, component)
+                matched = fnmatch.fnmatchcase(literal, match_component)
             if not matched:
                 continue
             rebuilt = "/".join(
@@ -1190,6 +1361,25 @@ def guarded_paths_after_shell_expansion(text):
       （lib.is_spec_basename_fnmatch）を和集合形へ拡張して、否定文字
       クラスの下で .upper() 正規化が非単調になる問題を閉じた
       （docs/designs/KLK-033.md §3・§9 参照）。
+
+    KLK-034 による精緻化:
+      KLK-033 の `!` 追加は `[!...]` だけを閉じたものであり、**bash が同じく
+      否定として解釈する `[^...]` と、bash が展開する POSIX 文字クラス
+      `[[:class:]]`／照合要素 `[[.sym.]]` は候補抽出の段階で未閉塞のまま
+      残っていた**（文字集合に `^`／`:` が無いため分断される。KLK-033 の
+      reviewer レビュー §3-2 で発見）。文字集合へ `^`／`:` を追加して分断を
+      解消し、さらに fnmatch へ渡す成分を _bash_bracket_to_fnmatch で
+      正規化して意味論の乖離（fnmatch はクラス内先頭の `^` をリテラルとして
+      エスケープし、POSIX クラス構文を特別扱いしない）を閉じた。
+      **候補分断規則の変更は単調ではない。** 文字集合の拡張は語の結合境界を
+      変えるため、以前は独立候補だった glob 断片が `^`／`:` をまたいでより
+      大きな1候補へ吸収され、glob 構造条件を満たさなくなって deny から allow
+      へ転じる形が存在する（`rm docs/SP*.md:1` 等。いずれも bash でも保護
+      対象に一致しない形＝旧 deny が誤 deny だったケースであり是正方向だが、
+      「deny が allow へ転じることは構造的に起こらない」という主張は
+      **成立しない**）。リテラルの保護対象パスは is_guarded_token（PATHISH_RE
+      は `^`／`:`／`!` を含まない）との OR で保たれるため、この非単調性の
+      影響は glob 成分を含む語に限られる（docs/designs/KLK-034.md §5・§7 参照）。
 
     RecursionError 安全性（KLK-018 差し戻し・reviewer指摘）:
       `_brace_combination_count`／`expand_braces` は非入れ子で隣接する
