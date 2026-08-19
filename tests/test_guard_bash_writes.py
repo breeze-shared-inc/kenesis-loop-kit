@@ -3181,6 +3181,60 @@ class TestGuardBashWrites(unittest.TestCase):
         self.assertDeny("rm tickets/activ[e]/APP-001.md")
         self.assertDeny("rm docs/SPEC*.md")
 
+    # --- KLK-032: SPEC.md側glob事前フィルタの大小区別残存（誤allow）是正 ---
+    # 設計書 docs/designs/KLK-032.md §9 AC1〜AC4。
+    # _guarded_paths_from_expanded の glob 成分事前フィルタ
+    # fnmatch.fnmatchcase(literal, component) が大小区別を残しており、
+    # docs/sp*.md・docs/Spec*.md 等の小文字/大小混在 glob が「保護対象パスへの
+    # 言及なし」と誤判定され人間承認ゲートをすり抜けていた（誤allow=危険。
+    # KLK-020 が一本化した SPEC.md 判定の「5箇所目」の取り残し）。修正は
+    # SPEC.md（GUARDED_FILENAME）側の照合のみを lib.is_spec_basename_fnmatch
+    # 経由で case-insensitive 化し、GUARDED_DIR_NAMES（active/done）側と
+    # KLK-031 の has_literal_char ゲートは無変更とする。
+
+    def test_klk032_lowercase_mixedcase_fragmented_glob_deny(self):
+        # AC1(b): 小文字 glob・大小混在 glob が end-to-end で deny される
+        # （修正前は find_violation が None を返し誤 allow だった。
+        # investigation.md 実測ログ参照）。degraded mode 誘発形
+        # （"don't" の未閉じシングルクォート）でも対称に deny する
+        self.assertDeny("rm docs/sp*.md")
+        self.assertDeny("rm docs/Spec*.md")
+        self.assertDeny("rm docs/sp*.md # don't")
+
+    def test_klk032_spec_side_read_allow(self):
+        # AC1(b) 対称: 読み取り専用 head（cat）は言及ゲートが検出しても
+        # 最終判定は allow のまま（既存の cat docs/SPEC*.md ＝
+        # test_klk018_fragmented_glob_spec_side_read_allow と対称。
+        # KLK-018 の対称性維持）
+        self.assertAllow("cat docs/sp*.md")
+
+    def test_klk032_guarded_paths_from_expanded_unit(self):
+        # AC1(a): unit レベルで小文字/大小混在 glob が正規形 docs/SPEC.md を
+        # 検出する（修正前はいずれも [] だった）。
+        # AC4: '*'（リテラル文字0）は KLK-031 ゲートが GUARDED_FILENAME を
+        # literals へ追加しないため、新しい case-insensitive 比較に到達せず
+        # [] のまま（ゲートが新比較より先に効くことの固定）。
+        # AC3: GUARDED_DIR_NAMES（active/done）側は fnmatchcase のまま
+        # 大小区別を維持する（tickets/ACTI*E/… は検出しない）
+        self.assertEqual(
+            guard._guarded_paths_from_expanded("docs/sp*.md"),
+            ["docs/SPEC.md"])
+        self.assertEqual(
+            guard._guarded_paths_from_expanded("docs/Spec*.md"),
+            ["docs/SPEC.md"])
+        self.assertEqual(guard._guarded_paths_from_expanded("*"), [])
+        self.assertEqual(
+            guard._guarded_paths_from_expanded("tickets/ACTI*E/APP-001.md"),
+            [])
+
+    def test_klk032_case_closure_budget_deny(self):
+        # deny 面の拡大が「既存 deny 面の大小変種（大小閉包）」に限られる
+        # ことの予算ロック: rm SP* は従来から deny（既存予算の固定）、
+        # rm sp* は大小閉包による新規 deny（KLK-018 AC4(N2) 予算の
+        # 大小閉包にあたる。docs/designs/KLK-032.md §6 第1行参照）
+        self.assertDeny("rm SP*")
+        self.assertDeny("rm sp*")
+
     # --- KLK-018: MAX_BRACE_DEPTH／MAX_BRACE_COMBINATIONS 上限到達時の
     # フォールバック分岐（設計書 §4-1・§6。tester申し送り＝implementerの
     # Remaining Risksで境界値テスト未追加と明記されていた項目）。
