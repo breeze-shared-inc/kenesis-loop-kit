@@ -1,6 +1,5 @@
 {
   "permissions": {
-    "defaultMode": "auto",
     "allow": [
       "Bash(npm *)",
       "Bash(yarn *)",
@@ -60,15 +59,15 @@
       "Bash(mv *)",
       "Bash(mkdir *)",
       "Bash(touch *)",
-      "Write(src/**)",
-      "Write(lib/**)",
-      "Write(app/**)",
-      "Write(docs/**)",
-      "Write(tickets/**)",
-      "Write(tests/**)",
-      "Write(test/**)",
-      "Write(spec/**)",
-      "Write(__tests__/**)",
+      "Edit(src/**)",
+      "Edit(lib/**)",
+      "Edit(app/**)",
+      "Edit(docs/**)",
+      "Edit(tickets/**)",
+      "Edit(tests/**)",
+      "Edit(test/**)",
+      "Edit(spec/**)",
+      "Edit(__tests__/**)",
       "WebSearch",
       "WebFetch(domain:gist.github.com)",
       "WebFetch(domain:www.morphllm.com)",
@@ -77,7 +76,8 @@
       "Bash(git rm *)",
       "Bash(sed -n *)",
       "Edit(docs/spec-qa/**)",
-      "Write(docs/spec-qa/**)"
+      "Bash(git worktree *)",
+      "Bash(cd *)"
     ],
     "deny": [
       "Bash(git push*)",
@@ -95,6 +95,10 @@
       "Bash(dd *)",
       "Bash(fdisk*)",
       "Bash(parted*)"
+    ],
+    "defaultMode": "auto",
+    "additionalDirectories": [
+      "../kenesis-loop-kit.wt/"
     ]
   },
   "hooks": {

@@ -1,6 +1,9 @@
 """_ticket_lib.py の単体テスト（検証ルールの中核）"""
+import io
+import json
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -8,6 +11,11 @@ import _util  # noqa: E402
 
 sys.path.insert(0, _util.HOOKS)
 import _ticket_lib as lib  # noqa: E402
+
+
+def frontmatter(*lines):
+    """frontmatter だけを持つ最小のチケット本文を組み立てる（パーサのテスト用）。"""
+    return "---\n" + "\n".join(lines) + "\n---\n\n# body\n"
 
 
 class TestParsing(unittest.TestCase):
@@ -32,6 +40,193 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(table["tester_to_implementer"], 2)
         self.assertEqual(table["reviewer_to_implementer"], 1)
         self.assertEqual(table["reviewer_to_investigator"], 0)
+
+    # --- KLK-012 AC4: クォート外インラインコメントの除去 ---
+
+    def test_inline_comment_stripped_from_status(self):
+        fm = lib.parse_frontmatter(frontmatter("status: todo # 未着手"))
+        self.assertEqual(fm["status"], "todo")
+
+    def test_hash_inside_quotes_preserved(self):
+        # over-strip の回帰ガード（現状すでに正しい挙動を壊さないこと）
+        fm = lib.parse_frontmatter(frontmatter('title: "issue #123 fix"'))
+        self.assertEqual(fm["title"], "issue #123 fix")
+
+    def test_hash_inside_single_quotes_preserved(self):
+        fm = lib.parse_frontmatter(frontmatter("title: 'issue #123 fix'"))
+        self.assertEqual(fm["title"], "issue #123 fix")
+
+    def test_quoted_value_with_trailing_comment(self):
+        # コメントを先に除去することで _unquote の既存条件が満たされる
+        fm = lib.parse_frontmatter(
+            frontmatter('title: "issue #123 fix" # trailing comment'))
+        self.assertEqual(fm["title"], "issue #123 fix")
+
+    def test_comment_only_value_opens_nested_map(self):
+        fm = lib.parse_frontmatter(frontmatter(
+            "retry_counts: # コメント",
+            "  tester_to_implementer: 0",
+            "  reviewer_to_implementer: 1",
+            "  reviewer_to_investigator: 0",
+        ))
+        self.assertIsInstance(fm["retry_counts"], dict)
+        self.assertEqual(fm["retry_counts"]["tester_to_implementer"], "0")
+        self.assertEqual(fm["retry_counts"]["reviewer_to_implementer"], "1")
+        self.assertEqual(fm["retry_counts"]["reviewer_to_investigator"], "0")
+
+    def test_nested_value_trailing_comment_stripped(self):
+        fm = lib.parse_frontmatter(frontmatter(
+            "retry_counts:",
+            "  tester_to_implementer: 1 # note",
+        ))
+        self.assertEqual(fm["retry_counts"]["tester_to_implementer"], "1")
+
+    def test_hash_without_preceding_space_preserved(self):
+        fm = lib.parse_frontmatter(frontmatter("title: C#sharp"))
+        self.assertEqual(fm["title"], "C#sharp")
+
+    def test_unclosed_quote_not_stripped(self):
+        # 壊れた入力では「除去しすぎない」安全側へ倒れる
+        fm = lib.parse_frontmatter(frontmatter('title: "a # b'))
+        self.assertEqual(fm["title"], '"a # b')
+
+    def test_leading_comment_lines_ignored(self):
+        fm = lib.parse_frontmatter(frontmatter(
+            "# 行頭コメント",
+            "status: todo",
+        ))
+        self.assertEqual(fm, {"status": "todo"})
+
+    def test_standard_ticket_unchanged_by_comment_stripping(self):
+        # AC4 回帰: コメントを含まない標準チケットの解釈は不変
+        fm = lib.parse_frontmatter(_util.ticket(status="test_passed", tti=2))
+        self.assertEqual(fm["status"], "test_passed")
+        self.assertEqual(fm["title"], "t")
+        self.assertEqual(fm["retry_counts"]["tester_to_implementer"], "2")
+        self.assertEqual(lib.validate_schema(fm), [])
+
+    # --- KLK-028 AC1: トップレベルscalarキーのcomment-only値の期待挙動 ---
+
+    def test_scalar_comment_only_value_becomes_none(self):
+        # 子行が続かない場合、コメントの有無に関わらずYAML準拠でNoneになる
+        # （{}=ネストマップ確定ではない。KLK-012 M3の残課題）
+        fm = lib.parse_frontmatter(frontmatter(
+            "title: # コメント",
+            "status: todo",
+        ))
+        self.assertIsNone(fm["title"])
+        self.assertEqual(fm["status"], "todo")
+
+    def test_scalar_empty_value_without_comment_becomes_none(self):
+        # コメントを伴わない空値も同じ規則（子行の有無のみが基準）
+        fm = lib.parse_frontmatter(frontmatter(
+            "title:",
+            "status: todo",
+        ))
+        self.assertIsNone(fm["title"])
+
+    def test_trailing_comment_only_key_at_end_of_frontmatter_becomes_none(self):
+        # current_mapが開いたままfrontmatterが終端に達するケース（ループ後処理の回帰ガード）
+        fm = lib.parse_frontmatter(frontmatter(
+            "status: todo",
+            "title: # コメント",
+        ))
+        self.assertIsNone(fm["title"])
+
+    def test_blank_line_before_child_still_attaches_to_map(self):
+        # 既存の挙動（空行を挟んでもcurrent_mapはリセットされない）が本チケットの
+        # 修正で変化しないことを固定する（investigator調査メモ。AC1の対象外だが
+        # 同じコードパスを通るため回帰ガードとして残す）
+        fm = lib.parse_frontmatter(frontmatter(
+            "title: # コメント",
+            "",
+            "  x: 1",
+            "status: todo",
+        ))
+        self.assertEqual(fm["title"], {"x": "1"})
+
+
+class TestIsTicket(unittest.TestCase):
+    """KLK-004: docs/reports/{ID}/{phase}.md が is_ticket() の対象外であることを検証する
+    （tickets/active|done/*.md のみを実チケット扱いする既存境界は変えない）。
+    KLK-012 AC1: 正規化と相対形の受理を追加する（絶対形の既存判定は不変）。"""
+
+    def test_docs_reports_path_not_a_ticket(self):
+        self.assertFalse(
+            lib.is_ticket("/repo/docs/reports/KLK-004/investigation.md"))
+
+    def test_docs_reports_other_phases_not_a_ticket(self):
+        for phase in ("implementation", "test-report", "review"):
+            self.assertFalse(
+                lib.is_ticket("/repo/docs/reports/KLK-004/%s.md" % phase))
+
+    def test_ticket_active_path_still_a_ticket(self):
+        self.assertTrue(lib.is_ticket("/repo/tickets/active/KLK-004.md"))
+
+    # --- KLK-012 AC1 ---
+
+    def test_absolute_paths_still_tickets(self):
+        self.assertTrue(lib.is_ticket("/repo/tickets/active/APP-001.md"))
+        self.assertTrue(lib.is_ticket("/repo/tickets/done/APP-001.md"))
+
+    def test_relative_active_path_is_ticket(self):
+        # AC1 の中心ケース: 先頭スラッシュ無しでも取りこぼさない
+        self.assertTrue(lib.is_ticket("tickets/active/APP-001.md"))
+
+    def test_relative_done_path_is_ticket(self):
+        self.assertTrue(lib.is_ticket("tickets/done/APP-001.md"))
+
+    def test_dot_prefixed_relative_path_is_ticket(self):
+        self.assertTrue(lib.is_ticket("./tickets/active/APP-001.md"))
+
+    def test_subdirectory_under_active_is_ticket(self):
+        self.assertTrue(lib.is_ticket("tickets/active/sub/APP-001.md"))
+
+    def test_traversal_into_tickets_is_ticket(self):
+        self.assertTrue(lib.is_ticket("x/../tickets/active/APP-001.md"))
+
+    def test_traversal_out_of_tickets_is_not_ticket(self):
+        # 従来は誤って True（チケットでないファイルへ検証をかけていた）
+        self.assertFalse(lib.is_ticket("/repo/tickets/active/../../evil.md"))
+
+    def test_component_boundary_false_positives(self):
+        self.assertFalse(lib.is_ticket("mytickets/active/APP-001.md"))
+        self.assertFalse(lib.is_ticket("docs/tickets_active/x.md"))
+
+    def test_templates_excluded(self):
+        self.assertFalse(lib.is_ticket("tickets/active/Templates/ticket.md"))
+        self.assertFalse(lib.is_ticket("/repo/tickets/Templates/t.md"))
+
+    def test_index_excluded(self):
+        self.assertFalse(lib.is_ticket("tickets/active/_index.md"))
+
+    def test_non_markdown_excluded(self):
+        self.assertFalse(lib.is_ticket("tickets/active/APP-001.txt"))
+
+    def test_backslash_separators_still_supported(self):
+        self.assertTrue(lib.is_ticket(r"C:\repo\tickets\active\APP-001.md"))
+
+
+class TestPayloadHelpers(unittest.TestCase):
+    """KLK-012 AC5: hook 入口の入力型正規化ヘルパ"""
+
+    def test_dict_payload_returned(self):
+        self.assertEqual(
+            lib.read_hook_payload(io.StringIO('{"a": 1}')), {"a": 1})
+
+    def test_non_dict_json_returns_none(self):
+        for raw in ("[]", '"x"', "3", "null"):
+            self.assertIsNone(lib.read_hook_payload(io.StringIO(raw)), raw)
+
+    def test_broken_json_returns_none(self):
+        self.assertIsNone(lib.read_hook_payload(io.StringIO("not json")))
+
+    def test_as_dict_passthrough_and_normalization(self):
+        self.assertEqual(lib.as_dict({"a": 1}), {"a": 1})
+        self.assertEqual(lib.as_dict([]), {})
+        self.assertEqual(lib.as_dict(None), {})
+        self.assertEqual(lib.as_dict("x"), {})
+        self.assertEqual(lib.as_dict(3), {})
 
 
 class TestSchema(unittest.TestCase):
@@ -285,6 +480,166 @@ class TestReconcile(unittest.TestCase):
         rc = {"tester_to_implementer": 9, "reviewer_to_implementer": 0,
               "reviewer_to_investigator": 0}
         self.assertEqual(lib.reconcile_rollbacks(rc, events), [])
+
+
+class TestSpecDriftPureFunctions(unittest.TestCase):
+    """KLK-016 設計書§9「単体境界テスト（純粋関数）について」で明示された3観点。
+    tests/test_spec_drift.py はサブプロセス起動の統合テストスタイルであり、
+    これらの純粋関数の境界はモック不要で直接呼び出して確認できる（フェイル
+    オープンの根拠になる分岐のため、統合テストとは独立に固定する）。"""
+
+    def test_sha256_file_missing_path_returns_none(self):
+        self.assertIsNone(
+            lib.sha256_file("/nonexistent/path/does-not-exist.md"))
+
+    def test_is_project_spec_nested_spec_is_false(self):
+        # docs/foo/SPEC.md はネストしたSPEC.mdであり、basename一致の
+        # guard_spec_writes.is_spec とは異なり is_project_spec は
+        # プロジェクト直下の docs/SPEC.md のみを対象とする（D3）
+        self.assertFalse(lib.is_project_spec("/repo/docs/foo/SPEC.md", "/repo"))
+        self.assertFalse(lib.is_project_spec("docs/foo/SPEC.md", "/repo"))
+
+    def test_is_project_spec_root_spec_is_true(self):
+        # 対照ケース: プロジェクト直下（絶対形・相対形とも）は真になる
+        self.assertTrue(lib.is_project_spec("/repo/docs/SPEC.md", "/repo"))
+        self.assertTrue(lib.is_project_spec("docs/SPEC.md", "/repo"))
+
+    # --- KLK-020 D1: SPEC.md 判定の case-insensitive 化（AC3） ---
+
+    def test_is_project_spec_case_insensitive_basename(self):
+        # basename の大小区別を解消（KLK-020）。絶対形・相対形の双方で確認
+        for name in ("spec.md", "Spec.md", "SPEC.MD"):
+            self.assertTrue(
+                lib.is_project_spec("/repo/docs/" + name, "/repo"), name)
+            self.assertTrue(
+                lib.is_project_spec("docs/" + name, "/repo"), name)
+
+    def test_is_project_spec_nested_spec_case_insensitive_still_false(self):
+        # basenameの大小区別を解消した後も、ネスト除外（KLK-016 D3）は
+        # 大小混在のケースで引き続き有効であることを回帰確認する
+        self.assertFalse(
+            lib.is_project_spec("/repo/docs/foo/spec.md", "/repo"))
+        self.assertFalse(lib.is_project_spec("docs/foo/Spec.md", "/repo"))
+
+    def test_is_project_spec_directory_case_still_sensitive(self):
+        # ディレクトリ部分（"docs"）の大小区別は本チケットのスコープ外
+        # であり、引き続き区別されたまま（D1のスコープ限定）
+        self.assertFalse(lib.is_project_spec("/repo/Docs/SPEC.md", "/repo"))
+        self.assertFalse(lib.is_project_spec("Docs/SPEC.md", "/repo"))
+
+    def test_is_spec_basename_case_insensitive(self):
+        for name in ("SPEC.md", "spec.md", "Spec.md", "SPEC.MD", "sPeC.mD"):
+            self.assertTrue(lib.is_spec_basename(name), name)
+
+    def test_is_spec_basename_non_match(self):
+        for name in ("SPEC_TEMPLATE.md", "SPEC.mdx", "notes.md", ""):
+            self.assertFalse(lib.is_spec_basename(name), name)
+
+    def test_is_spec_basename_non_str_returns_false(self):
+        self.assertFalse(lib.is_spec_basename(None))
+        self.assertFalse(lib.is_spec_basename(123))
+
+    # --- KLK-032: is_spec_basename_fnmatch（is_spec_basename のパターン
+    # 照合版。guard_bash_writes._guarded_paths_from_expanded の SPEC.md 側
+    # glob 事前フィルタの case-insensitive 化に使う。docs/designs/KLK-032.md
+    # §4-1・§9 参照） ---
+
+    def test_is_spec_basename_fnmatch_case_insensitive_match(self):
+        # True系: 厳密形・小文字・部分アンカー付き glob（小文字/大文字/混在）
+        for pattern in ("SPEC.md", "spec.md", "sp*.md", "SP*.MD", "Spec*.md"):
+            self.assertTrue(lib.is_spec_basename_fnmatch(pattern), pattern)
+
+    def test_is_spec_basename_fnmatch_isolated_wildcard_true(self):
+        # True系（ゲート前提の明示）: リテラル文字を1文字も含まない '*' にも
+        # True を返す。呼び出し側の KLK-031 ゲート（has_literal_char）が先に
+        # 除外する前提であり、本関数は孤立ワイルドカードの扱いに関知しない
+        # （docstring どおり。unreachable であることは
+        # test_guard_bash_writes の test_klk032_guarded_paths_from_expanded_
+        # unit が _guarded_paths_from_expanded('*') == [] で固定する）
+        self.assertTrue(lib.is_spec_basename_fnmatch("*"))
+
+    def test_is_spec_basename_fnmatch_non_match(self):
+        # False系: 拡張子不一致・パス全体（成分単位の関数でありパス区切りを
+        # 含むパターンは不一致）・空文字列
+        for pattern in ("sp*.txt", "docs/sp*.md", ""):
+            self.assertFalse(lib.is_spec_basename_fnmatch(pattern), pattern)
+
+    def test_is_spec_basename_fnmatch_non_str_returns_false(self):
+        self.assertFalse(lib.is_spec_basename_fnmatch(None))
+        self.assertFalse(lib.is_spec_basename_fnmatch(123))
+
+    # --- KLK-033: 否定文字クラス [!...] 下での .upper() 非単調性の是正
+    # （判定式を和集合形へ拡張。docs/designs/KLK-033.md §3 D2・§9 ① 参照）。
+    # KLK-032 の .upper() 単独形は pattern 全体を大文字化するため `[!s]` を
+    # `[!S]` へ変えてしまい、bash では docs/SPEC.md に一致する
+    # `[!s]PEC.md` を False と判定していた（KLK-032 レビュー Medium 3-1）。
+    # 当時は SHELL_EXPAND_PATHISH_RE が `!` を含まず本経路へ到達しなかった
+    # ため実害が無かったが、KLK-033 で `!` を追加して到達可能になったため
+    # 和集合形（そのままの大小での一致 ∪ 大文字正規化後の一致）が必須と
+    # なった。第1項が bash の照合意味論そのものであり健全性の要である。
+
+    def test_is_spec_basename_fnmatch_negated_class_monotonic_true(self):
+        # True系（非単調性の回帰検出器）: '[!x]PEC.md' は両項で真、
+        # '[!s]PEC.md' は和集合形の第1項でのみ真になる（.upper() 側は
+        # '[!S]PEC.md' へ変わり先頭の 'S' を除外して偽になる）。どちらも
+        # bash では実ファイル docs/SPEC.md に一致するため True でなければ
+        # 誤 allow になる
+        for pattern in ("[!x]PEC.md", "[!s]PEC.md"):
+            self.assertTrue(lib.is_spec_basename_fnmatch(pattern), pattern)
+
+    def test_is_spec_basename_fnmatch_negated_class_excluded_false(self):
+        # False系（和集合形が無条件 True になっていないことの固定）:
+        # '[!S]PEC.md' は先頭の大文字 'S' を除外するため bash でも
+        # docs/SPEC.md に一致しない。第1項・第2項ともに偽
+        self.assertFalse(lib.is_spec_basename_fnmatch("[!S]PEC.md"))
+
+    # --- KLK-020 tester追加: is_project_spec の実装形（設計書§4のコード例と
+    # 異なり rpartition("/") で dir/base に分解する形。implementation.md §2・
+    # §5「設計からの逸脱」参照）が、設計書の制約
+    # 「ディレクトリ部分の比較は大小区別を維持したまま・KLK-016 D3の
+    # ネスト除外を壊さない」を実際に満たすかをエッジケースで実証する。
+
+    def test_is_project_spec_different_project_absolute_docs_not_matched(self):
+        # 絶対形の別プロジェクトの docs/SPEC.md（n_dir が target_dir とも
+        # 文字列 "docs" とも一致しない）が、n_dir=="docs" という相対形専用の
+        # 分岐に誤って引っかからないことを確認する（cross-project誤検知防止）
+        self.assertFalse(
+            lib.is_project_spec("/other/project/docs/SPEC.md", "/repo"))
+
+    def test_is_project_spec_relative_nested_docs_suffix_not_matched(self):
+        # rpartition("/") で得られる n_dir は "sub/docs" であり、文字列
+        # "docs" と完全一致しないため、末尾が "docs" であるだけの深い相対
+        # パスは一致しない（n_dir=="docs" が部分一致ではなく完全一致で
+        # 判定されていることの確認）
+        self.assertFalse(lib.is_project_spec("sub/docs/SPEC.md", "/repo"))
+
+    def test_is_project_spec_absolute_form_requires_exact_target_dir(self):
+        # 絶対形は n_dir == target_dir（cwd 直下の docs）の完全一致でのみ
+        # 真になる。cwd が異なれば同名 basename でも一致しない
+        self.assertTrue(
+            lib.is_project_spec("/repo/project/docs/SPEC.md",
+                                 "/repo/project"))
+        self.assertFalse(
+            lib.is_project_spec("/repo/project/docs/SPEC.md",
+                                 "/repo/other"))
+
+    def test_load_spec_state_broken_json_returns_none(self):
+        with tempfile.TemporaryDirectory() as cwd:
+            docs = os.path.join(cwd, "docs")
+            os.makedirs(docs)
+            with open(os.path.join(docs, ".spec_state.json"), "w",
+                      encoding="utf-8") as f:
+                f.write("not json")
+            self.assertIsNone(lib.load_spec_state(cwd))
+
+    def test_load_spec_state_non_dict_returns_none(self):
+        with tempfile.TemporaryDirectory() as cwd:
+            docs = os.path.join(cwd, "docs")
+            os.makedirs(docs)
+            with open(os.path.join(docs, ".spec_state.json"), "w",
+                      encoding="utf-8") as f:
+                json.dump([1, 2, 3], f)
+            self.assertIsNone(lib.load_spec_state(cwd))
 
 
 if __name__ == "__main__":

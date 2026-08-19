@@ -4,6 +4,8 @@ stdlib のみ。外部依存なし。
 呼び出し側は「内部エラー時は allow（fail-open）」「検知した違反のみ deny（fail-closed）」
 という方針で利用する。
 """
+import fnmatch
+import hashlib
 import json
 import os
 import sys
@@ -94,17 +96,167 @@ def tickets_dir_for(ticket_path):
     return None
 
 
+def _normalize_path(path):
+    """判定用のパス正規化（cwd 非依存の純字句正規化）。
+
+    バックスラッシュ区切りをスラッシュへ寄せ、`.` / `..` / 重複スラッシュを畳む。
+    相対形は相対のまま返す（os.path.abspath は使わない = プロセスの作業
+    ディレクトリに依存させないため。docs/designs/KLK-012.md §3 D1）。
+    """
+    n = os.path.normpath(path.replace("\\", "/"))
+    return n.replace("\\", "/")  # Windows の normpath が '/' を '\' へ戻すため
+
+
+def _under_dir(n, marker):
+    """正規化済みパス n が marker（例 "tickets/active/"）配下を指すか。
+    先頭一致（相対形）と '/' 直後の一致（絶対形・サブパス）の両方を認める
+    = パスコンポーネント境界での一致。'mytickets/active/X.md' は一致しない。"""
+    return n.startswith(marker) or ("/" + marker) in n
+
+
 def is_ticket(path):
     """path が状態検証対象の実チケット（tickets/active|done/*.md）か。
-    テンプレート（/Templates/）とダッシュボード（_index.md）は対象外。"""
-    n = path.replace("\\", "/")
+
+    テンプレート（/Templates/）とダッシュボード（_index.md）は対象外。
+    パスは _normalize_path で正規化したうえで、絶対形と相対形（先頭スラッシュ
+    無し）の双方を受け付ける（KLK-012 AC1）。
+
+    guard_bash_writes.py 側の保護対象判定（_is_guarded_path / is_guarded_token）
+    とは目的が異なるため基準は統一していない（KLK-010 D2。KLK-020でKLK-010 D2の
+    根拠3点を再評価し「意図的な不統一を維持する」と確定した。根拠は
+    docs/designs/KLK-020.md §3 D2を参照）。相対形のチケットパスでは
+    tickets_dir_for が None を返すため、
+    サイドカー由来の prior と in_progress ゲートは fail-open で効かない
+    （KLK-012 §3 D3・§6 R10）。判定は str を前提とし、型の正規化は各 hook の
+    main() 側で行う（KLK-012 §3 D5）。
+    """
+    n = _normalize_path(path)
     if "/Templates/" in n:
         return False
     if os.path.basename(n) == "_index.md":
         return False
     if not n.endswith(".md"):
         return False
-    return ("/tickets/active/" in n) or ("/tickets/done/" in n)
+    return _under_dir(n, "tickets/active/") or _under_dir(n, "tickets/done/")
+
+
+def spec_path_for(cwd):
+    """cwd 直下の docs/SPEC.md のパスを返す（cwd が非str/空なら None）。
+    ネストした SPEC.md は対象外（D3）。"""
+    if not isinstance(cwd, str) or not cwd:
+        return None
+    return os.path.join(cwd, "docs", "SPEC.md")
+
+
+def spec_state_path(cwd):
+    """SPEC.md ドリフト検知用サイドカー docs/.spec_state.json のパスを返す
+    （cwd が非str/空なら None）。hook（record_metrics.py）が自動生成する。
+    LLM・エージェントは直接編集しない。"""
+    if not isinstance(cwd, str) or not cwd:
+        return None
+    return os.path.join(cwd, "docs", ".spec_state.json")
+
+
+def is_spec_basename(name):
+    """basename が大小を区別せず 'SPEC.md' と一致するか（KLK-020: is_spec /
+    _is_guarded_path / _is_guarded_path_component / is_project_spec の
+    SPEC.md 判定を一本化する単一の正規化ポイント）。glob パターン照合版は
+    is_spec_basename_fnmatch（KLK-032）。"""
+    return isinstance(name, str) and name.upper() == "SPEC.MD"
+
+
+def is_spec_basename_fnmatch(pattern):
+    """glob パターン pattern が 'SPEC.md' に fnmatch するか（大小の扱いは
+    下記2項の和集合。KLK-032 で新設し KLK-033 で和集合形へ拡張した）。
+
+    ① fnmatch.fnmatchcase("SPEC.md", pattern)
+       bash が実ファイル docs/SPEC.md に対して行う照合と同一意味論
+       （大小をそのまま比較する）。取りこぼすと「bash では一致するのに
+       hook は検出しない」= allow 方向（危険）になるため、健全性の要。
+    ② fnmatch.fnmatchcase("SPEC.MD", pattern.upper())
+       KLK-020／KLK-032 が確定した「SPEC.md 判定は大小を区別しない」
+       方針による意図的な過大近似（deny 方向=安全側）。
+
+    ①を欠くと `.upper()` が `[!s]` を `[!S]` へ変える非単調な操作になり、
+    `[!s]PEC.md` が False になる（KLK-032 レビュー Medium 3-1）。KLK-033 で
+    SHELL_EXPAND_PATHISH_RE に `!` を追加したことでこの経路は到達可能に
+    なったため、①②の和集合が必須である（docs/designs/KLK-033.md §3 D2）。
+
+    残余の限界: ②は pattern 全体を大文字化するため、ブラケット表現を含む
+    パターンについては 'SPEC.md' 以外の大小変種（'Spec.md' 等）を対象と
+    する一致を取りこぼしうる（例: '[!s]pec.md' は False。正規形
+    'SPEC.md' には bash でも一致しない）。全大小変種に対する完全閉包は
+    スコープ外（docs/designs/KLK-033.md §3 D2・§6）。
+
+    注意: リテラル文字を1文字も含まないパターン（'*'・'**' 等）にも True を
+    返す。呼び出し側の KLK-031 ゲート（has_literal_char。リテラル文字0の
+    成分では GUARDED_FILENAME を照合対象に加えない）が先に除外する前提で
+    あり、本関数は孤立ワイルドカードの扱いに関知しない（レイヤーを分離）。
+
+    呼び出し側の契約（KLK-034）: guard_bash_writes._guarded_paths_from_expanded は
+    bash のブラケット式方言（`[^...]` の否定マーカー・POSIX 文字クラス
+    `[[:class:]]` 等）を _bash_bracket_to_fnmatch で fnmatch が解釈できる形へ
+    正規化してから本関数へ渡す。本関数自身はこの正規化を行わない
+    （bash 方言の知識は共通ライブラリではなく guard_bash_writes 側に置く）。
+    """
+    if not isinstance(pattern, str):
+        return False
+    return (fnmatch.fnmatchcase("SPEC.md", pattern)
+            or fnmatch.fnmatchcase("SPEC.MD", pattern.upper()))
+
+
+def is_project_spec(path, cwd):
+    """path が cwd 直下の docs/SPEC.md と同一ファイルを指すか。
+
+    guard_spec_writes.is_spec（basename一致・ネスト許容）とは意図的に基準を
+    分ける（D3。KLK-010 D2と同型の判断）。絶対形は cwd 直下の docs/SPEC.md と
+    正規化して比較し、相対形は "docs/SPEC.md" という字句そのものだけを認める
+    （is_ticket と同様、相対形は cwd 非依存の純字句判定にとどめる）。
+    basename部分は is_spec_basename 経由で大小を区別しない
+    （KLK-020 D1）が、ディレクトリ部分（"docs"）の比較は大小を区別した
+    まま維持する（D1のスコープ限定）。
+    ネストした SPEC.md（docs/foo/SPEC.md 等）はいずれの形でも一致しない
+    （KLK-016 D3）。
+    """
+    if not isinstance(path, str) or not path:
+        return False
+    target = spec_path_for(cwd)
+    if not target:
+        return False
+    n = _normalize_path(path)
+    n_dir, _, n_base = n.rpartition("/")
+    if not is_spec_basename(n_base):
+        return False
+    target_dir = _normalize_path(target).rpartition("/")[0]
+    return n_dir == target_dir or n_dir == "docs"
+
+
+def load_spec_state(cwd):
+    """docs/.spec_state.json を読む。読めない・無い・dict でない場合は None
+    （fail-open）。"""
+    path = spec_state_path(cwd)
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def sha256_file(path):
+    """path の内容（バイト列）の sha256 ハッシュ(hex)を返す。読めない場合は
+    None（fail-open）。record_metrics.py（記録側）と check_loop_integrity.py
+    （検知側）が同一アルゴリズムを共有するためここへ集約する。"""
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
 
 
 def emit_pretooluse_decision(decision, reason):
@@ -168,6 +320,27 @@ def group_events_by_ticket(events):
     return by_ticket
 
 
+def _strip_comment(value):
+    """クォート外の `#` 以降をコメントとして除去する（YAML のコメント規則の近似）。
+
+    `#` がコメントを開始するのは「値の先頭」または「空白（スペース/タブ）の
+    直後」に現れ、かつクォートの外側にある場合のみ。クォート内の `#`
+    （`title: "issue #123 fix"`）と、空白を伴わない `#`（`title: C#`）は保持する。
+    クォートが閉じていない値では除去を行わない（除去しすぎ = 値の破壊を避ける
+    安全側。走査がクォート状態のまま終端に達するので分岐は不要）。
+    """
+    quote = None
+    for i, ch in enumerate(value):
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "#" and (i == 0 or value[i - 1] in (" ", "\t")):
+            return value[:i].rstrip()
+    return value
+
+
 def _unquote(value):
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
@@ -200,19 +373,25 @@ def parse_frontmatter(text):
         if raw[0] in (" ", "\t"):  # 直前のマッピングキー配下
             if current_map is not None and ":" in raw:
                 key, _, val = raw.strip().partition(":")
-                data[current_map][key.strip()] = _unquote(val)
+                data[current_map][key.strip()] = _unquote(
+                    _strip_comment(val.strip()))
             continue
+        if current_map is not None and not data[current_map]:
+            data[current_map] = None  # 子行が1件も来なかった＝スカラーの空値（KLK-028 AC1）
         current_map = None
         if ":" not in raw:
             continue
         key, _, val = raw.partition(":")
         key = key.strip()
         val = val.strip()
+        val = _strip_comment(val)
         if val == "":
             data[key] = {}
             current_map = key
         else:
             data[key] = _unquote(val)
+    if current_map is not None and not data[current_map]:
+        data[current_map] = None
     return data
 
 
@@ -411,3 +590,24 @@ def reconcile_rollbacks(retry_counts, events):
                 % (frm, to, key, counter, base + n, suffix)
             )
     return errors
+
+
+def read_hook_payload(stream=None):
+    """hook の stdin から JSON payload を dict として読む。
+
+    JSON として不正な場合と、妥当な JSON だが dict でない場合（配列・文字列・
+    数値・null）の両方で None を返す。呼び出し側は None を fail-open として
+    扱う（PreToolUse 系は allow、PostToolUse / Stop 系は exit 0）。
+    stream はテスト用（未指定なら sys.stdin）。
+    """
+    try:
+        data = json.load(sys.stdin if stream is None else stream)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def as_dict(value):
+    """dict ならそのまま、それ以外（None・配列・スカラー）は空 dict を返す。
+    hook 入口で tool_input 等の型を正規化するために使う。"""
+    return value if isinstance(value, dict) else {}

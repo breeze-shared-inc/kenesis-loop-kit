@@ -16,10 +16,9 @@ fail-open: 内部エラー（パース不能など）では allow。
 注意: Bashツール経由の書き込み（リダイレクト・sed -i・インタプリタ等）は
       このhookの対象外。guard_bash_writes.py（PreToolUse・Bash）が
       ベストエフォートで遮断し、各エージェント定義の Never ルールで補強する
-      （チケット側と異なり Stop hook のドリフト検知は無い — SPEC.md には
-      観測サイドカーが存在しないため）。
+      （KLK-016 で Stop hook にも SPEC.md のハッシュドリフト検知を追加した。
+      観測サイドカーは docs/.spec_state.json。ネストした SPEC.md は対象外）。
 """
-import json
 import os
 import sys
 
@@ -39,18 +38,20 @@ def is_spec(path):
     n = path.replace("\\", "/")
     if "/.claude/" in n or n.startswith(".claude/"):
         return False
-    return n.rsplit("/", 1)[-1] == "SPEC.md"
+    return lib.is_spec_basename(n.rsplit("/", 1)[-1])
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    # 入力型の正規化は hook 境界（main）で行い、判定関数（is_spec）は str を
+    # 前提とする（KLK-012 §3 D5）。非 dict の payload / tool_input、非 str の
+    # file_path はいずれも fail-open（allow）
+    data = lib.read_hook_payload()
+    if data is None:
         allow()
 
-    tool_input = data.get("tool_input") or {}
-    path = tool_input.get("file_path", "")
-    if not path or not is_spec(path):
+    tool_input = lib.as_dict(data.get("tool_input"))
+    path = tool_input.get("file_path")
+    if not isinstance(path, str) or not path or not is_spec(path):
         allow()
 
     ask(

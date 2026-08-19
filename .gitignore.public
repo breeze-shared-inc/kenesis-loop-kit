@@ -17,6 +17,9 @@ tickets/.obsidian/
 tickets/.metrics.jsonl
 tickets/.metrics_state.json
 
+# SPEC.mdドリフト検知用サイドカー（hookが自動生成。KLK-016）
+docs/.spec_state.json
+
 # Python生成ファイル（hook/metrics/testのコンパイル成果物）
 __pycache__/
 *.py[cod]
@@ -39,3 +42,9 @@ Thumbs.db
 # スキルのパッケージ成果物（ソースの正は .claude/skills/**/*.md。
 # ZIP配布物はコミットしない — 二重管理による乖離を防ぐため）
 *.skill
+
+# docs/reports/{ID}/ 配下（サブエージェントレポートの詳細外部化。investigation/review等の
+# 内部の意思決定記録のため、公開リポジトリでは追跡しない）。
+# docs/reports/README.md（運用ルール定義。実体あるドキュメント）は docs/reports/ 直下の
+# ファイルであり `docs/reports/*/` はサブディレクトリのみに一致するため対象外のまま追跡される
+docs/reports/*/

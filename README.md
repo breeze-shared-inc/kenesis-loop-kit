@@ -50,7 +50,8 @@ kenesis-loop-kit/
 │   │   ├── setup.md                 ← /setup
 │   │   ├── plan-tickets.md          ← /plan-tickets
 │   │   ├── start-loop.md            ← /start-loop
-│   │   ├── batch-loop.md            ← /batch-loop
+│   │   ├── batch-loop.md            ← /batch-loop（外部駆動バッチ）
+│   │   ├── batch-loop-inline.md     ← /batch-loop-inline（セッション内バッチ）
 │   │   ├── new-ticket.md            ← /new-ticket
 │   │   ├── improvement-loop.md      ← /improvement-loop
 │   │   ├── rollback.md              ← /rollback
@@ -72,10 +73,13 @@ kenesis-loop-kit/
 │   │   └── {ID}.md                  ← 例: APP-001.md
 │   ├── wireframes/                  ← ワイヤーフレーム（/wireframe-genが生成）
 │   ├── spec-qa/                     ← SPEC尋問の状態ファイル（/interrogate-specが生成）
-│   ├── batch-loop.md                ← 複数チケットの連続ループ実行ガイド
+│   ├── batch-loop.md                ← バッチ外部駆動ガイド（1チケット=1セッション）
+│   ├── batch-loop-inline.md         ← セッション内バッチガイド（旧方式復旧）
 │   └── obsidian-setup.md            ← Obsidian初期設定ガイド
+├── scripts/
+│   └── batch_loop.py                ← バッチ外部駆動スクリプト（人間がターミナルで実行）
 ├── src/                             ← プロジェクトのソースコード
-├── tests/                           ← hook検証・メトリクスの自動テスト（unittest）
+├── tests/                           ← hook検証・メトリクス・バッチ駆動の自動テスト（unittest）
 └── tickets/                         ← Obsidian vaultとして開く
     ├── .obsidian/                   ← 常にgitignore
     ├── _index.md                    ← チケットダッシュボード
@@ -216,7 +220,8 @@ Claude Codeのスラッシュコマンドでよく使う操作を呼び出せま
 | `/wireframe-gen` | SPECの画面一覧からワイヤーフレームを生成する | `/wireframe-gen` `/wireframe-gen SCR-001` |
 | `/plan-tickets` | SPECを基に開発をチケットへ分割し、承認を経て一括起票する | `/plan-tickets` |
 | `/start-loop` | ループを開始・再開する | `/start-loop` `/start-loop APP-001` |
-| `/batch-loop` | 複数チケットを承認ゲートで止めずに連続ループさせる | `/batch-loop APP-001 APP-002` |
+| `/batch-loop` | 外部駆動バッチ（1チケット1セッション）の検証と実行コマンドライン案内 | `/batch-loop APP-001 APP-002` |
+| `/batch-loop-inline` | セッション内バッチ（旧方式復旧・1セッションで複数チケットを連続実行）の事前承認と連続実行 | `/batch-loop-inline APP-001 APP-002` |
 | `/new-ticket` | チケットを新規作成する | `/new-ticket ログイン機能の実装` |
 | `/improvement-loop` | 改善ループを起動する | `/improvement-loop APP-001 architect` |
 | `/rollback` | 承認後に問題が発覚したチケットをロールバックする | `/rollback APP-001` |
@@ -265,10 +270,20 @@ IDの形式: `{プロジェクト略称}-{3桁連番}`（例: `APP-001`）
 /new-ticket バグ: ログイン後にセッションが切れる
 ```
 
-**複数チケットを連続でループさせる:**
+**複数チケットを連続でループさせる（外部駆動バッチ・1チケット=1セッション）:**
 ```
 /batch-loop APP-001 APP-002
 ```
+`/batch-loop` はプリフライト検証と実行コマンドラインの提示までを行います。バッチ本体は人間がターミナルから実行します（詳細は `docs/batch-loop.md`）。
+```bash
+python3 scripts/batch_loop.py APP-001 APP-002
+```
+
+**複数チケットを対話セッション内で見守りながら連続実行する（セッション内バッチ・少数件向け）:**
+```
+/batch-loop-inline APP-001 APP-002
+```
+事前承認テンプレートへの承認後、orchestratorが同一セッション内で連続実行します（詳細・使い分けは `docs/batch-loop-inline.md`）。
 
 **成果物確認後に改善ループを起動する:**
 ```

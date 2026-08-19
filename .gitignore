@@ -17,6 +17,9 @@ tickets/.obsidian/
 tickets/.metrics.jsonl
 tickets/.metrics_state.json
 
+# SPEC.mdドリフト検知用サイドカー（hookが自動生成。KLK-016）
+docs/.spec_state.json
+
 # Python生成ファイル（hook/metrics/testのコンパイル成果物）
 __pycache__/
 *.py[cod]

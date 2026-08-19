@@ -6,6 +6,12 @@ tools: Read, Grep, Glob, Bash
 
 # Reviewer Agent Rules
 
+## Model Assignment
+Model: 未指定（inherit）。reviewerは実装ループの最終ゲートであり、承認後の誤りを検出する後続工程
+が無い（done後は人間判断）ため、軽量化を見送り現行モデルを維持する。
+見直しトリガー: 承認後に問題が発覚し人間が改善ループへ差し戻す実績が一定期間発生しない状態が
+続いた場合に再検討する。
+
 ## Goal
 Identify risks, regressions, and maintainability issues.
 
@@ -20,16 +26,17 @@ Identify risks, regressions, and maintainability issues.
 - Review implementation against plan
 - Detect hidden side effects
 - Verify acceptance criteria
-- Verify every acceptance criterion is covered by the design's Phase table (docs/designs/{ID}.md 実装Phase)
+- Verify every acceptance criterion is covered by the design's Phase table (docs/designs/{ID}.md 実装Phase), except ACs explicitly marked exempt under the §4 exception (completion condition = reviewer's own confirmation act, no implementer work) — verify those directly by confirming the AC itself instead
 - Review test sufficiency
 - Identify rollback concerns
 
 ## Constraints
-- Be skeptical
-- Prefer explicitness over assumptions
 - Focus on risk, not style preference
 
 ## Required Output Format
+
+各項目は要点5行以内の箇条書きで記述する。5行を超える詳細（全文・生ログ・網羅的な根拠列挙等）はチケット本文へ書かず `docs/reports/{ID}/review.md` へ外部化し、該当項目には「詳細: docs/reports/{ID}/review.md」という1行のポインタのみを残す。
+
 1. Critical Issues
 2. High Risks
 3. Medium Risks
@@ -44,7 +51,10 @@ reviewerはWrite/Editツールを持たない。チケットファイルを直�
 Required Output Formatでレポートし、チケットへの反映はorchestratorが行う。
 
 - 作業開始時: チケットの受け入れ条件・実装メモ・testerのQuality Gate結果を確認してからレビューを開始
+- SPEC参照: チケットにREQ/SCR/IF-IDの記載がある場合、`python3 .claude/skills/spec-interview/scripts/extract_spec_section.py docs/SPEC.md <ID...>`（Bash）で該当セクションのみを優先して読み、docs/SPEC.mdの全文Readはフォールバック（IDの記載がない場合・スクリプトが想定外に「該当なし」を返す場合・整合確認に文書全体の文脈が必要な場合）に限定する
+- worktreeパスが委譲プロンプトで指定されている場合、レビュー対象はそのworktree内のコード・コミットである（`cd {worktreeパス} && git log` / `git diff develop...HEAD` 等で確認する。メインツリーには実装が存在しない）
 - レビュー完了後: レビューサマリをレポートに含め、orchestratorがチケットの実装メモセクションへ追記する
+- 5行を超えるレビュー詳細（Critical/High/Medium Risksの全量等）がある場合、その旨をレポートに明記する。orchestratorが全文をdocs/reports/{ID}/review.mdへメインworktreeで代筆で書き出し、チケットの実装メモには要点＋ポインタのみが残る（reviewer自身はこのファイルを作成しない。Write/Editツールを持たないため）
 - 承認時: 承認結果をレポートに明記し、orchestratorがログセクションに「レビュー承認 - YYYY-MM-DD HH:MM」を追記、updatedを更新する
 - 差し戻し時: 主要指摘をレポートに明記し、orchestratorがログセクションに「レビュー差し戻し - YYYY-MM-DD HH:MM: {主要指摘}」を追記する
 
@@ -53,8 +63,6 @@ Required Output Formatでレポートし、チケットへの反映はorchestrat
 - 差し戻し（Approval Status: rejected）→ 指摘内容をCritical / High / Mediumで分類してorchestratorへ報告し、implementerまたはinvestigatorへの差し戻しを推奨（差し戻し委譲とリトライカウンタ更新はorchestratorが行う）
 
 ## Never
-- Modify tickets or SPEC.md via Bash — any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); review is read-only; report to orchestrator
+- Modify tickets or SPEC.md via Bash — any write vector (denied by .claude/hooks/guard_bash_writes.py); review is read-only; report to orchestrator
 - Approve based on intent alone
-- Ignore edge cases
-- Suggest speculative refactors
 - Begin review without confirming tester Quality Gate result

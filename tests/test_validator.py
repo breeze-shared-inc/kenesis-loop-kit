@@ -113,10 +113,86 @@ class TestValidator(unittest.TestCase):
         path = os.path.join(self.cwd, "tickets", "Templates", "ticket.md")
         self.assertAllow(write_payload(path, _util.ticket(status="todo")))
 
+    def test_docs_reports_path_skips_ticket_validation(self):
+        # KLK-004: docs/reports/{ID}/{phase}.md は is_ticket() 非該当のため、
+        # frontmatter必須キー等のチケット検証を一切スルーする（is_ticket()ゲートより前で弾かれない）
+        path = os.path.join(self.cwd, "docs", "reports", "KLK-004", "investigation.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.assertAllow(write_payload(path, "# KLK-004 investigation\n\nno frontmatter here\n"))
+
     def test_broken_stdin_allow(self):
         rc, out, _ = _util.run_script(_util.VALIDATOR, "not json", cwd=self.cwd)
         self.assertEqual(rc, 0)
         self.assertIsNone(_util.hook_output(out))
+
+    # --- KLK-012 AC1: 相対パスでも状態検証が働く ---
+
+    def test_relative_path_illegal_transition_deny(self):
+        # 従来は is_ticket が False になり検証が丸ごと飛んでいた
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
+        rel = os.path.join("tickets", "active", "APP-001.md")
+        self.assertDeny(edit_payload(rel, "status: design_done",
+                                     "status: done"))
+
+    def test_relative_path_legal_transition_allow(self):
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
+        rel = os.path.join("tickets", "active", "APP-001.md")
+        self.assertAllow(edit_payload(rel, "status: design_done",
+                                      "status: implementation_done"))
+
+    def test_relative_path_missing_file_write_allow(self):
+        # 相対パスが hook プロセスの cwd で解決できない → 「新規作成」と断定せず
+        # 素通りさせる（§3 D6。AC1 が新たな誤 deny を生まないための fail-open）
+        rel = os.path.join("tickets", "active", "APP-777.md")
+        self.assertAllow(write_payload(
+            rel, _util.ticket(status="done", tid="APP-777")))
+
+    def test_absolute_path_missing_file_write_still_deny(self):
+        # 絶対パスで実体が無い場合は従来どおり新規作成として扱う（曖昧さが無い）
+        path = os.path.join(self.cwd, "tickets", "active", "APP-778.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.assertDeny(write_payload(
+            path, _util.ticket(status="done", tid="APP-778")))
+
+    # --- KLK-028 AC3: 相対パス × 実体あり × Write 分岐のdenyを固定する ---
+    # reconstructのWrite分岐はexists判定→isabs判定の順（KLK-012 D6）。順序が
+    # 入れ替わると本来denyすべき不正遷移がallowへバイパスされる
+    # （KLK-028 investigation実測。既存テストはEdit分岐のみをカバーしていた）。
+
+    def test_relative_path_write_existing_file_illegal_transition_deny(self):
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
+        rel = os.path.join("tickets", "active", "APP-001.md")
+        self.assertDeny(write_payload(
+            rel, _util.ticket(status="done", tid="APP-001")))
+
+    def test_relative_path_write_existing_file_legal_transition_allow(self):
+        _util.write_ticket(self.cwd, "APP-001.md", status="design_done")
+        rel = os.path.join("tickets", "active", "APP-001.md")
+        self.assertAllow(write_payload(
+            rel, _util.ticket(status="implementation_done", tid="APP-001")))
+
+    # --- KLK-028 AC4: `./` 明示形の相対パス × 実体なし = allow を固定する ---
+    # D6の意図的緩和（KLK-012 review M1）。既存の
+    # test_relative_path_missing_file_write_allow は `./` 無しの綴りのみをカバーしていた。
+
+    def test_dot_prefixed_relative_path_missing_file_write_allow(self):
+        rel = os.path.join(".", "tickets", "active", "APP-780.md")
+        self.assertAllow(write_payload(
+            rel, _util.ticket(status="done", tid="APP-780")))
+
+    # --- KLK-012 AC5: 非 dict 入力でクラッシュしない ---
+
+    def test_non_dict_stdin_allow(self):
+        rc, out, _ = _util.run_script(_util.VALIDATOR, "[]", cwd=self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "")
+
+    def test_non_dict_tool_input_allow(self):
+        self.assertAllow({"tool_name": "Write", "tool_input": []})
+
+    def test_non_str_file_path_allow(self):
+        self.assertAllow({"tool_name": "Write",
+                          "tool_input": {"file_path": 123}})
 
     # --- サイドカー（.metrics_state.json）を prior の正とする検証 ---
 

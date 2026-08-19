@@ -19,6 +19,16 @@ Write/Edit を経ない書き換え（Bashリダイレクト・インタプリ�
 （観測値へ戻す、または観測値からの正当な遷移として適用し直す）を強制する。
 サイドカー側を直接書き換えて解消してはならない。
 
+SPEC.mdドリフト検知（KLK-016）:
+hook管理のサイドカー docs/.spec_state.json（record_metrics.py が最後に観測
+した sha256ハッシュ）と docs/SPEC.md（プロジェクト直下のみ。ネストした
+SPEC.md は対象外）の内容を突き合わせ、Write/Edit を経ない書き換えを検出
+する。SPEC.md が存在しない、またはサイドカーに記録が無い（hook導入前・
+SPEC.md作成直後で一度もWrite/Editを経ていない等）場合は照合しない
+（fail-open）。この検知は tickets/active ディレクトリの有無から独立して
+実行される（ticket機構を使わないプロジェクトへの本hook単体流用を想定。
+フォローアップで是正、docs/designs/KLK-016.md §3 D6）。
+
 fail-open: 内部エラーでは継続を許可（exit 0）。サイドカーに記録が無い
 チケット（hook導入前の旧チケット等）はドリフト照合をスキップする。
 無限ループ防止: stop_hook_active が真なら何もしない。
@@ -152,32 +162,65 @@ def check_done_ticket_drift(path, state):
     return ["%s: %s" % (os.path.basename(path), e) for e in errors]
 
 
+def check_spec_drift(cwd):
+    """docs/SPEC.md（プロジェクト直下）のハッシュドリフトを検知する（KLK-016）。
+    SPEC.md が存在しない、またはサイドカーに記録が無い場合は照合しない
+    （fail-open。AC3）。"""
+    spec_path = lib.spec_path_for(cwd)
+    if not spec_path or not os.path.isfile(spec_path):
+        return []
+    record = lib.load_spec_state(cwd)
+    if not isinstance(record, dict):
+        return []
+    observed = record.get("hash")
+    if not observed:
+        return []
+    current = lib.sha256_file(spec_path)
+    if current is None:
+        return []
+    if current != observed:
+        return [
+            "docs/SPEC.md: Write/Edit を経ない変更を検出しました"
+            "（最後に検証されたハッシュと現在の内容が不一致）。"
+            "正規経路（Write/Edit ツール・人間の diff 承認）で変更を"
+            "再適用するか、意図しない変更なら元の内容へ戻してください"
+            "（docs/.spec_state.json は直接編集しないこと）"
+        ]
+    return []
+
+
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    # 入力型の正規化は hook 境界（main）で行う（KLK-012 §3 D5）。
+    # 非 dict の payload・非 str の cwd はいずれも fail-open
+    data = lib.read_hook_payload()
+    if data is None:
         sys.exit(0)
 
     if data.get("stop_hook_active"):
         sys.exit(0)  # 直前が Stop hook 由来の継続なら再ブロックしない
 
-    cwd = data.get("cwd") or os.getcwd()
-    active_dir = os.path.join(cwd, "tickets", "active")
-    done_dir = os.path.join(cwd, "tickets", "done")
-    if not os.path.isdir(active_dir):
-        sys.exit(0)
-
-    events_by_ticket = lib.group_events_by_ticket(
-        lib.load_events(os.path.join(cwd, "tickets", ".metrics.jsonl")))
-    state = lib.load_state(os.path.join(cwd, "tickets"))
+    cwd = data.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        cwd = os.getcwd()
 
     problems = []
-    for path in sorted(glob.glob(os.path.join(active_dir, "*.md"))):
-        if os.path.basename(path) == "_index.md":
-            continue
-        problems.extend(check_ticket(path, events_by_ticket, state))
-    for path in sorted(glob.glob(os.path.join(done_dir, "*.md"))):
-        problems.extend(check_done_ticket_drift(path, state))
+    # SPEC.mdドリフト検知は tickets/ ディレクトリの有無から独立して実行する
+    # （D2: ticket機構からの疎結合。フォローアップで是正、§3 D6）
+    problems.extend(check_spec_drift(cwd))
+
+    active_dir = os.path.join(cwd, "tickets", "active")
+    done_dir = os.path.join(cwd, "tickets", "done")
+    if os.path.isdir(active_dir):
+        events_by_ticket = lib.group_events_by_ticket(
+            lib.load_events(os.path.join(cwd, "tickets", ".metrics.jsonl")))
+        state = lib.load_state(os.path.join(cwd, "tickets"))
+
+        for path in sorted(glob.glob(os.path.join(active_dir, "*.md"))):
+            if os.path.basename(path) == "_index.md":
+                continue
+            problems.extend(check_ticket(path, events_by_ticket, state))
+        for path in sorted(glob.glob(os.path.join(done_dir, "*.md"))):
+            problems.extend(check_done_ticket_drift(path, state))
 
     if problems:
         reason = (

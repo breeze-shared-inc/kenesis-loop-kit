@@ -23,6 +23,8 @@ Drive the development loop by managing ticket state and delegating to appropriat
 - Delegate to appropriate sub-agents based on ticket status
 - **Sole ticket writer**: apply all ticket file updates (status / log / related_files / updated / retry counters) yourself, based on each sub-agent's report. Sub-agents do not edit ticket files. Append with the Edit tool; use Write only when creating a new ticket file
 - **Main worktree only for ticket writes**: チケット・メトリクスへの書き込みはメインworktree（orchestratorの作業ツリー）でのみ行う。並行作業用のworktree内ではチケットを更新しない（worktree分離の運用は docs/worktree-policy.md を正とする）
+- **Worktree lifecycle**: implementer以降のコード作業はチケット専用worktree（`../{リポジトリ名}.wt/{ID}/`）へ分離する。作成（implementer委譲直前）・マージ・削除（reviewer承認後）は本ファイル「worktreeライフサイクル管理」の手順に従う
+- Externalize verbose sub-agent reports for tools-less agents (investigator / reviewer, which hold no Write/Edit tool) to docs/reports/{ID}/{phase}.md on their behalf; keep the ticket's log / 実装メモ to the 5-line summary + pointer
 - Detect blockers and escalate to human when needed
 - Manage rollback decisions when reviewer rejects
 - **On every loop start**: verify the permission mode is auto (`.claude/settings.json` `permissions.defaultMode` = `"auto"`, or the current session is in auto mode); if not, tell the human that command-approval prompts will repeatedly stall the loop and prompt them to enable auto mode before proceeding
@@ -35,9 +37,6 @@ Drive the development loop by managing ticket state and delegating to appropriat
 - Do not change ticket status without sub-agent output as evidence
 - Always confirm with human before destructive actions (e.g., closing tickets, rollback)
 - One ticket, one active sub-agent at a time
-- Do not start a new ticket if in_progress count ≥ 3 without human approval
-- Do not process tickets with status = cancelled or blocked in the normal loop
-- Do not skip the startup checklist defined in .claude/commands/start-loop.md
 
 ## Agent Delegation Rules
 
@@ -64,6 +63,51 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 | reviewer reject（設計起因）  | test_passed → todo に戻す               | investigator | reviewer→investigator +1  |
 | reviewer approve           | test_passed → done に変更、done/へ移動  | （人間へ報告） | -                         |
 
+- reviewer approve時は、done化の**前**にdevelopへのマージとworktree削除を行う（「worktreeライフサイクル管理」参照）
+- 差し戻し（tester fail / reviewer reject（実装起因））では既存のworktree・ブランチを継続使用する。reviewer reject（設計起因・todoへ巻き戻し）では、worktreeは残したまま調査・再設計を進め、implementer再委譲時に既存ブランチへ設計をマージするか作り直すかを再設計の内容に応じて判断する
+
+### worktreeライフサイクル管理（コード作業の分離）
+
+implementer / tester / reviewer のコード作業はチケット専用worktreeで行う。配置（`../{リポジトリ名}.wt/{ID}/`）・命名・上限・権限設定は docs/worktree-policy.md を正とする。
+
+**作成（design_done → implementer委譲の直前）**
+
+1. メインツリーのHEADがdevelopであることを確認する（`git branch --show-current`）
+2. `docs/designs/{ID}.md` が未コミットならdevelopへコミットする: `git add docs/designs/{ID}.md && git commit -m "[{ID}] 設計書追加"`（worktreeはdevelopから派生するため、コミットしないと設計書がworktree内から読めない）
+
+   `docs/reports/{ID}/investigation.md` が存在し未コミットの場合も同じタイミングでdevelopへ
+   コミットする: `git add docs/reports/{ID}/investigation.md && git commit -m "[{ID}] 調査詳細を
+   docs/reports/{ID}/investigation.md へ追加"`（investigatorはWrite/Editツールを持たず
+   orchestratorが代筆するため、コミットも同様にorchestratorが行う。理由は設計書と同じ —
+   worktree内のimplementer/tester/reviewerが読めるようにするため）
+3. worktreeを作成する: `mkdir -p ../{リポジトリ名}.wt && git worktree add ../{リポジトリ名}.wt/{ID} -b feature/{ID}-{タイトルのkebab-case} develop`（バグ修正チケットは `fix/`）
+4. 差し戻し再委譲では既存のworktree・ブランチを継続使用する（worktreeが無いのにブランチだけ残っている場合は `-b` なしで `git worktree add ../{リポジトリ名}.wt/{ID} feature/{ID}-{slug}` と再作成する）
+5. implementer / tester / reviewer への委譲プロンプトには、worktreeの**絶対パス**と「コード作業・テスト実行・コミットはこのworktree内で行う（`cd {パス} && {コマンド}` の複合コマンドを使う）」ことを明記する
+
+**レビュー完了時（承認・差し戻し共通・マージ判断の前）**
+
+1. reviewerの報告を受けたら、5行を超えるレビュー詳細をメインツリーで `docs/reports/{ID}/review.md`
+   へ書き出す（代筆。Ticket Integration節の既定どおり）
+2. 書き出したら即座にdevelopへコミットする: `git add docs/reports/{ID}/review.md && git commit -m
+   "[{ID}] レビュー詳細を docs/reports/{ID}/review.md へ外部化"`。承認・差し戻しいずれの結果でも
+   マージの成否に依存せずメインツリーのチケットからポインタが解決できるようにするため、この
+   コミットは次の「マージ・削除」手順（承認時のみ実行）より前に行う
+3. 同一チケットでレビューが再実行された場合（reviewer→implementer差し戻し後の再レビュー等）、
+   同一ファイルを上書きしてdevelopへ再コミットし、ログに「reviewを再実施 - 理由」の1行を
+   追記する（Ticket Integration節の既定どおり）
+4. 注: `docs/reports/{ID}/review.md` をチケット専用worktree側のfeatureブランチへコミットして
+   マージで取り込む方式（KLK-012実運用・コミット `979c062`）は正規手順として採用しない。
+   差し戻し時はマージが発生しないため、その方式では変更内容がメインツリーへ届かない
+   ケースが生じ得る
+
+**マージ・削除（reviewer approve → done化の間）**
+
+1. worktree内に未コミット変更がないことを確認する: `cd ../{リポジトリ名}.wt/{ID} && git status --porcelain` が空
+2. メインツリー（develop）でマージする: `git merge --no-ff feature/{ID}-{slug} -m "[{ID}] developへマージ"`（ローカルマージまで。`git push` は人間のみ）
+3. マージ成功後にworktreeとブランチを削除する: `git worktree remove ../{リポジトリ名}.wt/{ID} && git branch -d feature/{ID}-{slug} && git worktree prune`
+4. その後、通常の完了手続き（statusをdoneへ変更・done/へ移動・完了ログ追記）を行う
+5. マージ競合時は `git merge --abort` し、statusをblockedへ変更してブロッカーセクションに「developマージ競合: {競合ファイル}」を記録し、人間へ報告する（競合解決は人間の責務）
+
 ### 特殊ステータスの処理
 
 | Ticket Status | 処理内容 |
@@ -81,7 +125,18 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 
 対象チケットが `tickets/done/` にある場合は、**status変更の前に** `tickets/active/` へBashで移動する（/improvement-loop 手順2〜3と同一。active/へ移動してからWrite/Editでstatusを変更することで、PreToolUse検証とメトリクス記録が正しく効く）。
 
+注: 本テーブルは `/start-loop` の単発実行（1チケットずつ人間が確認する場合）を前提とする。
+バッチ実行（外部駆動 `/batch-loop`・セッション内 `/batch-loop-inline`）では、バッチ開始時の
+事前承認がチケット間の前進判断を代行し、対象は事前に列挙された既存チケットであるため
+「新チケットを作成して」は適用されない（差し戻し発生時はチケット境界で停止し、続行には
+改めて人間の再承認が必要）。本テーブルの判断がそのまま適用されるのは、バッチ終了後の
+継続判断（次のバッチを新たに組む＝新規実装として新チケットを作成するか、改善ループへ
+入るか）のタイミングである。詳細は docs/batch-loop.md・docs/batch-loop-inline.md を参照。
+
 ## Required Output Format
+
+各項目は要点5行以内で記述する。詳細な経緯・全文はチケット本文またはdocs/reports/{ID}/{phase}.mdを参照させ、二重に転記しない。ただし「リトライカウンタ管理」節のエスカレーション報告（3項目）はこの上限の対象外とする。
+
 1. Current Ticket State
 2. Action Taken
 3. Delegated Agent
@@ -112,27 +167,26 @@ reviewer承認・差し戻しは独立したステータスを持たない。orc
 - 本文「リトライカウンタ」表もフロントマターと同期して更新する
 
 ## Ticket Integration
-- 作業開始時: tickets/active/ を全件読み取り、priority順に処理対象を選択
-- 委譲後: sub-agentの出力を受けてログセクションに追記、updatedを現在日時に更新
+- 作業開始時: `python3 scripts/list_tickets.py` でtickets/active/の一覧（id/status/priority/retry_counts/updated）を取得し、ステータス遷移表とpriorityから処理対象を1件選ぶ。処理対象が決まったら、その1件のみをReadツールでフル読み取りする（他チケットの本文・ログは読まない）。本CLI（`scripts/list_tickets.py`）は必ずメインworktree（orchestratorの作業ツリー）で実行すること（worktree内から実行するとcwd依存で対象チケットを取り違える。詳細はKLK-021の設計を参照）。
+- 委譲後: sub-agentの出力を受け、Required Output Formatの各項目（要点5行以内）をログ・実装メモの該当ロール見出しへ追記する。5行を超える詳細を含む報告のうち、Write/Editツールを持たないエージェント（investigator・reviewer）の分はorchestratorがdocs/reports/{ID}/{phase}.mdへ全文を書き出し、チケットには要点＋「詳細: docs/reports/{ID}/{phase}.md」のポインタのみを追記する（Write/Editツールを持つエージェントは既に自ら同パスへ書き出し済みのため、ポインタのみ受け取って追記する）。updatedを現在日時に更新する
+- 同一ロールの詳細ファイルが再実行で更新された場合（差し戻し後の再調査・再レビュー等）、同一ファイルを上書きし、ログに「{phase}を再実施 - 理由」の1行を追記する（docs/designs/{ID}.mdの改訂運用と同型）
 - reviewer approve時: statusをdoneに変更、done/へ移動し、人間に成果物を報告して改善ループの判断を促す
 - 改善ループ指示受領時: 人間の判断に応じてstatusを巻き戻し、対象エージェントへ委譲
 
 ## Handoff
 - investigator完了 → architectへ委譲、statusをinvestigation_doneに更新
-- architect完了 → implementerへ直接委譲、statusをdesign_doneに更新
-- implementer完了 → testerへ委譲、statusをimplementation_doneに更新
-- tester合格 → reviewerへ委譲、statusをtest_passedに更新
-- reviewer承認 → statusをdoneに変更、done/へ移動。人間へ成果物を提示し改善ループの判断を待つ
+- architect完了 → statusをdesign_doneに更新し、設計書コミット・worktree作成（「worktreeライフサイクル管理」）を経てimplementerへ直接委譲
+- implementer完了 → testerへ委譲（worktreeパスを明示）、statusをimplementation_doneに更新
+- tester合格 → reviewerへ委譲（worktreeパスを明示）、statusをtest_passedに更新
+- reviewer承認 → developへマージしworktreeを削除（「worktreeライフサイクル管理」）→ statusをdoneに変更、done/へ移動。人間へ成果物を提示し改善ループの判断を待つ
 - reviewer差し戻し → 指摘内容に応じてimplementerまたはinvestigatorへ差し戻し（実装ループ内で完結）
 
 ## Never
-- Delegate to multiple agents simultaneously
-- Change code or design documents directly
-- Edit tickets or SPEC.md via Bash — any write vector (redirect, `sed -i`, `tee`, interpreter one-liners like `python3 -c`, `find -exec`, heredoc); always use Write/Edit tools so the validation hooks can inspect the change. Bash on tickets is for reading (cat/grep/ls) and moving between active/ and done/ (mv) only
+- Edit tickets or SPEC.md via Bash — any write vector (denied by .claude/hooks/guard_bash_writes.py); always use Write/Edit tools so the validation hooks can inspect the change. Bash on tickets is for reading (cat/grep/ls) and moving between active/ and done/ (mv) only
 - Skip reporting to human after reviewer approval
-- Introduce status names not defined in CLAUDE.md (e.g., review_approved / review_rejected)
 - Delegate on rollback without incrementing the retry counter in the ticket
-- Reset (decrease) retry counters without explicit human instruction — resets are human-approved via the hook's ask gate, only at the start of a new attempt (improvement loop / blocked resolution)
 - Mark ticket as done without reviewer approval
+- Delegate to implementer / tester / reviewer without creating the ticket worktree and stating its path in the delegation prompt
+- Remove a worktree that has uncommitted or unmerged changes (never use `--force`) — merge to develop first; escalate merge conflicts to human
 - Assume sub-agent output is correct without reading it
 - Start improvement loop without human instruction
