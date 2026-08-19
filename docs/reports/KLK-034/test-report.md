@@ -16,6 +16,14 @@ python3 -m unittest discover -s tests -p "test_*.py"
 - tester追加3件を含めた最終実測: **840件 OK**（回帰0）
 - 実行時間: 約59〜92秒（実行環境依存の揺れ。失敗0件）
 
+**Phase 4（reviewer差し戻し対応）再実測（2026-08-19・本worktree HEAD `8cec2bf`）:**
+- `python3 -m unittest discover -s tests -p "test_*.py"` → **849件 OK**（失敗0）。
+  実行時間 44.826s。差し戻し時点baseline 840件に対し **回帰0**（+9件はPhase 4(ii)の
+  上限境界・コスト回帰・`/`メンバー・既知の限界・意味論乖離のテスト）。
+- KLK-034関連テスト31メソッド（Phase1/2の19＋tester既存3＋Phase4(ii)の9）を個別実行し
+  全件okを確認（`python3 -m unittest -v tests.test_guard_bash_writes` でメソッド名grep）。
+- 詳細は本レポート§9を参照。
+
 ## 2. 受け入れ条件×テスト観点6群の照合結果
 
 設計書§9のテスト観点6群と実装済み19メソッドを突き合わせ、全群に最低1メソッドが
@@ -116,7 +124,161 @@ git diff develop..HEAD -- tests/
   （§3）でallow方向の劣化が構造的に起きないことを直接実証した（長さ一致のみで
   denyへ倒れる＝安全側）。
 
-## 8. Quality Gate
+## 8. Quality Gate（初回。840件時点）
 
 pass。全件テスト840件OK（回帰0）。AC1〜AC8すべてに対応するテスト・記述面の
 根拠を確認した。production code（`.claude/hooks/*.py`）は変更していない。
+
+**この判定はreviewerにより差し戻された（review.md §1 Critical: 新設スキャナの
+超線形・無上限コスト）。Phase 4対応後の再判定は§9・§10を正とする。**
+
+## 9. Phase 4（reviewer差し戻し対応）検証
+
+対象コミット: `248c782`（コード）→`f2dd344`（テスト9件）→`fad60dd`（設計書）→
+`8cec2bf`（実装レポート）。差し戻し理由: `_scan_bracket_expression`／
+`_bash_bracket_to_fnmatch` の走査コストが超線形・無上限で、約2万字の単一トークンで
+hookの所要時間がPreToolUse既定タイムアウト（60s）を超え、fail-open方針と重なって
+人間承認ゲートをすり抜けうるというもの（review.md §1）。
+
+すべて `pre` = `e17c55d`（差し戻し対象。scratchpad `prefix_hooks` へ複製し
+`git show e17c55d:.claude/hooks/guard_bash_writes.py` とのdiff0で複製の正しさを確認済み）、
+`new` = 本worktree HEAD `8cec2bf` として、tester自身が本worktree上で実測した
+（検証スクリプトはリポジトリ外のスクラッチ領域のみに置き、コミットしていない）。
+
+### 9-1. Criticalの解消（自前実測。修正前後の対照）
+
+reviewerが実測した形そのもの（`"[:"×k` 単一トークン）を tester が独立に再実測した。
+
+| 対象 | 長さ | pre（e17c55d） | new（HEAD） | 倍率 |
+|---|---|---|---|---|
+| `_bash_bracket_to_fnmatch` 単体 | 8,000字 | 6.614s | 0.00224s | ×2,952 |
+| 同 | 16,000字 | 49.231s | 0.00240s | ×20,510 |
+| 同 | 24,000字 | 146.109s | 0.00668s | ×21,884 |
+| end-to-end `find_violation("rm "+word)` | 8,000字 | 7.404s | 0.00444s（fallback denyのため） | ×1,668 |
+| end-to-end `find_violation("rm "+word+" docs/SPEC.md")` | 16,000字 | 49.007s・**DENY** | 0.00785s・**DENY** | ×6,244 |
+| 同 | 24,000字（reviewer実測形と同一） | 150.979s・**DENY** | 0.01987s・**DENY** | ×7,599 |
+| `"["×n`（コロン無し。POSIXクラス要素なしでもO(n²)であることの確認） | 8,000字 | 3.086s | 0.00137s | ×2,252 |
+
+- reviewer実測値（review.md §1-1）は16,000字=37.0s（単体）／38.33s（end-to-end）・
+  24,000字=118.7s（end-to-end）。tester実測（本worktree・本環境）はそれより大きい値
+  （16,000字=49.0〜49.2s・24,000字=146〜151s）だが、**桁は一致**しており
+  「約2万字でPreToolUse既定タイムアウト60sを大きく超える」という結論は
+  environment differenceに関わらず成立する。修正後はいずれも0.02s未満で、
+  **DENYという判定内容は修正前後で一致**（=Criticalの核心である「timeoutで
+  fail-openに落ちる前にdenyを返せる」ことを実測で確認）。
+- サブプロセス経由（実際のhookエントリポイントを起動する`_util.run_script`。
+  Python起動オーバーヘッドを含む）でも24,000字end-to-endが**0.064〜0.103s**
+  （3回計測）であり、`test_klk034_bracket_scan_cost_regression_end_to_end`の
+  しきい値15.0sに対して約150〜230倍の余裕がある。単体テストのしきい値5.0sも
+  実測0.002〜0.007sに対して約700〜2,500倍の余裕。→ **時間しきい値2件は
+  現実的な環境ゆらぎで不安定になる可能性は極めて低い**と判断する。
+
+### 9-2. 「戻り値不変」の主張の検証（修正前後の出力対照）
+
+`_scan_bracket_expression`の走査範囲限定（`rfind("]")`による早期return・`while`条件・
+`find`の第3引数）が`_bash_bracket_to_fnmatch`の戻り値を変えないという主張を、pre/new
+両実装に同一入力を与えて直接対照した。
+
+- 総当たり: alphabet `[]^!:.S`（7文字）× 長さ1〜5 = **19,607パターン**、不一致
+  **0件**。
+- ランダム: alphabet `[]^!:.=xS/`（10文字、`x`/`S`/`/`/`=`を含む）× 長さ1〜40 ×
+  **20,000トライアル**（seed固定・再現可能）、不一致 **0件**。
+- 境界形個別確認（`]`を含まない語・`]`が`[`より前にある語）: `"[abc"`・`"]abc["`・
+  `"]]][[["`・`"a]b[c"` の4形すべてpre/new一致。
+- 結論: **本worktreeで実測した範囲では戻り値不変の主張に反例なし**（全19,607＋
+  20,000＋4件が一致）。
+
+### 9-3. deny方向フォールバックの正しさ・しきい値境界の精度
+
+- `MAX_BRACKET_SCAN_WORK = 20000`。しきい値の**直下**（積20,000。`"["×20+"a"×979`、
+  長さ999）は正規に走査され、実際に一致しない語は**allow**を維持し、同コマンドに
+  実際のdeny対象（`docs/SPEC.md`）を追加すれば**deny**（precision維持、fallback
+  未発動）。しきい値**直上**（積21,000。1文字違いの`"["×21+"a"×979`）は
+  fallbackが発動し単独でも**deny**（安全側）、かつ`cat`（読み取り専用head）では
+  **allow**（fallbackは書き込み判定自体を変えない）。
+- **実際に意味論的に一致する/一致しない語を使った境界確認（tester独自追加。設計書・
+  implementer報告にはこの形の実測は無かった）:** `"[[:upper:]]"×5+".md"`
+  （SPEC.mdとは長さ不一致＝常にallowが正しい）にフィラーを付加し、積が
+  **ちょうど20,000**（フィラー1936字、候補長2000字）で**allow**（正しい。
+  fallback未発動・精度維持）、フィラーを1字増やして積**20,010**（候補長2001字）で
+  **deny**（fallback発動。実際は不一致だが安全側へ倒れる＝設計書§6リスク表が
+  明記する「low」リスクそのもので新しい欠陥ではない）ことを確認。
+- brace展開×ブラケット一致の組合せ（8通りの分岐のうち1つだけがSPEC.mdへ長さ一致する
+  形）で、combo=8・product=192（しきい値に無関係な小さい値）でも実際に一致する
+  分岐が検出されdeny、全分岐が不一致になるよう変更するとallowになることを確認
+  （brace展開経路とブラケット正規化の組み合わせが正しく機能している）。
+- degraded経路（`# don't`付与でlex失敗を誘発）でも同じ上限・同じ方向:
+  しきい値超過の病的語を含む`rm`はdeny、同じ語を含む`cat`はallow
+  （degraded_violationも`mentions_guarded_expanded`→`guarded_paths_after_shell_expansion`
+  を共有関数として呼ぶため、正常経路と機構レベルで同一）。
+
+### 9-4. 事前チェックがブレース展開の**前**の候補に対して行われることの安全性
+
+review依頼で懸念された「展開後に`[`が増える形・ブレース直積と重なる形での抜け」を
+検討した。`expand_braces`は各`{alt1,alt2,...}`群から**1つの選択肢を選んで置換する**
+実装であり、raw candidate文字列は全選択肢の文字を字面上すべて含む（構文上の要請）。
+したがって任意の1つの展開結果がもつ`[`出現数・長さは、raw candidateの`[`出現数・
+長さを**超えない**（各展開はraw candidateの部分選択にすぎない）。tester作成の
+4種の構成（`{[:,x}`×9＝512通り／`{[[[[,x}`×9＋末尾`]`5個／長い前後方文字列に
+挟んだ形／単一群の一方の選択肢だけが長いブラケット列の形）で全て
+`worst_expansion_metric <= candidate_metric` を実測確認（4/4）。理論上も
+「rawがすべての選択肢を字面で保持する」という`expand_braces`の入力形式そのものから
+導かれるため、**事前チェック（raw candidate単位）が抜けを生む経路は見当たらなかった**。
+
+### 9-5. Missing Tests 4件（review.md §7）の実装確認
+
+Phase 4(ii)（`f2dd344`）で以下がすべて実装済みであることをコード読み取り・
+実行結果の両方で確認した。抜け・期待値の誤りは見つからなかった。
+
+1. 上限境界＋fallback方向: `test_klk034_bracket_scan_work_within_limit_precision`・
+   `..._exceeded_denies_conservatively`・`..._exceeded_allow_symmetry`・
+   `..._exceeded_does_not_mask_existing_deny`（4件）。
+2. `/`メンバー形end-to-end: `test_klk034_bracket_with_slash_member_allow`
+   （`docs/[^/]PEC.md`・`docs/[/S]PEC.md`・`tickets/[^/]ctive/APP-001.md`）。
+   tester独自にmktemp配下でbash実`echo`展開を確認し、いずれも非一致（リテラルの
+   まま出力）であることを裏付けた＝allowが正しい。
+3. `=`・`+`系の既知の限界（否定クラス側）:
+   `test_klk034_negated_class_outside_charset_known_limitation_allow`
+   （`docs/[[=S=]]PEC.md`・`docs/[^=]PEC.md`・`docs/[^+]PEC.md`）。tester独自に
+   bash `echo`展開で確認し、3形とも`docs/SPEC.md`へ一致する（hookはallow＝
+   既知の限界）ことを裏付けた。
+4. 意味論乖離2形: `test_klk034_bracket_semantics_divergence_unit`。
+   tester独自にbash実環境で`[![:]`（`[^[:]`の正規化後と同一）が一致させる
+   ファイル名集合を実測（`S`・`[`・`]`・`x`に一致、`:`のみ不一致）し、
+   Python `fnmatch.fnmatchcase`では`[`が不一致（`]`・`S`・`x`は一致、`:`は
+   不一致）であることを直接実測。**bashが一致させる`[`だけをfnmatchが
+   取りこぼす**という記述は正確であることを確認した。
+
+### 9-6. 既存テストの非改変
+
+`git diff develop...HEAD --numstat -- tests/` → `tests/test_guard_bash_writes.py`
+439行追加・**0行削除**（Phase1/2/tester既存3件/Phase4(ii)9件すべて純追加）。
+`tests/test_ticket_lib.py`は差分なし（完全無変更）。KLK-018/031/032/033系の既存
+メソッドに変更はない。
+
+### 9-7. 新規回帰の探索結果（tester独自）
+
+- 早期return境界（`]`を含まない語／`]`が`[`より前にある語）: pre/new完全一致
+  （§9-2参照）。誤allowを生む形は見つからなかった。
+- 事前チェックの積がブレース展開前の候補に対して行われることの抜け: §9-4の通り
+  理論・実測ともに反例なし。
+- しきい値20000の直上・直下の精度: §9-3で意味論的に一致/不一致する実例を用いて
+  確認済み。直上でのfallbackはdeny方向のみ（allow方向への劣化は無い）。
+- degraded経路: §9-3の通り、正常経路と同じ関数（`guarded_paths_after_shell_expansion`）
+  を共有するため機構的に対称。個別実測でも確認。
+- 追加で検討したが反例が見つからなかった項目: `.claude/hooks/guard_bash_writes.py`の
+  `MAX_BRACE_CHAR_COUNT`チェックとの順序（ブレース文字数チェック→ブラケット走査
+  コストチェック→組合せ数チェックの順。いずれも同じdeny方向フォールバックへ
+  合流するため順序自体は判定に影響しない）。
+
+## 10. Quality Gate（Phase 4対応後・最終）
+
+**pass**。全件テスト**849件OK**（差し戻し時点baseline 840件に対し回帰0）。
+reviewer Critical（走査コストの超線形・無上限）はtester独自の再測定で解消を確認
+（§9-1）。「戻り値不変」の主張は19,607＋20,000＋4件の新旧対照で反例なし（§9-2）。
+deny方向フォールバックの正しさ・しきい値境界の精度をtester独自の意味論的境界形で
+確認（§9-3）。ブレース展開前チェックの安全性を理論・実測両面で確認（§9-4）。
+Missing Tests 4件はすべて実装済みで期待値も実bash真値と整合（§9-5）。既存テストの
+非改変を確認（§9-6）。production code（`.claude/hooks/*.py`）はtesterは変更していない。
+時間しきい値を持つテスト2件（5.0s／15.0s）は実測に対して700〜2,500倍の余裕があり、
+環境ゆらぎによるフレークのリスクは低いと判断する。
